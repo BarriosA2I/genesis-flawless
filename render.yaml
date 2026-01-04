@@ -70,8 +70,8 @@ services:
     # Memory policy for circuit breakers and event logs
     maxmemoryPolicy: allkeys-lru
     
-    # IP allow list (optional, for security)
-    # ipAllowList: []
+    # IP allow list (required by Render)
+    ipAllowList: []
 
 # ===========================================================================
 # DEPLOYMENT CHECKLIST
