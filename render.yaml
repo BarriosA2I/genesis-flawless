@@ -1,0 +1,96 @@
+# ================================================================================
+# ⚡ FLAWLESS GENESIS ORCHESTRATOR - Render Blueprint
+# ================================================================================
+# Deploy: render.com/docs/blueprint-spec
+# ================================================================================
+
+services:
+  # ===========================================================================
+  # GENESIS API - Main Orchestrator Service
+  # ===========================================================================
+  - type: web
+    name: barrios-genesis-flawless
+    runtime: docker
+    region: ohio
+    plan: starter  # Upgrade to standard for production
+    
+    # Health check
+    healthCheckPath: /health
+    
+    # Scaling (for production)
+    # autoDeploy: true
+    # scaling:
+    #   minInstances: 1
+    #   maxInstances: 3
+    #   targetMemoryPercent: 80
+    #   targetCPUPercent: 70
+    
+    # Environment Variables
+    envVars:
+      # Redis (from Render Redis service)
+      - key: REDIS_URL
+        fromService:
+          name: genesis-redis
+          type: redis
+          property: connectionString
+      
+      # AI API Keys (from secrets)
+      - key: ANTHROPIC_API_KEY
+        sync: false  # Set manually in dashboard
+      
+      - key: OPENAI_API_KEY
+        sync: false  # Set manually in dashboard
+      
+      # Optional: Perplexity for TRINITY
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      
+      # Configuration
+      - key: ENVIRONMENT
+        value: production
+      
+      - key: LOG_LEVEL
+        value: INFO
+      
+      # OpenTelemetry (optional)
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      
+      - key: OTEL_SERVICE_NAME
+        value: genesis-flawless
+
+  # ===========================================================================
+  # REDIS - Distributed State Storage
+  # ===========================================================================
+  - type: redis
+    name: genesis-redis
+    region: ohio
+    plan: starter  # 25MB, upgrade for production
+    
+    # Memory policy for circuit breakers and event logs
+    maxmemoryPolicy: allkeys-lru
+    
+    # IP allow list (optional, for security)
+    # ipAllowList: []
+
+# ===========================================================================
+# DEPLOYMENT CHECKLIST
+# ===========================================================================
+# 
+# 1. Create GitHub repo: barrios-a2i/genesis-flawless
+# 2. Push code to GitHub
+# 3. Create new Blueprint in Render Dashboard
+# 4. Connect GitHub repo
+# 5. Render will create services from this file
+# 6. Configure secrets in Dashboard:
+#    - ANTHROPIC_API_KEY
+#    - OPENAI_API_KEY
+#    - PERPLEXITY_API_KEY (optional)
+# 7. Deploy!
+#
+# Post-deployment:
+# - Verify health: https://barrios-genesis-flawless.onrender.com/health
+# - Check metrics: https://barrios-genesis-flawless.onrender.com/metrics
+# - Test SSE: https://barrios-genesis-flawless.onrender.com/docs
+#
+# ================================================================================

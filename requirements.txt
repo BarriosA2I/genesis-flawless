@@ -1,0 +1,36 @@
+# ================================================================================
+# ⚡ FLAWLESS GENESIS ORCHESTRATOR - Dependencies
+# ================================================================================
+# Version: 2.0.0 LEGENDARY
+# ================================================================================
+
+# Core Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# Async HTTP Client
+httpx>=0.26.0
+aiohttp>=3.9.0
+
+# Redis (Async)
+redis>=5.0.0
+
+# AI Clients
+anthropic>=0.18.0
+openai>=1.10.0
+
+# Observability
+prometheus-client>=0.19.0
+opentelemetry-api>=1.22.0
+opentelemetry-sdk>=1.22.0
+opentelemetry-exporter-otlp>=1.22.0
+opentelemetry-instrumentation-fastapi>=0.43b0
+opentelemetry-instrumentation-redis>=0.43b0
+opentelemetry-instrumentation-httpx>=0.43b0
+structlog>=24.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+python-multipart>=0.0.6
+orjson>=3.9.0
