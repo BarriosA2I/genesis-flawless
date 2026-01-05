@@ -27,10 +27,20 @@ WORKDIR /app
 # Create non-root user
 RUN groupadd -r genesis && useradd -r -g genesis genesis
 
+# ==============================================================================
+# FFmpeg 6.1 Static Binary (VORTEX v2.1 - xfade filter support)
+# ==============================================================================
+COPY --from=mwader/static-ffmpeg:6.1 /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=mwader/static-ffmpeg:6.1 /ffprobe /usr/local/bin/ffprobe
+
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Create VORTEX work directory
+RUN mkdir -p /tmp/vortex && chmod 777 /tmp/vortex
+ENV VORTEX_WORK_DIR=/tmp/vortex
 
 # Copy wheels from builder
 COPY --from=builder /build/wheels /wheels

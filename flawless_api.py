@@ -48,6 +48,9 @@ from flawless_orchestrator import (
 )
 from ghost_recovery import EventType, SSEResponse
 
+# Import VORTEX v2.1 video assembly router
+from vortex.router import router as vortex_router, initialize_vortex
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -183,8 +186,12 @@ async def lifespan(app: FastAPI):
         redis_client=redis_client,
         anthropic_client=anthropic_client
     )
-    
+
     logger.info("✅ FlawlessGenesisOrchestrator initialized")
+
+    # Initialize VORTEX v2.1 (video assembly)
+    initialize_vortex(redis_client)
+    logger.info("✅ VORTEX v2.1 video assembly initialized")
     logger.info("=" * 60)
     logger.info("⚡ FLAWLESS GENESIS API v2.0 READY")
     logger.info("=" * 60)
@@ -242,6 +249,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include VORTEX v2.1 video assembly routes
+app.include_router(vortex_router)
 
 
 # =============================================================================

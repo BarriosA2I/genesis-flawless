@@ -96,6 +96,9 @@ from ghost_recovery import (
     create_ghost_recovery_manager
 )
 
+# VORTEX v2.1 Video Assembly (Agent 6)
+from vortex.router import assemble_video_inprocess
+
 logger = logging.getLogger(__name__)
 
 
@@ -834,23 +837,74 @@ class FlawlessGenesisOrchestrator:
                         }
                     )
                     
-                    # Simulate RAGNAROK video generation
-                    # In production: call actual RAGNAROK service
-                    video = VideoResults(
-                        video_urls={
-                            fmt: f"https://cdn.barriosa2i.com/videos/{pipeline_id}_{fmt}.mp4"
-                            for fmt in video_formats
-                        },
-                        voiceover_url=f"https://cdn.barriosa2i.com/audio/{pipeline_id}_voiceover.mp3",
-                        script={
-                            "hook": f"Looking for a {lead.industry} experience that puts you first?",
-                            "body": f"{lead.business_name} combines cutting-edge technology with personalized care.",
-                            "cta": "Schedule your consultation today!"
-                        },
-                        duration_seconds=30.0,
-                        formats=video_formats,
-                        cost_usd=2.00
-                    )
+                    # ===========================================================
+                    # VORTEX v2.1 Video Assembly (Agent 6)
+                    # ===========================================================
+                    # Video clips would come from RAGNAROK asset generation.
+                    # For now, check if clips are provided in additional_context.
+                    video_clips = []
+                    voiceover_url = None
+
+                    # Try to extract video assets from context
+                    try:
+                        if lead.additional_context:
+                            context_data = json.loads(lead.additional_context) if isinstance(lead.additional_context, str) else lead.additional_context
+                            video_clips = context_data.get("video_clips", [])
+                            voiceover_url = context_data.get("voiceover_url")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                    if video_clips:
+                        # Use VORTEX for actual video assembly
+                        logger.info(f"[{pipeline_id}] VORTEX assembling {len(video_clips)} clips")
+                        try:
+                            vortex_outputs = await assemble_video_inprocess(
+                                video_urls=video_clips,
+                                voiceover_url=voiceover_url,
+                                output_formats=video_formats,
+                                metadata={"pipeline_id": pipeline_id, "business": lead.business_name}
+                            )
+                            video = VideoResults(
+                                video_urls=vortex_outputs,
+                                voiceover_url=voiceover_url or "",
+                                script={
+                                    "hook": f"Looking for a {lead.industry} experience that puts you first?",
+                                    "body": f"{lead.business_name} combines cutting-edge technology with personalized care.",
+                                    "cta": "Schedule your consultation today!"
+                                },
+                                duration_seconds=30.0,
+                                formats=video_formats,
+                                cost_usd=0.15  # VORTEX FFmpeg cost only
+                            )
+                        except Exception as e:
+                            logger.error(f"[{pipeline_id}] VORTEX failed: {e}, falling back to stub")
+                            video = VideoResults(
+                                video_urls={fmt: f"https://cdn.barriosa2i.com/videos/{pipeline_id}_{fmt}.mp4" for fmt in video_formats},
+                                voiceover_url=f"https://cdn.barriosa2i.com/audio/{pipeline_id}_voiceover.mp3",
+                                script={"hook": "Video assembly failed", "body": str(e), "cta": "Retry"},
+                                duration_seconds=30.0,
+                                formats=video_formats,
+                                cost_usd=0.0
+                            )
+                    else:
+                        # No video clips provided - use stub URLs
+                        # TODO: Connect to RAGNAROK asset generation to get clips
+                        logger.info(f"[{pipeline_id}] No video clips - using placeholder URLs")
+                        video = VideoResults(
+                            video_urls={
+                                fmt: f"https://cdn.barriosa2i.com/videos/{pipeline_id}_{fmt}.mp4"
+                                for fmt in video_formats
+                            },
+                            voiceover_url=f"https://cdn.barriosa2i.com/audio/{pipeline_id}_voiceover.mp3",
+                            script={
+                                "hook": f"Looking for a {lead.industry} experience that puts you first?",
+                                "body": f"{lead.business_name} combines cutting-edge technology with personalized care.",
+                                "cta": "Schedule your consultation today!"
+                            },
+                            duration_seconds=30.0,
+                            formats=video_formats,
+                            cost_usd=2.00
+                        )
                     
                     state.video = video
                     state.total_cost += video.cost_usd
