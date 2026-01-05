@@ -44,7 +44,11 @@ from starlette.responses import Response
 from flawless_orchestrator import (
     FlawlessGenesisOrchestrator,
     LeadData,
-    create_flawless_orchestrator
+    create_flawless_orchestrator,
+    # Agent 0: NEXUS Intake
+    NexusIntakeAgent,
+    NexusIntakeRequest,
+    NexusIntakeResponse,
 )
 from ghost_recovery import EventType, SSEResponse
 
@@ -66,15 +70,23 @@ logger = logging.getLogger(__name__)
 class TriggerPipelineRequest(BaseModel):
     """Request to trigger full GENESIS pipeline"""
     session_id: str = Field(..., description="NEXUS chat session ID")
-    business_name: str = Field(..., description="Business name")
-    industry: str = Field(..., description="Industry vertical")
+
+    # Option A: Provide conversation_history (Agent 0 extracts lead data)
+    conversation_history: Optional[List[Dict[str, str]]] = Field(
+        None,
+        description="Chat conversation history for Agent 0 to extract lead data"
+    )
+
+    # Option B: Provide explicit fields (legacy, skips Agent 0)
+    business_name: Optional[str] = Field(None, description="Business name")
+    industry: Optional[str] = Field(None, description="Industry vertical")
     website_url: Optional[str] = Field(None, description="Business website")
     contact_email: Optional[str] = Field(None, description="Contact email")
     goals: List[str] = Field(default_factory=list, description="Business goals")
     budget_range: Optional[str] = Field(None, description="Budget range")
     timeline: Optional[str] = Field(None, description="Timeline")
     additional_context: Optional[str] = Field(None, description="Extra context")
-    
+
     # Pipeline options
     generate_video: bool = Field(True, description="Generate video with RAGNAROK")
     video_formats: List[str] = Field(
@@ -306,42 +318,112 @@ async def get_stats():
 # PIPELINE TRIGGER ENDPOINTS
 # =============================================================================
 
-@app.post("/api/genesis/trigger", response_model=TriggerResponse, tags=["Pipeline"])
+@app.post("/api/genesis/trigger", tags=["Pipeline"])
 async def trigger_pipeline(
     request: TriggerPipelineRequest,
     background_tasks: BackgroundTasks
 ):
     """
     Trigger full GENESIS pipeline.
-    
+
+    Two modes:
+    1. With conversation_history: Agent 0 extracts & qualifies lead from chat
+    2. With explicit fields: Legacy mode, skips Agent 0
+
     Includes:
+    - Agent 0: NEXUS Intake (lead extraction & qualification)
     - Debounce check (prevents duplicate triggers)
     - TRINITY research (3 parallel agents)
     - Strategy synthesis
     - RAGNAROK video generation (if enabled)
-    
+
     Returns stream URL for real-time progress updates.
     """
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
-    # Create lead data
-    lead = LeadData(
-        session_id=request.session_id,
-        business_name=request.business_name,
-        industry=request.industry,
-        website_url=request.website_url,
-        contact_email=request.contact_email,
-        goals=request.goals,
-        budget_range=request.budget_range,
-        timeline=request.timeline,
-        additional_context=request.additional_context,
-        qualification_score=0.85  # Pre-qualified from NEXUS
-    )
-    
-    # Generate pipeline ID
+
+    # Generate pipeline ID early for SSE events
     pipeline_id = f"genesis-{uuid.uuid4().hex[:12]}"
-    
+
+    # =========================================================================
+    # AGENT 0: NEXUS Intake & Lead Qualification
+    # =========================================================================
+    if request.conversation_history:
+        # Run Agent 0 to extract lead data from conversation
+        intake_agent = NexusIntakeAgent()
+        intake_request = NexusIntakeRequest(
+            session_id=request.session_id,
+            message=request.conversation_history[-1].get("content", "") if request.conversation_history else "",
+            conversation_history=request.conversation_history
+        )
+
+        logger.info(f"[{pipeline_id}] Agent 0: Processing conversation ({len(request.conversation_history)} messages)")
+
+        intake_result = await intake_agent.process_message(intake_request)
+
+        logger.info(
+            f"[{pipeline_id}] Agent 0 complete: "
+            f"score={intake_result.qualification_score:.0%}, "
+            f"business={intake_result.lead_data.business_name}, "
+            f"industry={intake_result.lead_data.industry}"
+        )
+
+        # GATE: If not qualified, return early with suggestions
+        if not intake_result.lead_data.is_qualified:
+            return {
+                "pipeline_id": pipeline_id,
+                "status": "needs_qualification",
+                "qualification_score": intake_result.qualification_score,
+                "missing_fields": intake_result.missing_fields,
+                "suggested_questions": intake_result.suggested_questions,
+                "lead_data": {
+                    "business_name": intake_result.lead_data.business_name,
+                    "industry": intake_result.lead_data.industry,
+                    "goals": intake_result.lead_data.goals,
+                    "contact_email": intake_result.lead_data.contact_email,
+                    "budget_range": intake_result.lead_data.budget_range,
+                },
+                "message": f"Lead qualification: {intake_result.qualification_score:.0%}. Need more information before starting pipeline."
+            }
+
+        # Use extracted lead data
+        lead = LeadData(
+            session_id=request.session_id,
+            business_name=intake_result.lead_data.business_name or "Unknown Business",
+            industry=intake_result.lead_data.industry or "general",
+            website_url=request.website_url,
+            contact_email=intake_result.lead_data.contact_email,
+            goals=intake_result.lead_data.goals,
+            budget_range=intake_result.lead_data.budget_range,
+            timeline=intake_result.lead_data.timeline,
+            additional_context=request.additional_context,
+            qualification_score=intake_result.qualification_score
+        )
+    else:
+        # Legacy mode: Use explicit fields (skip Agent 0)
+        if not request.business_name or not request.industry:
+            raise HTTPException(
+                status_code=400,
+                detail="Either conversation_history or (business_name + industry) required"
+            )
+
+        lead = LeadData(
+            session_id=request.session_id,
+            business_name=request.business_name,
+            industry=request.industry,
+            website_url=request.website_url,
+            contact_email=request.contact_email,
+            goals=request.goals,
+            budget_range=request.budget_range,
+            timeline=request.timeline,
+            additional_context=request.additional_context,
+            qualification_score=0.85  # Pre-qualified from NEXUS (legacy)
+        )
+
+    # =========================================================================
+    # Start Pipeline Execution
+    # =========================================================================
+
     # Start pipeline in background
     async def run_pipeline():
         async for event in orchestrator.execute(
@@ -350,14 +432,14 @@ async def trigger_pipeline(
             video_formats=request.video_formats
         ):
             pass  # Events are persisted via ghost recovery
-    
+
     task = asyncio.create_task(run_pipeline())
     active_streams[pipeline_id] = task
-    
+
     # Estimate time and cost
     estimated_time = 300 if request.generate_video else 30
     estimated_cost = 2.50 if request.generate_video else 0.10
-    
+
     return TriggerResponse(
         pipeline_id=pipeline_id,
         status="started",

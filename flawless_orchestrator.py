@@ -337,8 +337,8 @@ class PipelineState:
 # AGENT 0: NEXUS INTAKE & LEAD QUALIFICATION (PRODUCTION)
 # =============================================================================
 
-class LeadData(BaseModel):
-    """Extracted lead information from NEXUS conversation"""
+class IntakeLeadData(BaseModel):
+    """Extracted lead information from NEXUS conversation (Agent 0)"""
     business_name: Optional[str] = None
     industry: Optional[str] = None
     goals: List[str] = Field(default_factory=list)
@@ -360,7 +360,7 @@ class NexusIntakeRequest(BaseModel):
 
 class NexusIntakeResponse(BaseModel):
     """Response from NEXUS intake agent"""
-    lead_data: LeadData
+    lead_data: IntakeLeadData
     qualification_score: float
     should_trigger_pipeline: bool
     missing_fields: List[str]
@@ -430,7 +430,7 @@ class NexusIntakeAgent:
         import re
         start = time.time()
 
-        lead = LeadData(conversation_id=request.session_id)
+        lead = IntakeLeadData(conversation_id=request.session_id)
 
         # Combine all conversation text
         full_text = " ".join([
@@ -555,7 +555,7 @@ class NexusIntakeAgent:
             processing_time_ms=processing_time
         )
 
-    def get_qualification_summary(self, lead: LeadData) -> str:
+    def get_qualification_summary(self, lead: IntakeLeadData) -> str:
         """Get human-readable qualification summary"""
         status = "QUALIFIED" if lead.is_qualified else "NEEDS MORE INFO"
         score_pct = int(lead.qualification_score * 100)
