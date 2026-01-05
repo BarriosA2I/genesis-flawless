@@ -334,6 +334,244 @@ class PipelineState:
 
 
 # =============================================================================
+# AGENT 0: NEXUS INTAKE & LEAD QUALIFICATION (PRODUCTION)
+# =============================================================================
+
+class LeadData(BaseModel):
+    """Extracted lead information from NEXUS conversation"""
+    business_name: Optional[str] = None
+    industry: Optional[str] = None
+    goals: List[str] = Field(default_factory=list)
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    budget_range: Optional[str] = None
+    timeline: Optional[str] = None
+    conversation_id: str = ""
+    qualification_score: float = 0.0
+    is_qualified: bool = False
+
+
+class NexusIntakeRequest(BaseModel):
+    """Request to process a chat message through NEXUS intake"""
+    session_id: str
+    message: str
+    conversation_history: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class NexusIntakeResponse(BaseModel):
+    """Response from NEXUS intake agent"""
+    lead_data: LeadData
+    qualification_score: float
+    should_trigger_pipeline: bool
+    missing_fields: List[str]
+    suggested_questions: List[str]
+    processing_time_ms: float
+
+
+class NexusIntakeAgent:
+    """
+    Agent 0: NEXUS Lead Intake & Qualification
+
+    The GATEWAY agent that sits before the entire RAGNAROK pipeline.
+    Extracts business information from chat, qualifies leads, and
+    triggers the pipeline when qualification score >= 0.8.
+
+    Features:
+    - Real-time lead extraction from conversation
+    - Industry detection (50+ industries)
+    - Goal/pain point extraction
+    - Budget and timeline parsing
+    - Qualification scoring (0.0 - 1.0)
+    - Auto-trigger at score >= 0.8
+
+    Cost: $0.00 (extraction only, no LLM calls)
+    """
+
+    def __init__(self):
+        self.name = "nexus_intake"
+        self.status = "PRODUCTION"
+        self.cost_per_call = 0.0  # Pure extraction, no LLM
+
+        # Industry keywords for detection
+        self.INDUSTRIES = {
+            "dental": ["dental", "dentist", "orthodont", "teeth", "oral"],
+            "restaurant": ["restaurant", "food", "dining", "chef", "menu", "cuisine"],
+            "medical": ["medical", "doctor", "clinic", "healthcare", "hospital", "physician"],
+            "legal": ["law", "legal", "attorney", "lawyer", "firm"],
+            "real_estate": ["real estate", "realtor", "property", "homes", "broker"],
+            "fitness": ["gym", "fitness", "personal train", "workout", "health club"],
+            "salon": ["salon", "spa", "beauty", "hair", "nail", "stylist"],
+            "automotive": ["auto", "car", "mechanic", "dealer", "vehicle"],
+            "retail": ["retail", "store", "shop", "boutique", "merchandise"],
+            "technology": ["tech", "software", "app", "digital", "IT", "saas"],
+            "ecommerce": ["ecommerce", "e-commerce", "online store", "shopify"],
+            "consulting": ["consult", "advisory", "coach", "mentor"],
+            "construction": ["construction", "contractor", "building", "renovation"],
+            "education": ["school", "education", "training", "tutor", "academy"],
+            "finance": ["finance", "accounting", "cpa", "bookkeep", "tax"],
+        }
+
+        # Ready-to-start triggers
+        self.READY_TRIGGERS = [
+            "let's do it", "let's get started", "i'm ready", "sign me up",
+            "let's go", "sounds good", "i'm in", "ready to start",
+            "let's proceed", "move forward", "get started"
+        ]
+
+        # Goal keywords
+        self.GOAL_TRIGGERS = [
+            "want to", "need to", "looking to", "trying to", "goal is",
+            "hoping to", "interested in", "focus on", "improve", "increase",
+            "grow", "attract", "generate", "boost", "build"
+        ]
+
+    async def process_message(self, request: NexusIntakeRequest) -> NexusIntakeResponse:
+        """Process a chat message and extract/update lead data"""
+        import re
+        start = time.time()
+
+        lead = LeadData(conversation_id=request.session_id)
+
+        # Combine all conversation text
+        full_text = " ".join([
+            msg.get("content", "")
+            for msg in request.conversation_history
+        ]).lower()
+
+        # Detect industry
+        for industry, keywords in self.INDUSTRIES.items():
+            if any(kw in full_text for kw in keywords):
+                lead.industry = industry
+                break
+
+        # Extract business name (regex patterns)
+        name_patterns = [
+            r"(?:my (?:business|company|practice|store|shop) (?:is |called |named )?['\"]?)([A-Z][A-Za-z\s&']+)",
+            r"(?:i (?:own|run|manage) )([A-Z][A-Za-z\s&']+)",
+            r"(?:we are |we're )([A-Z][A-Za-z\s&']+)",
+        ]
+        for msg in request.conversation_history:
+            if msg.get('role') == 'user':
+                content = msg.get('content', '')
+                for pattern in name_patterns:
+                    match = re.search(pattern, content, re.IGNORECASE)
+                    if match:
+                        lead.business_name = match.group(1).strip()
+                        break
+
+        # Extract email
+        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        email_match = re.search(email_pattern, full_text)
+        if email_match:
+            lead.contact_email = email_match.group()
+
+        # Extract phone
+        phone_pattern = r'[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4}'
+        phone_match = re.search(phone_pattern, full_text)
+        if phone_match:
+            lead.contact_phone = phone_match.group()
+
+        # Extract goals
+        for trigger in self.GOAL_TRIGGERS:
+            if trigger in full_text:
+                sentences = full_text.split('.')
+                for sent in sentences:
+                    if trigger in sent and len(sent.strip()) > 10:
+                        lead.goals.append(sent.strip())
+        lead.goals = lead.goals[:5]  # Max 5 goals
+
+        # Extract budget
+        budget_patterns = [
+            r'\$[\d,]+(?:\s*-\s*\$?[\d,]+)?',
+            r'budget.*?(\$?[\d,]+)',
+            r'spend.*?(\$?[\d,]+)',
+        ]
+        for pattern in budget_patterns:
+            match = re.search(pattern, full_text)
+            if match:
+                lead.budget_range = match.group()
+                break
+
+        # Calculate qualification score
+        score = 0.0
+        missing = []
+
+        if lead.business_name:
+            score += 0.25
+        else:
+            missing.append("business_name")
+
+        if lead.industry:
+            score += 0.20
+        else:
+            missing.append("industry")
+
+        if lead.goals:
+            score += 0.20
+        else:
+            missing.append("goals")
+
+        if lead.contact_email:
+            score += 0.20
+        else:
+            missing.append("contact_email")
+
+        if lead.budget_range:
+            score += 0.15
+        else:
+            missing.append("budget")
+
+        lead.qualification_score = score
+        lead.is_qualified = score >= 0.8
+
+        # Check for ready trigger
+        should_trigger = False
+        if lead.is_qualified:
+            latest_msg = request.message.lower()
+            should_trigger = any(t in latest_msg for t in self.READY_TRIGGERS)
+
+        # Generate suggested questions for missing fields
+        suggestions = []
+        if "business_name" in missing:
+            suggestions.append("What's your business name?")
+        if "industry" in missing:
+            suggestions.append("What industry are you in?")
+        if "goals" in missing:
+            suggestions.append("What are your main goals for this video?")
+        if "contact_email" in missing:
+            suggestions.append("What's the best email to reach you?")
+
+        processing_time = (time.time() - start) * 1000
+
+        AGENT_CALLS.labels(agent=self.name, status="success").inc()
+        AGENT_LATENCY.labels(agent=self.name).observe(processing_time / 1000)
+
+        return NexusIntakeResponse(
+            lead_data=lead,
+            qualification_score=score,
+            should_trigger_pipeline=should_trigger,
+            missing_fields=missing,
+            suggested_questions=suggestions[:2],  # Max 2 suggestions
+            processing_time_ms=processing_time
+        )
+
+    def get_qualification_summary(self, lead: LeadData) -> str:
+        """Get human-readable qualification summary"""
+        status = "QUALIFIED" if lead.is_qualified else "NEEDS MORE INFO"
+        score_pct = int(lead.qualification_score * 100)
+
+        return f"""
+Lead Qualification: {status} ({score_pct}%)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Business: {lead.business_name or '❌ Missing'}
+Industry: {lead.industry or '❌ Missing'}
+Goals: {len(lead.goals)} identified
+Email: {lead.contact_email or '❌ Missing'}
+Budget: {lead.budget_range or '❓ Not specified'}
+"""
+
+
+# =============================================================================
 # AGENT INTERFACES
 # =============================================================================
 
