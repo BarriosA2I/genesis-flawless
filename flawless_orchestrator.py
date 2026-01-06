@@ -66,6 +66,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import time
 import uuid
 
@@ -2093,24 +2094,190 @@ class QualityCheckResult:
 
 class QualityCheckerAgent:
     """
-    Agent 7: Quality Checker
+    Agent 7: THE CRITIC - Quality Checker with FFprobe Validation
 
     Validates generated video output for:
     - Video accessibility (URL reachable)
     - Audio presence
     - Duration compliance
     - Brand consistency
+    - Resolution validation (min 720p)
+    - Codec validation (H.264/AAC)
+    - A/V sync drift detection
+    - Duration sanity check
 
     Cost: ~$0.01 per check (minimal API calls)
     """
+
+    # FFprobe validation thresholds
+    MAX_AV_DRIFT_SECONDS = 0.1  # Maximum allowed A/V sync drift
+    MIN_RESOLUTION_HEIGHT = 720  # Minimum vertical resolution
+    REQUIRED_VIDEO_CODEC = "h264"  # Required video codec
+    REQUIRED_AUDIO_CODEC = "aac"  # Required audio codec
+    DURATION_TOLERANCE_PERCENT = 10  # Allowed duration deviation percentage
 
     def __init__(self):
         self.stats = {
             "checks_performed": 0,
             "passed": 0,
-            "failed": 0
+            "failed": 0,
+            "ffprobe_checks": 0,
+            "ffprobe_failures": 0
         }
-        logger.info("QualityCheckerAgent initialized")
+        self._ffprobe_available = self._check_ffprobe_available()
+        logger.info(f"QualityCheckerAgent initialized (FFprobe: {'available' if self._ffprobe_available else 'not available'})")
+
+    def _check_ffprobe_available(self) -> bool:
+        """Check if FFprobe is available in the system"""
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-version"],
+                capture_output=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+
+    async def _run_ffprobe(self, video_url: str) -> Optional[Dict[str, Any]]:
+        """
+        Run FFprobe analysis on a video URL.
+
+        FFprobe can analyze URLs directly without downloading.
+        Returns parsed JSON probe data or None on failure.
+        """
+        if not self._ffprobe_available:
+            return None
+
+        cmd = [
+            "ffprobe",
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+            video_url
+        ]
+
+        try:
+            # Run ffprobe asynchronously
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=30,
+                    text=True
+                )
+            )
+
+            if result.returncode == 0:
+                self.stats["ffprobe_checks"] += 1
+                return json.loads(result.stdout)
+            else:
+                logger.warning(f"FFprobe failed: {result.stderr}")
+                self.stats["ffprobe_failures"] += 1
+                return None
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception) as e:
+            logger.warning(f"FFprobe error: {e}")
+            self.stats["ffprobe_failures"] += 1
+            return None
+
+    async def _validate_video_technical(
+        self,
+        video_url: str,
+        expected_duration: float
+    ) -> Dict[str, Any]:
+        """
+        Perform deep technical validation using FFprobe.
+
+        Checks:
+        - Resolution (min 720p height)
+        - Video codec (H.264)
+        - Audio codec (AAC)
+        - A/V sync drift
+        - Duration sanity
+
+        Returns dict with check results and details.
+        """
+        validation = {
+            "resolution_ok": False,
+            "video_codec_ok": False,
+            "audio_codec_ok": False,
+            "av_sync_ok": False,
+            "duration_ok": False,
+            "details": {}
+        }
+
+        probe_data = await self._run_ffprobe(video_url)
+        if not probe_data:
+            validation["details"]["error"] = "FFprobe analysis failed"
+            return validation
+
+        streams = probe_data.get("streams", [])
+        format_info = probe_data.get("format", {})
+
+        video_stream = None
+        audio_stream = None
+
+        for stream in streams:
+            if stream.get("codec_type") == "video" and not video_stream:
+                video_stream = stream
+            elif stream.get("codec_type") == "audio" and not audio_stream:
+                audio_stream = stream
+
+        # Check 1: Resolution (min 720p height)
+        if video_stream:
+            height = video_stream.get("height", 0)
+            width = video_stream.get("width", 0)
+            validation["resolution_ok"] = height >= self.MIN_RESOLUTION_HEIGHT
+            validation["details"]["resolution"] = f"{width}x{height}"
+            if not validation["resolution_ok"]:
+                validation["details"]["resolution_issue"] = f"Height {height}p below minimum {self.MIN_RESOLUTION_HEIGHT}p"
+
+        # Check 2: Video codec (H.264)
+        if video_stream:
+            video_codec = video_stream.get("codec_name", "").lower()
+            validation["video_codec_ok"] = video_codec == self.REQUIRED_VIDEO_CODEC
+            validation["details"]["video_codec"] = video_codec
+            if not validation["video_codec_ok"]:
+                validation["details"]["video_codec_issue"] = f"Expected {self.REQUIRED_VIDEO_CODEC}, got {video_codec}"
+
+        # Check 3: Audio codec (AAC)
+        if audio_stream:
+            audio_codec = audio_stream.get("codec_name", "").lower()
+            validation["audio_codec_ok"] = audio_codec == self.REQUIRED_AUDIO_CODEC
+            validation["details"]["audio_codec"] = audio_codec
+            if not validation["audio_codec_ok"]:
+                validation["details"]["audio_codec_issue"] = f"Expected {self.REQUIRED_AUDIO_CODEC}, got {audio_codec}"
+        else:
+            validation["details"]["audio_codec_issue"] = "No audio stream found"
+
+        # Check 4: A/V sync drift
+        if video_stream and audio_stream:
+            video_start = float(video_stream.get("start_time", 0))
+            audio_start = float(audio_stream.get("start_time", 0))
+            drift = abs(video_start - audio_start)
+            validation["av_sync_ok"] = drift <= self.MAX_AV_DRIFT_SECONDS
+            validation["details"]["av_drift_seconds"] = round(drift, 4)
+            if not validation["av_sync_ok"]:
+                validation["details"]["av_sync_issue"] = f"Drift {drift:.4f}s exceeds max {self.MAX_AV_DRIFT_SECONDS}s"
+        else:
+            # If no audio stream, A/V sync is N/A (pass by default)
+            validation["av_sync_ok"] = True
+            validation["details"]["av_drift_seconds"] = 0
+
+        # Check 5: Duration sanity
+        actual_duration = float(format_info.get("duration", 0))
+        tolerance = expected_duration * (self.DURATION_TOLERANCE_PERCENT / 100)
+        duration_diff = abs(actual_duration - expected_duration)
+        validation["duration_ok"] = duration_diff <= tolerance
+        validation["details"]["actual_duration"] = round(actual_duration, 2)
+        validation["details"]["expected_duration"] = expected_duration
+        if not validation["duration_ok"]:
+            validation["details"]["duration_issue"] = f"Duration {actual_duration:.1f}s deviates >{self.DURATION_TOLERANCE_PERCENT}% from expected {expected_duration}s"
+
+        return validation
 
     async def check(
         self,
@@ -2119,11 +2286,12 @@ class QualityCheckerAgent:
         expected_duration: float = 30.0,
         business_name: Optional[str] = None
     ) -> QualityCheckResult:
-        """Perform quality checks on generated video"""
+        """Perform comprehensive quality checks on generated video"""
         start_time = time.time()
 
         checks = {}
         recommendations = []
+        technical_details = {}
 
         # Check 1: Video URLs accessible
         for format_name, url in video_urls.items():
@@ -2160,6 +2328,46 @@ class QualityCheckerAgent:
         if not checks["has_video_output"]:
             recommendations.append("No valid video outputs generated")
 
+        # Check 4-8: FFprobe technical validation (if available)
+        if self._ffprobe_available:
+            # Find first accessible video URL for technical validation
+            primary_url = None
+            for format_name, url in video_urls.items():
+                if url and not url.startswith("data:") and checks.get(f"video_{format_name}_accessible"):
+                    primary_url = url
+                    break
+
+            if primary_url:
+                logger.info(f"Running FFprobe validation on {primary_url[:50]}...")
+                tech_validation = await self._validate_video_technical(primary_url, expected_duration)
+                technical_details = tech_validation.get("details", {})
+
+                # Add FFprobe checks
+                checks["resolution_720p_plus"] = tech_validation.get("resolution_ok", False)
+                checks["video_codec_h264"] = tech_validation.get("video_codec_ok", False)
+                checks["audio_codec_aac"] = tech_validation.get("audio_codec_ok", False)
+                checks["av_sync_aligned"] = tech_validation.get("av_sync_ok", False)
+                checks["duration_valid"] = tech_validation.get("duration_ok", False)
+
+                # Add recommendations for failures
+                if not checks["resolution_720p_plus"]:
+                    recommendations.append(f"Resolution below 720p: {technical_details.get('resolution', 'unknown')}")
+                if not checks["video_codec_h264"]:
+                    recommendations.append(f"Video codec not H.264: {technical_details.get('video_codec', 'unknown')}")
+                if not checks["audio_codec_aac"]:
+                    recommendations.append(f"Audio codec not AAC: {technical_details.get('audio_codec', 'missing')}")
+                if not checks["av_sync_aligned"]:
+                    recommendations.append(f"A/V sync drift: {technical_details.get('av_drift_seconds', 0):.4f}s")
+                if not checks["duration_valid"]:
+                    recommendations.append(f"Duration mismatch: {technical_details.get('actual_duration', 0)}s vs expected {expected_duration}s")
+
+                logger.info(f"FFprobe validation: resolution={checks.get('resolution_720p_plus')}, "
+                           f"codec={checks.get('video_codec_h264')}, av_sync={checks.get('av_sync_aligned')}")
+            else:
+                logger.warning("No accessible video URL for FFprobe validation")
+        else:
+            logger.info("FFprobe not available - skipping technical validation")
+
         # Calculate overall score
         total_checks = len(checks)
         passed_checks = sum(1 for v in checks.values() if v)
@@ -2184,16 +2392,18 @@ class QualityCheckerAgent:
             processing_time_ms=round(processing_time, 2)
         )
 
-        logger.info(f"Quality check: {'PASSED' if passed else 'FAILED'} (score: {score:.1%})")
+        logger.info(f"Quality check: {'PASSED' if passed else 'FAILED'} (score: {score:.1%}, checks: {passed_checks}/{total_checks})")
         return result
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get agent statistics"""
+        """Get agent statistics including FFprobe metrics"""
         return {
             "checks_performed": self.stats["checks_performed"],
             "passed": self.stats["passed"],
             "failed": self.stats["failed"],
-            "pass_rate": round(self.stats["passed"] / max(1, self.stats["checks_performed"]) * 100, 1)
+            "pass_rate": round(self.stats["passed"] / max(1, self.stats["checks_performed"]) * 100, 1),
+            "ffprobe_checks": self.stats["ffprobe_checks"],
+            "ffprobe_failures": self.stats["ffprobe_failures"]
         }
 
 
