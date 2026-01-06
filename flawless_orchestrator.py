@@ -79,6 +79,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
+from urllib.parse import quote
 from typing import (
     Any, AsyncGenerator, Callable, Dict, List, Optional, 
     Set, Tuple, TypedDict, Union
@@ -142,6 +143,16 @@ try:
     STRATEGIC_AGENTS_AVAILABLE = True
 except ImportError:
     STRATEGIC_AGENTS_AVAILABLE = False
+
+# Video Preview Configuration
+VIDEO_PREVIEW_BASE_URL = "https://video-preview-theta.vercel.app"
+
+def generate_preview_url(video_url: str, title: str = None, business_name: str = None) -> str:
+    """Generate a preview URL for client review before delivery."""
+    encoded_video = quote(video_url, safe='')
+    display_title = title or (f"{business_name} Commercial Preview" if business_name else "Commercial Preview")
+    encoded_title = quote(display_title, safe='')
+    return f"{VIDEO_PREVIEW_BASE_URL}?v={encoded_video}&title={encoded_title}"
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +386,10 @@ class PipelineState:
     total_cost: float = 0.0
     started_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
-    
+
+    # Video preview URL for client review
+    preview_url: Optional[str] = None
+
     # Error handling
     errors: List[Dict] = field(default_factory=list)
     checkpoints: List[StateCheckpoint] = field(default_factory=list)
@@ -3536,7 +3550,21 @@ class FlawlessGenesisOrchestrator:
                             logger.info(f"[{pipeline_id}] QA: {'PASSED' if qa_result.passed else 'FAILED'} ({qa_result.score:.1%})")
                         except Exception as e:
                             logger.warning(f"[{pipeline_id}] Quality check failed: {e}")
-                    
+
+                    # -----------------------------------------------------------
+                    # Generate Preview URL for client review
+                    # -----------------------------------------------------------
+                    if video.video_urls:
+                        # Use the first video URL (typically landscape 16:9)
+                        primary_video_url = video.video_urls[0] if isinstance(video.video_urls, list) else video.video_urls
+                        preview_url = generate_preview_url(
+                            video_url=primary_video_url,
+                            business_name=lead.business_name,
+                            title=f"{lead.business_name} - {lead.industry.title()} Commercial"
+                        )
+                        state.preview_url = preview_url
+                        logger.info(f"[{pipeline_id}] VIDEO PREVIEW: {preview_url}")
+
                     state.video = video
                     state.total_cost += video.cost_usd
                     
@@ -3572,6 +3600,7 @@ class FlawlessGenesisOrchestrator:
                     "trinity_research": asdict(trinity) if trinity else None,
                     "strategy": asdict(strategy) if strategy else None,
                     "video": asdict(video) if state.video else None,
+                    "preview_url": state.preview_url,  # Video preview for client review
                     "total_cost_usd": state.total_cost,
                     "total_time_seconds": total_time,
                     "status": "completed"
