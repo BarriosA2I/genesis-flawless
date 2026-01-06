@@ -144,6 +144,44 @@ try:
 except ImportError:
     STRATEGIC_AGENTS_AVAILABLE = False
 
+# RAGNAROK v4.0 Legendary Agents (Phase 3)
+try:
+    from agents import LegendaryAgentFactory
+    from agents.ragnarok_legendary_upgrades import (
+        # Agent 7.5: THE AUTEUR - Vision-Language Creative QA
+        TheAuteur,
+        CreativeQARequest,
+        CreativeQAResponse,
+        # Agent 8.5: THE GENETICIST - DSPy Prompt Self-Optimization
+        TheGeneticist,
+        GeneticOptimizationRequest,
+        GeneticOptimizationResponse,
+        # Agent 11: THE ORACLE - Viral Potential Predictor
+        TheOracle,
+        OraclePredictionRequest,
+        OraclePredictionResponse,
+        # Agent 12: THE CHAMELEON - Multi-Platform Optimizer
+        TheChameleon,
+        ChameleonOptimizationRequest,
+        ChameleonOptimizationResponse,
+        # Agent 13: THE MEMORY - Client DNA System
+        TheMemory,
+        MemoryRecallRequest,
+        MemoryRecallResponse,
+        # Agent 14: THE HUNTER - Real-Time Trend Radar
+        TheHunter,
+        TrendRadarRequest,
+        TrendRadarResponse,
+        # Agent 15: THE ACCOUNTANT - Dynamic Budget Optimizer
+        TheAccountant,
+        BudgetOptimizationRequest,
+        BudgetOptimizationResponse,
+    )
+    LEGENDARY_AGENTS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Legendary agents not available: {e}")
+    LEGENDARY_AGENTS_AVAILABLE = False
+
 # Video Preview Configuration
 VIDEO_PREVIEW_BASE_URL = "https://video-preview-theta.vercel.app"
 
@@ -3060,7 +3098,156 @@ class FlawlessGenesisOrchestrator:
                             "progress": 60
                         }
                     )
-                    
+
+                    # =============================================================
+                    # LEGENDARY PRE-GENERATION AGENTS (RAGNAROK v4.0 Phase 3)
+                    # Agents 11, 13, 14, 15 optimize BEFORE video generation
+                    # =============================================================
+                    legendary_context = {}
+
+                    if LEGENDARY_AGENTS_AVAILABLE:
+                        # -----------------------------------------------------------
+                        # AGENT 13: THE MEMORY - Client DNA System
+                        # Recall client preferences to personalize generation
+                        # -----------------------------------------------------------
+                        try:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "the_memory", "description": "Recalling client DNA..."}
+                            )
+
+                            memory_agent = TheMemory(
+                                qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None
+                            )
+                            memory_result = await memory_agent.recall(MemoryRecallRequest(
+                                client_id=hashlib.md5(lead.business_name.encode()).hexdigest(),
+                                context=f"{lead.industry} commercial for {lead.business_name}"
+                            ))
+                            legendary_context["client_dna"] = memory_result
+                            state.total_cost += memory_result.cost_usd
+
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_COMPLETE.value,
+                                {
+                                    "agent": "the_memory",
+                                    "relationship_score": memory_result.relationship_score,
+                                    "confidence": memory_result.confidence,
+                                    "cost_usd": memory_result.cost_usd
+                                }
+                            )
+                            logger.info(f"[{pipeline_id}] Agent 13 THE MEMORY: relationship={memory_result.relationship_score:.2f}")
+                        except Exception as e:
+                            logger.warning(f"[{pipeline_id}] Agent 13 THE MEMORY skipped: {e}")
+
+                        # -----------------------------------------------------------
+                        # AGENT 14: THE HUNTER - Real-Time Trend Radar
+                        # Scan for trending topics to make content timely
+                        # -----------------------------------------------------------
+                        try:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "the_hunter", "description": "Scanning trends..."}
+                            )
+
+                            hunter_agent = TheHunter()
+                            trend_result = await hunter_agent.scan(TrendRadarRequest(
+                                industry=lead.industry,
+                                lookback_hours=24
+                            ))
+                            legendary_context["trends"] = trend_result
+                            state.total_cost += trend_result.cost_usd
+
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_COMPLETE.value,
+                                {
+                                    "agent": "the_hunter",
+                                    "trends_found": len(trend_result.trends),
+                                    "urgency": trend_result.urgency,
+                                    "cost_usd": trend_result.cost_usd
+                                }
+                            )
+                            logger.info(f"[{pipeline_id}] Agent 14 THE HUNTER: {len(trend_result.trends)} trends, urgency={trend_result.urgency}")
+                        except Exception as e:
+                            logger.warning(f"[{pipeline_id}] Agent 14 THE HUNTER skipped: {e}")
+
+                        # -----------------------------------------------------------
+                        # AGENT 15: THE ACCOUNTANT - Dynamic Budget Optimizer
+                        # Optimize budget allocation for maximum quality
+                        # -----------------------------------------------------------
+                        try:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "the_accountant", "description": "Optimizing budget..."}
+                            )
+
+                            accountant_agent = TheAccountant()
+                            budget_result = await accountant_agent.optimize(BudgetOptimizationRequest(
+                                total_budget_usd=3.00,  # Standard commercial budget
+                                priority="balanced",
+                                industry=lead.industry
+                            ))
+                            legendary_context["budget"] = budget_result
+                            state.total_cost += budget_result.cost_usd
+
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_COMPLETE.value,
+                                {
+                                    "agent": "the_accountant",
+                                    "expected_quality": budget_result.expected_quality_score,
+                                    "savings": budget_result.savings_from_optimization,
+                                    "cost_usd": budget_result.cost_usd
+                                }
+                            )
+                            logger.info(f"[{pipeline_id}] Agent 15 THE ACCOUNTANT: quality={budget_result.expected_quality_score:.0%}, savings=${budget_result.savings_from_optimization:.2f}")
+                        except Exception as e:
+                            logger.warning(f"[{pipeline_id}] Agent 15 THE ACCOUNTANT skipped: {e}")
+
+                        # -----------------------------------------------------------
+                        # AGENT 11: THE ORACLE - Viral Potential Predictor
+                        # Predict viral potential BEFORE generation
+                        # -----------------------------------------------------------
+                        try:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "the_oracle", "description": "Predicting viral potential..."}
+                            )
+
+                            # Build script preview from strategy
+                            script_preview = f"{strategy.positioning[:100]} {' '.join(strategy.differentiators[:2])}" if strategy else lead.business_name
+
+                            oracle_agent = TheOracle()
+                            oracle_result = await oracle_agent.predict(OraclePredictionRequest(
+                                script=script_preview,
+                                visual_style=ci.trending_commercials[0].visual_style if ci and ci.trending_commercials else "cinematic",
+                                hook_technique=ci.top_hook_techniques[0].get("technique", "question") if ci and ci.top_hook_techniques else "question",
+                                industry=lead.industry,
+                                target_platform="all"
+                            ))
+                            legendary_context["viral_prediction"] = oracle_result
+                            state.total_cost += oracle_result.cost_usd
+
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_COMPLETE.value,
+                                {
+                                    "agent": "the_oracle",
+                                    "viral_score": oracle_result.prediction.viral_score,
+                                    "predicted_views_7d": oracle_result.prediction.predicted_views_7d,
+                                    "should_boost": oracle_result.should_boost,
+                                    "cost_usd": oracle_result.cost_usd
+                                }
+                            )
+                            logger.info(f"[{pipeline_id}] Agent 11 THE ORACLE: viral={oracle_result.prediction.viral_score:.0%}, views={oracle_result.prediction.predicted_views_7d:,}")
+                        except Exception as e:
+                            logger.warning(f"[{pipeline_id}] Agent 11 THE ORACLE skipped: {e}")
+
                     # ===========================================================
                     # VORTEX v2.1 Video Assembly (Agent 6)
                     # ===========================================================
@@ -3551,6 +3738,59 @@ class FlawlessGenesisOrchestrator:
                         except Exception as e:
                             logger.warning(f"[{pipeline_id}] Quality check failed: {e}")
 
+                        # -----------------------------------------------------------
+                        # AGENT 7.5: THE AUTEUR - Vision-Language Creative QA
+                        # Deep creative quality assessment using vision models
+                        # (RAGNAROK v4.0 Phase 3)
+                        # -----------------------------------------------------------
+                        if LEGENDARY_AGENTS_AVAILABLE and qa_result and qa_result.passed:
+                            try:
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_START.value,
+                                    {"agent": "the_auteur", "description": "Running creative QA..."}
+                                )
+
+                                # Get primary video URL for analysis
+                                primary_url = None
+                                if video.video_urls:
+                                    for url in video.video_urls:
+                                        if isinstance(url, str) and ("16x9" in url or "landscape" in url.lower()):
+                                            primary_url = url
+                                            break
+                                    if not primary_url:
+                                        primary_url = video.video_urls[0] if isinstance(video.video_urls, list) else video.video_urls
+
+                                auteur_agent = TheAuteur()
+                                auteur_result = await auteur_agent.critique(CreativeQARequest(
+                                    video_path=primary_url,
+                                    script_intent=script.get("body", lead.business_name) if script else lead.business_name,
+                                    visual_style_target=ci.trending_commercials[0].visual_style if ci and ci.trending_commercials else "cinematic",
+                                    brand_guidelines={
+                                        "business": lead.business_name,
+                                        "industry": lead.industry,
+                                        "tone": strategy.recommended_tone if strategy else "professional"
+                                    },
+                                    frame_count=5
+                                ))
+                                state.total_cost += auteur_result.cost_usd
+
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {
+                                        "agent": "the_auteur",
+                                        "passed": auteur_result.passed,
+                                        "score": auteur_result.overall_score,
+                                        "recommendation": auteur_result.recommendation,
+                                        "issues_count": len(auteur_result.issues),
+                                        "cost_usd": auteur_result.cost_usd
+                                    }
+                                )
+                                logger.info(f"[{pipeline_id}] Agent 7.5 THE AUTEUR: {auteur_result.recommendation} ({auteur_result.overall_score:.0%}), {len(auteur_result.issues)} issues")
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Agent 7.5 THE AUTEUR skipped: {e}")
+
                     # -----------------------------------------------------------
                     # Generate Preview URL for client review
                     # -----------------------------------------------------------
@@ -3564,6 +3804,53 @@ class FlawlessGenesisOrchestrator:
                         )
                         state.preview_url = preview_url
                         logger.info(f"[{pipeline_id}] VIDEO PREVIEW: {preview_url}")
+
+                        # -----------------------------------------------------------
+                        # AGENT 12: THE CHAMELEON - Multi-Platform Optimizer
+                        # Generate platform-specific adaptations for TikTok, YouTube, Instagram
+                        # (RAGNAROK v4.0 Phase 3)
+                        # -----------------------------------------------------------
+                        if LEGENDARY_AGENTS_AVAILABLE:
+                            try:
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_START.value,
+                                    {"agent": "the_chameleon", "description": "Optimizing for platforms..."}
+                                )
+
+                                chameleon_agent = TheChameleon()
+                                chameleon_result = await chameleon_agent.adapt(ChameleonOptimizationRequest(
+                                    original_script=script.get("body", f"{lead.business_name} - {lead.industry}") if script else lead.business_name,
+                                    original_style=ci.trending_commercials[0].visual_style if ci and ci.trending_commercials else "cinematic",
+                                    business_name=lead.business_name,
+                                    industry=lead.industry,
+                                    target_platforms=["youtube", "tiktok", "instagram"]
+                                ))
+                                state.total_cost += chameleon_result.cost_usd
+
+                                # Store platform recommendations in state for future use
+                                if not hasattr(state, 'platform_variants'):
+                                    state.platform_variants = {}
+                                for variant in chameleon_result.platform_variants:
+                                    state.platform_variants[variant.platform] = {
+                                        "posting_time": variant.optimal_posting_time,
+                                        "hashtags": variant.hashtag_recommendations,
+                                        "adjustments": variant.visual_adjustments[:3]
+                                    }
+
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {
+                                        "agent": "the_chameleon",
+                                        "platforms_optimized": len(chameleon_result.platform_variants),
+                                        "synergies": chameleon_result.cross_platform_synergies[:2],
+                                        "cost_usd": chameleon_result.cost_usd
+                                    }
+                                )
+                                logger.info(f"[{pipeline_id}] Agent 12 THE CHAMELEON: {len(chameleon_result.platform_variants)} platforms optimized")
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Agent 12 THE CHAMELEON skipped: {e}")
 
                     state.video = video
                     state.total_cost += video.cost_usd
@@ -3815,6 +4102,49 @@ class FlawlessGenesisOrchestrator:
                 f"sentiment={result.get('sentiment', 'unknown')}"
             )
 
+            # =============================================================
+            # AGENT 8.5: THE GENETICIST - DSPy Prompt Self-Optimization
+            # Trigger prompt evolution based on accumulated feedback patterns
+            # (RAGNAROK v4.0 Phase 3)
+            # =============================================================
+            geneticist_result = None
+            if LEGENDARY_AGENTS_AVAILABLE and analysis:
+                # Only evolve prompts if we have enough feedback data
+                action_items = analysis.action_items if hasattr(analysis, 'action_items') else []
+                if len(action_items) >= 3:  # Enough patterns to learn from
+                    try:
+                        geneticist_agent = TheGeneticist(
+                            ab_tester=ABTestingOrchestrator(
+                                qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None
+                            ) if STRATEGIC_AGENTS_AVAILABLE else None
+                        )
+
+                        # Build performance data from feedback patterns
+                        performance_data = [
+                            {
+                                "engagement_rate": rating / 5.0,
+                                "hook_type": item.get("hook", "question") if isinstance(item, dict) else "question",
+                                "structure": "AIDA",
+                                "tone": "professional"
+                            }
+                            for item in action_items[:10]
+                        ]
+
+                        geneticist_result = await geneticist_agent.evolve(GeneticOptimizationRequest(
+                            target_agent="story_creator",
+                            current_prompt="You are a master storyteller creating compelling commercial scripts.",
+                            performance_data=performance_data,
+                            optimization_goal="engagement",
+                            generations=2  # Light evolution
+                        ))
+
+                        logger.info(
+                            f"Agent 8.5 THE GENETICIST: improvement={geneticist_result.fitness_improvement:.1%}, "
+                            f"recommendation={geneticist_result.recommended_action}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Agent 8.5 THE GENETICIST skipped: {e}")
+
             return {
                 "status": "processed",
                 "commercial_id": commercial_id,
@@ -3822,7 +4152,12 @@ class FlawlessGenesisOrchestrator:
                 "sentiment": result.get("sentiment"),
                 "action_items": analysis.action_items if analysis else [],
                 "parameter_adjustments": analysis.parameter_adjustments if analysis else {},
-                "cost_usd": analysis.cost_usd if analysis else 0.0
+                "cost_usd": (analysis.cost_usd if analysis else 0.0) + (geneticist_result.cost_usd if geneticist_result else 0.0),
+                "prompt_evolution": {
+                    "triggered": geneticist_result is not None,
+                    "improvement": geneticist_result.fitness_improvement if geneticist_result else 0.0,
+                    "recommendation": geneticist_result.recommended_action if geneticist_result else None
+                } if LEGENDARY_AGENTS_AVAILABLE else None
             }
 
         except Exception as e:
