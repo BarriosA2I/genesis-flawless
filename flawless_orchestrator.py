@@ -126,6 +126,23 @@ try:
 except ImportError:
     ENHANCEMENT_AGENTS_AVAILABLE = False
 
+# RAGNAROK v4.0 Strategic Agents (Phase 2)
+try:
+    from agents import (
+        StrategicAgentFactory,
+        MetaLearningPerformanceOptimizer,
+        MetaLearningRequest,
+        ABTestingOrchestrator,
+        ABTestRequest,
+        RealTimeFeedbackIntegrator,
+        FeedbackRequest,
+        ClientFeedback,
+        integrate_strategic_agents,
+    )
+    STRATEGIC_AGENTS_AVAILABLE = True
+except ImportError:
+    STRATEGIC_AGENTS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -3315,6 +3332,44 @@ class FlawlessGenesisOrchestrator:
                             except Exception as e:
                                 logger.warning(f"[{pipeline_id}] Agent 3.5 skipped: {e}")
 
+                        # =============================================================
+                        # AGENT 9: A/B Testing Orchestrator (RAGNAROK v4.0)
+                        # Track experiment and variant selection for future optimization
+                        # =============================================================
+                        experiment_id = None
+                        if STRATEGIC_AGENTS_AVAILABLE:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "ab_testing", "description": "Setting up experiment tracking..."}
+                            )
+                            try:
+                                ab_tester = ABTestingOrchestrator(
+                                    qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None
+                                )
+                                ab_result = await ab_tester.get_or_create_experiment(ABTestRequest(
+                                    industry=lead.industry,
+                                    parameter_to_test="visual_prompts",
+                                    variants=[{"prompts": shot_prompts}]
+                                ))
+
+                                experiment_id = ab_result.experiment.id if ab_result.experiment else None
+                                state.total_cost += ab_result.cost_usd
+
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {
+                                        "agent": "ab_testing",
+                                        "experiment_id": experiment_id,
+                                        "recommendation": ab_result.recommendation,
+                                        "cost_usd": ab_result.cost_usd
+                                    }
+                                )
+                                logger.info(f"[{pipeline_id}] Agent 9 A/B Test: experiment={experiment_id}")
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Agent 9 skipped: {e}")
+
                         try:
                             video_provider = KIEVideoProvider()
 
@@ -3531,7 +3586,35 @@ class FlawlessGenesisOrchestrator:
                         "result": result
                     }
                 )
-                
+
+                # =============================================================
+                # AGENT 8: Meta-Learning Performance Optimizer (RAGNAROK v4.0)
+                # Fire-and-forget: Record successful generation for future learning
+                # =============================================================
+                if STRATEGIC_AGENTS_AVAILABLE and generate_video:
+                    try:
+                        meta_learner = MetaLearningPerformanceOptimizer(
+                            qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None
+                        )
+                        # Fire-and-forget: Don't await, just schedule
+                        asyncio.create_task(
+                            meta_learner.record_performance(
+                                commercial_id=pipeline_id,
+                                industry=lead.industry,
+                                parameters={
+                                    "hook_technique": script.get('hook', '')[:50] if script else None,
+                                    "visual_style": ci.trending_commercials[0].visual_style if ci and ci.trending_commercials else "cinematic",
+                                    "voiceover_tone": voiceover_tone if 'voiceover_tone' in dir() else lead.industry,
+                                    "duration_seconds": video.duration_seconds if video else 30.0,
+                                },
+                                cost_usd=state.total_cost,
+                                generation_time_seconds=total_time
+                            )
+                        )
+                        logger.info(f"[{pipeline_id}] Agent 8 Meta-Learning: Recording for future insights")
+                    except Exception as e:
+                        logger.warning(f"[{pipeline_id}] Agent 8 skipped: {e}")
+
                 logger.info(
                     f"✅ Pipeline {pipeline_id} complete: "
                     f"{total_time:.1f}s, ${state.total_cost:.2f}"
@@ -3646,6 +3729,80 @@ class FlawlessGenesisOrchestrator:
                 for name in self.circuits.keys()
             }
         }
+
+    # =========================================================================
+    # AGENT 10: FEEDBACK INTEGRATION (RAGNAROK v4.0 Strategic)
+    # =========================================================================
+
+    async def process_feedback(
+        self,
+        commercial_id: str,
+        rating: int,
+        comments: str = "",
+        revision_requested: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Process client feedback via Agent 10 (Feedback Integrator).
+
+        Args:
+            commercial_id: The pipeline_id/commercial_id to associate feedback with
+            rating: Client rating 1-5
+            comments: Optional text feedback
+            revision_requested: Whether client wants revisions
+
+        Returns:
+            Feedback analysis with recommended actions
+        """
+        if not STRATEGIC_AGENTS_AVAILABLE:
+            return {
+                "status": "skipped",
+                "reason": "Strategic agents not available",
+                "commercial_id": commercial_id
+            }
+
+        try:
+            feedback_integrator = RealTimeFeedbackIntegrator(
+                qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None
+            )
+
+            # Record feedback
+            feedback = ClientFeedback(
+                commercial_id=commercial_id,
+                rating=rating,
+                comments=comments,
+                revision_requested=revision_requested
+            )
+
+            result = await feedback_integrator.record_feedback(feedback)
+
+            # Get analysis
+            analysis = await feedback_integrator.analyze_feedback(
+                industry="general",  # Could be looked up from commercial_id
+                lookback_days=30
+            )
+
+            logger.info(
+                f"Agent 10 Feedback: commercial={commercial_id}, rating={rating}, "
+                f"sentiment={result.get('sentiment', 'unknown')}"
+            )
+
+            return {
+                "status": "processed",
+                "commercial_id": commercial_id,
+                "rating": rating,
+                "sentiment": result.get("sentiment"),
+                "action_items": analysis.action_items if analysis else [],
+                "parameter_adjustments": analysis.parameter_adjustments if analysis else {},
+                "cost_usd": analysis.cost_usd if analysis else 0.0
+            }
+
+        except Exception as e:
+            logger.warning(f"Agent 10 feedback processing failed: {e}")
+            return {
+                "status": "error",
+                "commercial_id": commercial_id,
+                "error": str(e)
+            }
 
 
 # =============================================================================

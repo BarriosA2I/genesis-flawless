@@ -40,7 +40,22 @@ from .ragnarok_enhancement_agents import (
 
 # Strategic Agents (Phase 2)
 from .ragnarok_strategic_agents import (
+    # Factory
     StrategicAgentFactory,
+    # Agents
+    MetaLearningPerformanceOptimizer,
+    ABTestingOrchestrator,
+    RealTimeFeedbackIntegrator,
+    # Request/Response Models
+    MetaLearningRequest,
+    MetaLearningResponse,
+    ABTestRequest,
+    ABTestResponse,
+    FeedbackRequest,
+    FeedbackResponse,
+    ClientFeedback,
+    # Integration helper
+    integrate_strategic_agents,
 )
 
 # Legendary Agents (Phase 3)
@@ -70,6 +85,17 @@ __all__ = [
     "CacheStrategy",
     # Strategic (Phase 2)
     "StrategicAgentFactory",
+    "MetaLearningPerformanceOptimizer",
+    "ABTestingOrchestrator",
+    "RealTimeFeedbackIntegrator",
+    "MetaLearningRequest",
+    "MetaLearningResponse",
+    "ABTestRequest",
+    "ABTestResponse",
+    "FeedbackRequest",
+    "FeedbackResponse",
+    "ClientFeedback",
+    "integrate_strategic_agents",
     # Legendary (Phase 3)
     "LegendaryAgentFactory",
 ]
