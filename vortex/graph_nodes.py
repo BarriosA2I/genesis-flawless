@@ -542,6 +542,10 @@ class ClipAssemblyNode(PipelineNode):
             for clip_path in state.local_clip_paths:
                 cmd.extend(["-i", clip_path])
 
+            # Strip audio from inputs - AudioSyncNode handles audio separately
+            # This fixes FFmpeg returncode 234 (unmapped audio streams in xfade filter)
+            cmd.append("-an")
+
             # Build filter complex
             if state.transitions:
                 filter_complex = self._build_xfade_filter(state.transitions)
@@ -565,11 +569,21 @@ class ClipAssemblyNode(PipelineNode):
                 str(output_path)
             ])
 
-            returncode, stdout, stderr = await self.ffmpeg.run(cmd)
+            # Retry logic with exponential backoff
+            MAX_RETRIES = 3
+            RETRY_DELAYS = [1, 2, 4]  # seconds
+
+            for attempt in range(MAX_RETRIES):
+                returncode, stdout, stderr = await self.ffmpeg.run(cmd)
+                if returncode == 0:
+                    break
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(f"[{state.job_id}] FFmpeg attempt {attempt+1} failed (rc={returncode}), retrying in {RETRY_DELAYS[attempt]}s...")
+                    await asyncio.sleep(RETRY_DELAYS[attempt])
 
             if returncode != 0:
-                logger.error(f"FFmpeg assembly failed: {stderr}")
-                return state.add_error("clip_assembly", f"FFmpeg failed: {stderr[:500]}")
+                logger.error(f"[{state.job_id}] FFmpeg assembly failed after {MAX_RETRIES} attempts: {stderr}")
+                return state.add_error("clip_assembly", f"FFmpeg failed after {MAX_RETRIES} attempts: {stderr[:500]}")
 
         new_state = state.transition_to(
             PipelinePhase.CLIP_ASSEMBLY,
