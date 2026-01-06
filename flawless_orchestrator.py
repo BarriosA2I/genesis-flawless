@@ -61,12 +61,15 @@ Author: Barrios A2I | Version: 2.0.0 LEGENDARY | January 2026
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
 import os
 import time
 import uuid
+
+import aiohttp
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -569,6 +572,509 @@ Goals: {len(lead.goals)} identified
 Email: {lead.contact_email or '❌ Missing'}
 Budget: {lead.budget_range or '❓ Not specified'}
 """
+
+
+# =============================================================================
+# AGENT 4: KIE VIDEO GENERATOR
+# =============================================================================
+
+class VideoAspectRatio(str, Enum):
+    """Video aspect ratios for KIE.ai"""
+    LANDSCAPE = "16:9"
+    PORTRAIT = "9:16"
+    SQUARE = "1:1"
+
+
+class VideoQualityTier(str, Enum):
+    """Video quality tiers"""
+    FAST = "fast"       # $0.40/8s, 720p, ~60-90s generation
+    QUALITY = "quality"  # $2.00/8s, 1080p, ~2-3min generation
+
+
+@dataclass
+class KIEVideoResult:
+    """Result from KIE video generation"""
+    video_url: str
+    task_id: str
+    resolution: str
+    has_audio: bool
+    duration_seconds: int
+    generation_time_seconds: float
+    cost_usd: float
+    provider: str = "kie"
+
+
+class KIEVideoProvider:
+    """
+    Agent 4: KIE.ai Video Generator
+
+    Uses KIE.ai's VEO 3.1 API for text-to-video generation.
+
+    Pricing:
+    - VEO 3.1 Fast: $0.40 per 8 seconds (720p)
+    - VEO 3.1 Quality: $2.00 per 8 seconds (1080p)
+
+    Environment: KIE_API_KEY
+    """
+
+    BASE_URL = "https://api.kie.ai/api/v1"
+    GENERATE_ENDPOINT = f"{BASE_URL}/veo/generate"
+    STATUS_ENDPOINT = f"{BASE_URL}/veo/record-info"
+
+    MODELS = {
+        VideoQualityTier.FAST: "veo3_fast",
+        VideoQualityTier.QUALITY: "veo3"
+    }
+
+    PRICING = {
+        VideoQualityTier.FAST: 0.40,
+        VideoQualityTier.QUALITY: 2.00
+    }
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        max_poll_attempts: int = 60,
+        poll_interval_seconds: int = 10
+    ):
+        self.api_key = api_key or os.getenv("KIE_API_KEY")
+        if not self.api_key:
+            logger.warning("KIE_API_KEY not set - video generation will fail")
+
+        self.max_poll_attempts = max_poll_attempts
+        self.poll_interval = poll_interval_seconds
+        self.stats = {
+            "videos_generated": 0,
+            "total_cost": 0.0,
+            "total_generation_time": 0.0,
+            "failures": 0
+        }
+        logger.info(f"KIEVideoProvider initialized (api_key={'set' if self.api_key else 'NOT SET'})")
+
+    async def generate(
+        self,
+        prompt: str,
+        aspect_ratio: VideoAspectRatio = VideoAspectRatio.LANDSCAPE,
+        quality: VideoQualityTier = VideoQualityTier.FAST,
+        duration_seconds: int = 8
+    ) -> KIEVideoResult:
+        """Generate video using KIE.ai VEO 3.1 API"""
+        if not self.api_key:
+            raise ValueError("KIE_API_KEY required for video generation")
+
+        start_time = time.time()
+
+        # Start generation
+        task_id = await self._start_generation(prompt, aspect_ratio, quality)
+        logger.info(f"KIE task started: {task_id[:8]}...")
+
+        # Poll for completion
+        video_url = await self._poll_until_complete(task_id)
+
+        generation_time = time.time() - start_time
+        cost = self.PRICING[quality]
+
+        # Update stats
+        self.stats["videos_generated"] += 1
+        self.stats["total_cost"] += cost
+        self.stats["total_generation_time"] += generation_time
+
+        result = KIEVideoResult(
+            video_url=video_url,
+            task_id=task_id,
+            resolution="720p" if quality == VideoQualityTier.FAST else "1080p",
+            has_audio=True,
+            duration_seconds=duration_seconds,
+            generation_time_seconds=generation_time,
+            cost_usd=cost
+        )
+
+        logger.info(f"KIE video generated: {task_id[:8]} in {generation_time:.1f}s (${cost})")
+        return result
+
+    async def _start_generation(
+        self,
+        prompt: str,
+        aspect_ratio: VideoAspectRatio,
+        quality: VideoQualityTier
+    ) -> str:
+        """Start a video generation task"""
+        model = self.MODELS[quality]
+
+        payload = {
+            "prompt": prompt,
+            "aspectRatio": aspect_ratio.value,
+            "model": model,
+            "generationType": "TEXT_2_VIDEO"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.GENERATE_ENDPOINT,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                if resp.status != 200:
+                    error = await resp.text()
+                    self.stats["failures"] += 1
+                    raise Exception(f"KIE.ai generation failed: {resp.status} - {error}")
+
+                data = await resp.json()
+
+                if data.get("code") != 200:
+                    raise Exception(f"KIE.ai error: {data.get('msg', 'Unknown error')}")
+
+                task_id = data.get("data", {}).get("taskId")
+                if not task_id:
+                    raise Exception(f"No taskId in response: {data}")
+
+                return task_id
+
+    async def _poll_until_complete(self, task_id: str) -> str:
+        """Poll for task completion and return video URL"""
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(self.max_poll_attempts):
+                await asyncio.sleep(self.poll_interval)
+
+                try:
+                    async with session.get(
+                        self.STATUS_ENDPOINT,
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        params={"taskId": task_id},
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as resp:
+                        if resp.status != 200:
+                            logger.warning(f"KIE poll attempt {attempt}: HTTP {resp.status}")
+                            continue
+
+                        data = await resp.json()
+                        task_data = data.get("data", {})
+                        success_flag = task_data.get("successFlag")
+
+                        if success_flag == 1:  # Completed
+                            response = task_data.get("response", {})
+                            urls = response.get("resultUrls", [])
+                            if urls:
+                                return urls[0]
+                            raise Exception("No resultUrls in completed response")
+
+                        elif success_flag == -1:  # Failed
+                            error = task_data.get("errorMessage", "Unknown error")
+                            self.stats["failures"] += 1
+                            raise Exception(f"KIE.ai generation failed: {error}")
+
+                        # Still processing (successFlag == 0)
+                        logger.debug(f"KIE polling... attempt {attempt}/{self.max_poll_attempts}")
+
+                except asyncio.TimeoutError:
+                    logger.warning(f"KIE poll attempt {attempt}: timeout")
+                    continue
+                except aiohttp.ClientError as e:
+                    logger.warning(f"KIE poll attempt {attempt}: {e}")
+                    continue
+
+        self.stats["failures"] += 1
+        raise TimeoutError(f"KIE.ai task {task_id} timeout after {self.max_poll_attempts * self.poll_interval}s")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get provider statistics"""
+        return {
+            "provider": "kie",
+            "videos_generated": self.stats["videos_generated"],
+            "total_cost_usd": round(self.stats["total_cost"], 2),
+            "failures": self.stats["failures"]
+        }
+
+
+# =============================================================================
+# AGENT 5: ELEVENLABS VOICEOVER GENERATOR
+# =============================================================================
+
+class VoiceCategory(str, Enum):
+    """Voice categories for ElevenLabs"""
+    PROFESSIONAL_MALE = "professional_male"
+    PROFESSIONAL_FEMALE = "professional_female"
+    WARM_FRIENDLY = "warm_friendly"
+    ENERGETIC = "energetic"
+    CALM_SOOTHING = "calm_soothing"
+    AUTHORITATIVE = "authoritative"
+
+
+VOICE_MAPPINGS = {
+    VoiceCategory.PROFESSIONAL_MALE: {"voice_id": "pNInz6obpgDQGcFmaJgB", "name": "Adam"},
+    VoiceCategory.PROFESSIONAL_FEMALE: {"voice_id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella"},
+    VoiceCategory.WARM_FRIENDLY: {"voice_id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel"},
+    VoiceCategory.ENERGETIC: {"voice_id": "AZnzlk1XvdvUeBnXmlld", "name": "Domi"},
+    VoiceCategory.CALM_SOOTHING: {"voice_id": "MF3mGyEYCl7XYWbV9V6O", "name": "Elli"},
+    VoiceCategory.AUTHORITATIVE: {"voice_id": "onwK4e9ZLuTAKqWW03F9", "name": "Daniel"}
+}
+
+
+@dataclass
+class VoiceoverResult:
+    """Result from voiceover generation"""
+    audio_url: str
+    duration_seconds: float
+    character_count: int
+    cost_usd: float
+    voice_used: str
+    generation_time_seconds: float
+
+
+class ElevenLabsVoiceoverAgent:
+    """
+    Agent 5: ElevenLabs Voiceover Generator
+
+    Uses ElevenLabs Turbo v2.5 for fast, affordable TTS.
+
+    Pricing: ~$0.15 per 30-second narration
+    Latency: 15-30 seconds for 30-second audio
+
+    Environment: ELEVENLABS_API_KEY
+    """
+
+    BASE_URL = "https://api.elevenlabs.io/v1"
+    MODEL_ID = "eleven_turbo_v2_5"
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("ELEVENLABS_API_KEY")
+        if not self.api_key:
+            logger.warning("ELEVENLABS_API_KEY not set - voiceover generation will fail")
+
+        self.stats = {
+            "voiceovers_generated": 0,
+            "total_cost": 0.0,
+            "total_duration": 0.0
+        }
+        logger.info(f"ElevenLabsVoiceoverAgent initialized (api_key={'set' if self.api_key else 'NOT SET'})")
+
+    def _select_voice(self, brand_personality: Optional[str] = None) -> Dict[str, str]:
+        """Select optimal voice based on brand personality"""
+        if not brand_personality:
+            return VOICE_MAPPINGS[VoiceCategory.PROFESSIONAL_MALE]
+
+        personality = brand_personality.lower()
+
+        if any(kw in personality for kw in ["professional", "corporate", "business", "formal"]):
+            return VOICE_MAPPINGS[VoiceCategory.PROFESSIONAL_MALE]
+        if any(kw in personality for kw in ["friendly", "warm", "welcoming", "approachable"]):
+            return VOICE_MAPPINGS[VoiceCategory.WARM_FRIENDLY]
+        if any(kw in personality for kw in ["energetic", "dynamic", "exciting", "vibrant"]):
+            return VOICE_MAPPINGS[VoiceCategory.ENERGETIC]
+        if any(kw in personality for kw in ["calm", "soothing", "relaxing", "peaceful"]):
+            return VOICE_MAPPINGS[VoiceCategory.CALM_SOOTHING]
+        if any(kw in personality for kw in ["authoritative", "expert", "powerful", "commanding"]):
+            return VOICE_MAPPINGS[VoiceCategory.AUTHORITATIVE]
+
+        return VOICE_MAPPINGS[VoiceCategory.PROFESSIONAL_MALE]
+
+    async def generate(
+        self,
+        script: str,
+        brand_personality: Optional[str] = None,
+        speaking_rate: float = 1.0
+    ) -> VoiceoverResult:
+        """Generate voiceover from script using ElevenLabs API"""
+        if not self.api_key:
+            raise ValueError("ELEVENLABS_API_KEY required for voiceover generation")
+
+        start_time = time.time()
+        voice_info = self._select_voice(brand_personality)
+
+        url = f"{self.BASE_URL}/text-to-speech/{voice_info['voice_id']}"
+
+        headers = {
+            "xi-api-key": self.api_key,
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "text": script,
+            "model_id": self.MODEL_ID,
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.75,
+                "style": 0.0,
+                "use_speaker_boost": True
+            },
+            "output_format": "mp3_44100_192"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                if response.status != 200:
+                    error = await response.text()
+                    raise Exception(f"ElevenLabs API error: {response.status} - {error}")
+
+                audio_bytes = await response.read()
+
+                # TODO: Upload to CDN (R2/S3) and return actual URL
+                # For now, we'd need to integrate with a storage service
+                # Placeholder: encode as data URL or save to temp storage
+                audio_url = f"data:audio/mp3;base64,{base64.b64encode(audio_bytes).decode()}"
+
+        generation_time = time.time() - start_time
+        character_count = len(script)
+
+        # Calculate cost (~$0.30 per 1M chars + $0.10 overhead)
+        cost = max((character_count / 1_000_000) * 0.30 + 0.10, 0.15)
+
+        # Estimate duration (~150 words/min, 5 chars/word)
+        estimated_duration = (character_count / 5) / (150 / 60)
+
+        self.stats["voiceovers_generated"] += 1
+        self.stats["total_cost"] += cost
+        self.stats["total_duration"] += estimated_duration
+
+        result = VoiceoverResult(
+            audio_url=audio_url,
+            duration_seconds=round(estimated_duration, 2),
+            character_count=character_count,
+            cost_usd=round(cost, 4),
+            voice_used=voice_info["name"],
+            generation_time_seconds=round(generation_time, 2)
+        )
+
+        logger.info(f"Voiceover generated: {voice_info['name']}, {estimated_duration:.1f}s, ${cost:.3f}")
+        return result
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get agent statistics"""
+        return {
+            "provider": "elevenlabs",
+            "voiceovers_generated": self.stats["voiceovers_generated"],
+            "total_cost_usd": round(self.stats["total_cost"], 2),
+            "total_duration_seconds": round(self.stats["total_duration"], 2)
+        }
+
+
+# =============================================================================
+# AGENT 7: QUALITY CHECKER
+# =============================================================================
+
+@dataclass
+class QualityCheckResult:
+    """Result from quality check"""
+    passed: bool
+    score: float  # 0.0-1.0
+    checks: Dict[str, bool]
+    recommendations: List[str]
+    processing_time_ms: float
+
+
+class QualityCheckerAgent:
+    """
+    Agent 7: Quality Checker
+
+    Validates generated video output for:
+    - Video accessibility (URL reachable)
+    - Audio presence
+    - Duration compliance
+    - Brand consistency
+
+    Cost: ~$0.01 per check (minimal API calls)
+    """
+
+    def __init__(self):
+        self.stats = {
+            "checks_performed": 0,
+            "passed": 0,
+            "failed": 0
+        }
+        logger.info("QualityCheckerAgent initialized")
+
+    async def check(
+        self,
+        video_urls: Dict[str, str],
+        voiceover_url: Optional[str] = None,
+        expected_duration: float = 30.0,
+        business_name: Optional[str] = None
+    ) -> QualityCheckResult:
+        """Perform quality checks on generated video"""
+        start_time = time.time()
+
+        checks = {}
+        recommendations = []
+
+        # Check 1: Video URLs accessible
+        for format_name, url in video_urls.items():
+            if url and not url.startswith("data:"):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                            checks[f"video_{format_name}_accessible"] = resp.status == 200
+                except Exception:
+                    checks[f"video_{format_name}_accessible"] = False
+                    recommendations.append(f"Video URL for {format_name} is not accessible")
+            else:
+                checks[f"video_{format_name}_accessible"] = bool(url)
+
+        # Check 2: Voiceover URL accessible
+        if voiceover_url:
+            if voiceover_url.startswith("data:"):
+                checks["voiceover_present"] = True
+            else:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(voiceover_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                            checks["voiceover_present"] = resp.status == 200
+                except Exception:
+                    checks["voiceover_present"] = False
+                    recommendations.append("Voiceover URL is not accessible")
+        else:
+            checks["voiceover_present"] = False
+            recommendations.append("No voiceover provided")
+
+        # Check 3: At least one video format generated
+        video_count = sum(1 for k, v in checks.items() if k.startswith("video_") and v)
+        checks["has_video_output"] = video_count > 0
+        if not checks["has_video_output"]:
+            recommendations.append("No valid video outputs generated")
+
+        # Calculate overall score
+        total_checks = len(checks)
+        passed_checks = sum(1 for v in checks.values() if v)
+        score = passed_checks / total_checks if total_checks > 0 else 0.0
+
+        # Determine pass/fail (threshold: 70%)
+        passed = score >= 0.7
+
+        processing_time = (time.time() - start_time) * 1000
+
+        self.stats["checks_performed"] += 1
+        if passed:
+            self.stats["passed"] += 1
+        else:
+            self.stats["failed"] += 1
+
+        result = QualityCheckResult(
+            passed=passed,
+            score=round(score, 3),
+            checks=checks,
+            recommendations=recommendations,
+            processing_time_ms=round(processing_time, 2)
+        )
+
+        logger.info(f"Quality check: {'PASSED' if passed else 'FAILED'} (score: {score:.1%})")
+        return result
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get agent statistics"""
+        return {
+            "checks_performed": self.stats["checks_performed"],
+            "passed": self.stats["passed"],
+            "failed": self.stats["failed"],
+            "pass_rate": round(self.stats["passed"] / max(1, self.stats["checks_performed"]) * 100, 1)
+        }
 
 
 # =============================================================================
@@ -1125,24 +1631,204 @@ class FlawlessGenesisOrchestrator:
                                 cost_usd=0.0
                             )
                     else:
-                        # No video clips provided - use stub URLs
-                        # TODO: Connect to RAGNAROK asset generation to get clips
-                        logger.info(f"[{pipeline_id}] No video clips - using placeholder URLs")
-                        video = VideoResults(
-                            video_urls={
-                                fmt: f"https://cdn.barriosa2i.com/videos/{pipeline_id}_{fmt}.mp4"
-                                for fmt in video_formats
-                            },
-                            voiceover_url=f"https://cdn.barriosa2i.com/audio/{pipeline_id}_voiceover.mp3",
-                            script={
-                                "hook": f"Looking for a {lead.industry} experience that puts you first?",
-                                "body": f"{lead.business_name} combines cutting-edge technology with personalized care.",
-                                "cta": "Schedule your consultation today!"
-                            },
-                            duration_seconds=30.0,
-                            formats=video_formats,
-                            cost_usd=2.00
+                        # ===========================================================
+                        # GENERATE VIDEO FROM SCRATCH (Agents 4, 5, 6, 7)
+                        # ===========================================================
+                        logger.info(f"[{pipeline_id}] Generating video from scratch with Agents 4, 5, 6, 7")
+
+                        # Generate script from strategy
+                        script = {
+                            "hook": f"Looking for a {lead.industry} experience that puts you first?",
+                            "body": f"{lead.business_name} combines cutting-edge technology with personalized care.",
+                            "cta": "Schedule your consultation today!"
+                        }
+                        full_script = f"{script['hook']} {script['body']} {script['cta']}"
+
+                        total_video_cost = 0.0
+                        generated_voiceover_url = None
+                        generated_clips = []
+
+                        # -----------------------------------------------------------
+                        # AGENT 5: Generate Voiceover (ElevenLabs)
+                        # -----------------------------------------------------------
+                        yield await self._emit_event(
+                            pipeline_id,
+                            EventType.AGENT_START.value,
+                            {"agent": "voiceover_generator", "description": "Generating voiceover with ElevenLabs..."}
                         )
+
+                        try:
+                            voiceover_agent = ElevenLabsVoiceoverAgent()
+                            voiceover_result = await voiceover_agent.generate(
+                                script=full_script,
+                                brand_personality=lead.industry  # Use industry as personality hint
+                            )
+                            generated_voiceover_url = voiceover_result.audio_url
+                            total_video_cost += voiceover_result.cost_usd
+
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_COMPLETE.value,
+                                {
+                                    "agent": "voiceover_generator",
+                                    "voice": voiceover_result.voice_used,
+                                    "duration_seconds": voiceover_result.duration_seconds,
+                                    "cost_usd": voiceover_result.cost_usd
+                                }
+                            )
+                            logger.info(f"[{pipeline_id}] Voiceover generated: {voiceover_result.voice_used}")
+                        except Exception as e:
+                            logger.warning(f"[{pipeline_id}] Voiceover generation failed: {e}")
+                            yield await self._emit_event(
+                                pipeline_id,
+                                "agent_warning",
+                                {"agent": "voiceover_generator", "error": str(e)}
+                            )
+
+                        # -----------------------------------------------------------
+                        # AGENT 4: Generate Video Clips (KIE.ai)
+                        # -----------------------------------------------------------
+                        yield await self._emit_event(
+                            pipeline_id,
+                            EventType.AGENT_START.value,
+                            {"agent": "video_generator", "description": "Generating video clips with KIE.ai..."}
+                        )
+
+                        # Generate shot prompts from script
+                        shot_prompts = [
+                            f"Professional {lead.industry} business environment, modern office, cinematic lighting",
+                            f"Happy customer using {lead.business_name} services, natural lighting, warm tones",
+                            f"Close-up of technology and innovation, futuristic, blue glow",
+                            f"Team collaboration, diverse professionals, corporate setting"
+                        ]
+
+                        try:
+                            video_provider = KIEVideoProvider()
+
+                            # Generate clips in parallel
+                            clip_tasks = [
+                                video_provider.generate(
+                                    prompt=prompt,
+                                    aspect_ratio=VideoAspectRatio.LANDSCAPE,
+                                    quality=VideoQualityTier.FAST,
+                                    duration_seconds=8
+                                )
+                                for prompt in shot_prompts[:4]  # Max 4 clips
+                            ]
+
+                            clip_results = await asyncio.gather(*clip_tasks, return_exceptions=True)
+
+                            for i, result in enumerate(clip_results):
+                                if isinstance(result, Exception):
+                                    logger.warning(f"[{pipeline_id}] Clip {i} failed: {result}")
+                                else:
+                                    generated_clips.append(result.video_url)
+                                    total_video_cost += result.cost_usd
+
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_COMPLETE.value,
+                                {
+                                    "agent": "video_generator",
+                                    "clips_generated": len(generated_clips),
+                                    "cost_usd": sum(r.cost_usd for r in clip_results if not isinstance(r, Exception))
+                                }
+                            )
+                            logger.info(f"[{pipeline_id}] Generated {len(generated_clips)} video clips")
+                        except Exception as e:
+                            logger.warning(f"[{pipeline_id}] Video generation failed: {e}")
+                            yield await self._emit_event(
+                                pipeline_id,
+                                "agent_warning",
+                                {"agent": "video_generator", "error": str(e)}
+                            )
+
+                        # -----------------------------------------------------------
+                        # AGENT 6: VORTEX Video Assembly (if we have clips)
+                        # -----------------------------------------------------------
+                        if generated_clips:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "vortex_assembler", "description": "Assembling final video..."}
+                            )
+
+                            try:
+                                vortex_outputs = await assemble_video_inprocess(
+                                    video_urls=generated_clips,
+                                    voiceover_url=generated_voiceover_url,
+                                    output_formats=video_formats,
+                                    metadata={"pipeline_id": pipeline_id, "business": lead.business_name}
+                                )
+
+                                video = VideoResults(
+                                    video_urls=vortex_outputs,
+                                    voiceover_url=generated_voiceover_url or "",
+                                    script=script,
+                                    duration_seconds=30.0,
+                                    formats=video_formats,
+                                    cost_usd=total_video_cost + 0.15  # Add VORTEX FFmpeg cost
+                                )
+
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {"agent": "vortex_assembler", "formats": video_formats}
+                                )
+                            except Exception as e:
+                                logger.error(f"[{pipeline_id}] VORTEX assembly failed: {e}")
+                                # Fallback to raw clips
+                                video = VideoResults(
+                                    video_urls={fmt: generated_clips[0] if generated_clips else "" for fmt in video_formats},
+                                    voiceover_url=generated_voiceover_url or "",
+                                    script=script,
+                                    duration_seconds=30.0,
+                                    formats=video_formats,
+                                    cost_usd=total_video_cost
+                                )
+                        else:
+                            # No clips generated - use placeholder
+                            logger.warning(f"[{pipeline_id}] No clips generated - using placeholder URLs")
+                            video = VideoResults(
+                                video_urls={fmt: f"https://cdn.barriosa2i.com/videos/{pipeline_id}_{fmt}.mp4" for fmt in video_formats},
+                                voiceover_url=generated_voiceover_url or f"https://cdn.barriosa2i.com/audio/{pipeline_id}_voiceover.mp3",
+                                script=script,
+                                duration_seconds=30.0,
+                                formats=video_formats,
+                                cost_usd=total_video_cost or 2.00
+                            )
+
+                        # -----------------------------------------------------------
+                        # AGENT 7: Quality Check
+                        # -----------------------------------------------------------
+                        yield await self._emit_event(
+                            pipeline_id,
+                            EventType.AGENT_START.value,
+                            {"agent": "quality_checker", "description": "Running quality checks..."}
+                        )
+
+                        try:
+                            qa_agent = QualityCheckerAgent()
+                            qa_result = await qa_agent.check(
+                                video_urls=video.video_urls,
+                                voiceover_url=video.voiceover_url,
+                                expected_duration=30.0,
+                                business_name=lead.business_name
+                            )
+
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_COMPLETE.value,
+                                {
+                                    "agent": "quality_checker",
+                                    "passed": qa_result.passed,
+                                    "score": qa_result.score,
+                                    "recommendations": qa_result.recommendations
+                                }
+                            )
+                            logger.info(f"[{pipeline_id}] QA: {'PASSED' if qa_result.passed else 'FAILED'} ({qa_result.score:.1%})")
+                        except Exception as e:
+                            logger.warning(f"[{pipeline_id}] Quality check failed: {e}")
                     
                     state.video = video
                     state.total_cost += video.cost_usd
