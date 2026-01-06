@@ -114,6 +114,12 @@ try:
         CompetitiveIntelligenceRequest,
         NarrativeArcValidatorAgent,
         NarrativeValidationRequest,
+        PromptMutationEngine,
+        PromptMutationRequest,
+        SonicBrandingSynthesizer,
+        SonicBrandingRequest,
+        CulturalComplianceValidator,
+        ComplianceValidationRequest,
     )
     ENHANCEMENT_AGENTS_AVAILABLE = True
 except ImportError:
@@ -339,6 +345,7 @@ class PipelineState:
     # Results
     commercial_intelligence: Optional[CommercialIntelligence] = None  # Agent 0.5
     competitive_intelligence: Optional[Any] = None  # Agent 0.75 - RAGNAROK v4.0
+    compliance_flags: Optional[List[str]] = None  # Agent 6.5 - RAGNAROK v4.0
     trinity: Optional[TrinityResults] = None
     strategy: Optional[StrategyResults] = None
     video: Optional[VideoResults] = None
@@ -3105,6 +3112,44 @@ class FlawlessGenesisOrchestrator:
                         }
                         full_script = f"{script['hook']} {script['body']} {script['cta']}"
 
+                        # =============================================================
+                        # AGENT 1.5: Narrative Validator (RAGNAROK v4.0)
+                        # =============================================================
+                        if ENHANCEMENT_AGENTS_AVAILABLE:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "narrative_validator", "description": "Validating narrative resonance..."}
+                            )
+                            try:
+                                narrative_agent = NarrativeArcValidatorAgent()
+                                narrative_result = await narrative_agent.validate(NarrativeValidationRequest(
+                                    narrative=full_script,
+                                    industry=lead.industry,
+                                    target_audience=lead.industry  # Use industry as proxy
+                                ))
+
+                                if narrative_result.resonance_score < 0.6:
+                                    logger.info(f"[{pipeline_id}] Low resonance ({narrative_result.resonance_score:.2f}), applying tweaks")
+                                    # Apply suggested improvements to script
+                                    if narrative_result.suggested_tweaks:
+                                        script['hook'] = narrative_result.suggested_tweaks.get('hook', script['hook'])
+                                        full_script = f"{script['hook']} {script['body']} {script['cta']}"
+
+                                state.total_cost += narrative_result.cost_usd
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {
+                                        "agent": "narrative_validator",
+                                        "resonance_score": narrative_result.resonance_score,
+                                        "cost_usd": narrative_result.cost_usd
+                                    }
+                                )
+                                logger.info(f"[{pipeline_id}] Agent 1.5 Narrative: resonance={narrative_result.resonance_score:.2f}")
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Agent 1.5 skipped: {e}")
+
                         total_video_cost = 0.0
                         generated_voiceover_url = None
                         generated_clips = []
@@ -3148,6 +3193,41 @@ class FlawlessGenesisOrchestrator:
                                 "agent_warning",
                                 {"agent": "voiceover_generator", "error": str(e)}
                             )
+
+                        # =============================================================
+                        # AGENT 5.5: Sonic Branding (RAGNAROK v4.0)
+                        # =============================================================
+                        if ENHANCEMENT_AGENTS_AVAILABLE and generated_voiceover_url:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "sonic_branding", "description": "Validating audio consistency..."}
+                            )
+                            try:
+                                sonic_agent = SonicBrandingSynthesizer()
+                                sonic_result = await sonic_agent.validate(SonicBrandingRequest(
+                                    voiceover_url=generated_voiceover_url,
+                                    brand_voice_profile=voiceover_tone,
+                                    industry=lead.industry
+                                ))
+
+                                if not sonic_result.is_consistent:
+                                    logger.info(f"[{pipeline_id}] Sonic mismatch: {sonic_result.recommendations}")
+
+                                state.total_cost += sonic_result.cost_usd
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {
+                                        "agent": "sonic_branding",
+                                        "is_consistent": sonic_result.is_consistent,
+                                        "brand_alignment": sonic_result.brand_alignment_score,
+                                        "cost_usd": sonic_result.cost_usd
+                                    }
+                                )
+                                logger.info(f"[{pipeline_id}] Agent 5.5 Sonic: consistent={sonic_result.is_consistent}")
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Agent 5.5 skipped: {e}")
 
                         # -----------------------------------------------------------
                         # AGENT 4: Generate Video Clips (KIE.ai)
@@ -3198,6 +3278,41 @@ class FlawlessGenesisOrchestrator:
                                 f"Close-up of technology and innovation, futuristic, blue glow",
                                 f"Team collaboration, diverse professionals, corporate setting"
                             ]
+
+                        # =============================================================
+                        # AGENT 3.5: Prompt Mutation Engine (RAGNAROK v4.0)
+                        # =============================================================
+                        if ENHANCEMENT_AGENTS_AVAILABLE:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "prompt_mutator", "description": "Generating prompt variants..."}
+                            )
+                            try:
+                                mutation_agent = PromptMutationEngine()
+                                mutation_result = await mutation_agent.mutate(PromptMutationRequest(
+                                    original_prompts=shot_prompts,
+                                    mutation_strength=0.3,
+                                    variants_per_prompt=2
+                                ))
+
+                                # Use best variants if available
+                                if mutation_result.best_variants:
+                                    shot_prompts = mutation_result.best_variants[:4]
+
+                                state.total_cost += mutation_result.cost_usd
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {
+                                        "agent": "prompt_mutator",
+                                        "variants_generated": len(mutation_result.all_variants),
+                                        "cost_usd": mutation_result.cost_usd
+                                    }
+                                )
+                                logger.info(f"[{pipeline_id}] Agent 3.5 Mutation: {len(mutation_result.all_variants)} variants")
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Agent 3.5 skipped: {e}")
 
                         try:
                             video_provider = KIEVideoProvider()
@@ -3294,6 +3409,45 @@ class FlawlessGenesisOrchestrator:
                                 formats=video_formats,
                                 cost_usd=total_video_cost or 2.00
                             )
+
+                        # =============================================================
+                        # AGENT 6.5: Compliance Validator (RAGNAROK v4.0)
+                        # =============================================================
+                        if ENHANCEMENT_AGENTS_AVAILABLE:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "compliance_validator", "description": "Running compliance checks..."}
+                            )
+                            try:
+                                compliance_agent = CulturalComplianceValidator()
+                                compliance_result = await compliance_agent.validate(ComplianceValidationRequest(
+                                    script=full_script,
+                                    visuals_description=shot_prompts,
+                                    industry=lead.industry,
+                                    target_regions=["US"]
+                                ))
+
+                                if compliance_result.has_violations:
+                                    logger.warning(f"[{pipeline_id}] Compliance flags: {compliance_result.violations}")
+                                    if compliance_result.severity == "high":
+                                        # Add flag to state but don't block
+                                        state.compliance_flags = compliance_result.violations
+
+                                state.total_cost += compliance_result.cost_usd
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    EventType.AGENT_COMPLETE.value,
+                                    {
+                                        "agent": "compliance_validator",
+                                        "passed": not compliance_result.has_violations,
+                                        "severity": compliance_result.severity,
+                                        "cost_usd": compliance_result.cost_usd
+                                    }
+                                )
+                                logger.info(f"[{pipeline_id}] Agent 6.5 Compliance: passed={not compliance_result.has_violations}")
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Agent 6.5 skipped: {e}")
 
                         # -----------------------------------------------------------
                         # AGENT 7: Quality Check
