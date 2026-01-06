@@ -634,6 +634,215 @@ Budget: {lead.budget_range or '❓ Not specified'}
 
 
 # =============================================================================
+# FIRECRAWL CLIENT - Deep Web Scraping for Commercial Intelligence
+# =============================================================================
+
+@dataclass
+class FirecrawlExtractResult:
+    """Structured extraction result from Firecrawl"""
+    url: str
+    hook_technique: Optional[str] = None
+    cta_text: Optional[str] = None
+    shot_count: Optional[int] = None
+    color_palette: List[str] = field(default_factory=list)
+    voiceover_style: Optional[str] = None
+    duration_seconds: Optional[int] = None
+    raw_content: Optional[str] = None
+    success: bool = False
+    error: Optional[str] = None
+
+
+class FirecrawlClient:
+    """
+    Firecrawl client for deep web scraping of commercial video pages.
+
+    Used to extract structured metadata from actual commercial URLs
+    found by Perplexity research.
+
+    API: https://docs.firecrawl.dev/api-reference/endpoint/extract
+    Cost: ~$0.05-0.10 per deep extract
+    """
+
+    FIRECRAWL_API_URL = "https://api.firecrawl.dev/v1/extract"
+
+    # Schema for extracting commercial video metadata
+    EXTRACT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "hook_technique": {
+                "type": "string",
+                "description": "The hook technique used (question, statistic, emotion, product_shot, testimonial)"
+            },
+            "cta_text": {
+                "type": "string",
+                "description": "The call-to-action text (e.g., 'Shop Now', 'Learn More', 'Book Today')"
+            },
+            "shot_count": {
+                "type": "number",
+                "description": "Estimated number of distinct shots/scenes in the commercial"
+            },
+            "color_palette": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Primary colors used in the commercial (hex codes or color names)"
+            },
+            "voiceover_style": {
+                "type": "string",
+                "description": "Style of voiceover (professional, friendly, urgent, calm, energetic)"
+            },
+            "duration_seconds": {
+                "type": "number",
+                "description": "Duration of the commercial in seconds"
+            },
+            "brand_name": {
+                "type": "string",
+                "description": "Name of the brand in the commercial"
+            },
+            "key_message": {
+                "type": "string",
+                "description": "The main message or tagline of the commercial"
+            },
+            "visual_style": {
+                "type": "string",
+                "description": "Visual style (cinematic, minimal, vibrant, professional, lifestyle)"
+            }
+        },
+        "required": ["hook_technique", "cta_text"]
+    }
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("FIRECRAWL_API_KEY")
+        self.stats = {
+            "extracts_performed": 0,
+            "successful_extracts": 0,
+            "total_cost": 0.0
+        }
+
+        if not self.api_key:
+            logger.warning("FIRECRAWL_API_KEY not set - deep scraping disabled")
+
+    async def extract_commercial_metadata(
+        self,
+        urls: List[str],
+        max_urls: int = 3
+    ) -> List[FirecrawlExtractResult]:
+        """
+        Extract structured commercial metadata from URLs.
+
+        Args:
+            urls: List of commercial page URLs to scrape
+            max_urls: Maximum number of URLs to process (default 3)
+
+        Returns:
+            List of FirecrawlExtractResult with extracted metadata
+        """
+        if not self.api_key:
+            logger.info("Firecrawl API key not set, skipping deep scrape")
+            return []
+
+        results = []
+
+        for url in urls[:max_urls]:
+            try:
+                result = await self._extract_single(url)
+                results.append(result)
+                self.stats["extracts_performed"] += 1
+
+                if result.success:
+                    self.stats["successful_extracts"] += 1
+                    self.stats["total_cost"] += 0.05  # ~$0.05 per extract
+
+            except Exception as e:
+                logger.warning(f"Firecrawl extract failed for {url}: {e}")
+                results.append(FirecrawlExtractResult(
+                    url=url,
+                    success=False,
+                    error=str(e)
+                ))
+
+        return results
+
+    async def _extract_single(self, url: str) -> FirecrawlExtractResult:
+        """Extract metadata from a single URL"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "urls": [url],
+            "prompt": "Extract commercial video metadata including hook technique, call-to-action, visual style, color palette, and voiceover style from this advertising/commercial page.",
+            "schema": self.EXTRACT_SCHEMA
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.FIRECRAWL_API_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=60)
+                ) as resp:
+                    if resp.status != 200:
+                        error = await resp.text()
+                        logger.warning(f"Firecrawl API error: {resp.status} - {error}")
+                        return FirecrawlExtractResult(
+                            url=url,
+                            success=False,
+                            error=f"HTTP {resp.status}: {error}"
+                        )
+
+                    data = await resp.json()
+
+                    # Handle response format
+                    if data.get("success") and data.get("data"):
+                        extracted = data["data"][0] if isinstance(data["data"], list) else data["data"]
+
+                        return FirecrawlExtractResult(
+                            url=url,
+                            hook_technique=extracted.get("hook_technique"),
+                            cta_text=extracted.get("cta_text"),
+                            shot_count=extracted.get("shot_count"),
+                            color_palette=extracted.get("color_palette", []),
+                            voiceover_style=extracted.get("voiceover_style"),
+                            duration_seconds=extracted.get("duration_seconds"),
+                            raw_content=extracted.get("key_message"),
+                            success=True
+                        )
+                    else:
+                        return FirecrawlExtractResult(
+                            url=url,
+                            success=False,
+                            error="No data in response"
+                        )
+
+        except asyncio.TimeoutError:
+            return FirecrawlExtractResult(
+                url=url,
+                success=False,
+                error="Timeout"
+            )
+        except Exception as e:
+            return FirecrawlExtractResult(
+                url=url,
+                success=False,
+                error=str(e)
+            )
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get client statistics"""
+        return {
+            "client": "firecrawl",
+            "extracts_performed": self.stats["extracts_performed"],
+            "successful_extracts": self.stats["successful_extracts"],
+            "success_rate": round(
+                self.stats["successful_extracts"] / max(1, self.stats["extracts_performed"]) * 100, 1
+            ),
+            "total_cost_usd": round(self.stats["total_cost"], 2)
+        }
+
+
+# =============================================================================
 # AGENT 0.5: COMMERCIAL CURATOR (Market Intelligence)
 # =============================================================================
 
@@ -650,11 +859,19 @@ class CommercialCuratorAgent:
     - Extracts hook techniques, CTA patterns, visual styles
     - Provides recommendations for shot composition, colors, music, voiceover
 
-    Cost: ~$0.25-0.30 per research (3-5 Perplexity queries + Claude extraction)
+    Cost: ~$0.40-0.50 per research (3 Perplexity queries + 3 Firecrawl extracts + Claude extraction)
+
+    Hybrid approach:
+    1. Perplexity finds trending commercials with URLs
+    2. Firecrawl deep-scrapes top 3 URLs for structured metadata
+    3. Combined intelligence feeds downstream agents
     """
 
     PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
     PERPLEXITY_MODEL = "llama-3.1-sonar-small-128k-online"  # Fast, cheap, real-time search
+
+    # URL extraction pattern
+    URL_PATTERN = re.compile(r'https?://[^\s\)\]\}\"\'<>]+', re.IGNORECASE)
 
     # Industry-specific search queries
     INDUSTRY_QUERIES = {
@@ -717,19 +934,31 @@ class CommercialCuratorAgent:
         "professional service advertising video trends"
     ]
 
-    def __init__(self, api_key: Optional[str] = None, anthropic_client=None):
-        self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY")
+    def __init__(
+        self,
+        perplexity_api_key: Optional[str] = None,
+        firecrawl_api_key: Optional[str] = None,
+        anthropic_client=None
+    ):
+        self.api_key = perplexity_api_key or os.getenv("PERPLEXITY_API_KEY")
+        self.firecrawl = FirecrawlClient(api_key=firecrawl_api_key)
         self.anthropic = anthropic_client
         self.stats = {
             "researches_performed": 0,
             "total_cost": 0.0,
-            "cache_hits": 0
+            "cache_hits": 0,
+            "urls_scraped": 0,
+            "firecrawl_cost": 0.0
         }
 
         if not self.api_key:
             logger.warning("PERPLEXITY_API_KEY not set - Commercial Curator will use fallback patterns")
 
-        logger.info(f"CommercialCuratorAgent initialized (api_key={'set' if self.api_key else 'NOT SET'})")
+        logger.info(
+            f"CommercialCuratorAgent initialized "
+            f"(perplexity={'set' if self.api_key else 'NOT SET'}, "
+            f"firecrawl={'set' if self.firecrawl.api_key else 'NOT SET'})"
+        )
 
     async def gather_commercial_intelligence(
         self,
@@ -763,8 +992,10 @@ class CommercialCuratorAgent:
         if is_product_launch:
             queries = queries + [f"{industry} product launch commercial techniques 2025"]
 
-        # Perform research
+        # PHASE 1: Perplexity research to find trending commercials
         raw_research = []
+        discovered_urls = []
+
         if self.api_key:
             try:
                 for query in queries[:3]:  # Max 3 queries to control cost
@@ -772,12 +1003,46 @@ class CommercialCuratorAgent:
                     if result:
                         raw_research.append(result)
                         total_cost += 0.05  # ~$0.05 per Perplexity query
+
+                        # Extract URLs from research results
+                        urls = self._extract_urls(result)
+                        discovered_urls.extend(urls)
+
             except Exception as e:
                 logger.warning(f"Perplexity research failed: {e}, using fallback patterns")
 
-        # Extract patterns from research (or use fallback)
+        # Deduplicate and filter URLs (commercial/ad-related domains preferred)
+        discovered_urls = self._filter_commercial_urls(list(set(discovered_urls)))[:5]
+
+        # PHASE 2: Firecrawl deep scraping of top URLs
+        firecrawl_results = []
+        if discovered_urls and self.firecrawl.api_key:
+            try:
+                firecrawl_results = await self.firecrawl.extract_commercial_metadata(
+                    urls=discovered_urls,
+                    max_urls=3
+                )
+
+                # Calculate Firecrawl cost
+                successful_extracts = sum(1 for r in firecrawl_results if r.success)
+                firecrawl_cost = successful_extracts * 0.05
+                total_cost += firecrawl_cost
+
+                self.stats["urls_scraped"] += len(firecrawl_results)
+                self.stats["firecrawl_cost"] += firecrawl_cost
+
+                logger.info(
+                    f"Firecrawl deep scrape: {successful_extracts}/{len(firecrawl_results)} "
+                    f"successful, ${firecrawl_cost:.2f}"
+                )
+
+            except Exception as e:
+                logger.warning(f"Firecrawl deep scrape failed: {e}")
+
+        # PHASE 3: Extract patterns from research + Firecrawl data (or use fallback)
         intelligence = await self._extract_patterns(
             raw_research=raw_research,
+            firecrawl_results=firecrawl_results,
             industry=industry,
             business_name=business_name,
             goals=goals,
@@ -785,7 +1050,7 @@ class CommercialCuratorAgent:
         )
 
         # Add extraction cost (~$0.02 for Claude Haiku)
-        if raw_research:
+        if raw_research or firecrawl_results:
             total_cost += 0.02
 
         # Update stats
@@ -852,19 +1117,76 @@ class CommercialCuratorAgent:
             logger.warning(f"Perplexity request failed: {e}")
             return None
 
+    def _extract_urls(self, text: str) -> List[str]:
+        """Extract URLs from text using regex pattern"""
+        if not text:
+            return []
+
+        urls = self.URL_PATTERN.findall(text)
+
+        # Clean up URLs (remove trailing punctuation)
+        cleaned = []
+        for url in urls:
+            # Remove trailing punctuation
+            url = url.rstrip('.,;:!?)')
+            # Skip common non-commercial URLs
+            if any(skip in url.lower() for skip in [
+                'wikipedia.org', 'facebook.com/share', 'twitter.com/intent',
+                'linkedin.com/share', '.pdf', '.jpg', '.png', '.gif'
+            ]):
+                continue
+            cleaned.append(url)
+
+        return cleaned
+
+    def _filter_commercial_urls(self, urls: List[str]) -> List[str]:
+        """
+        Filter and prioritize commercial-related URLs.
+
+        Prioritizes:
+        - Ads/marketing publication sites
+        - YouTube video links
+        - Brand campaign pages
+        - Industry-specific marketing sites
+        """
+        # Priority domains for commercial content
+        priority_domains = [
+            'youtube.com', 'vimeo.com',
+            'adweek.com', 'adsoftheworld.com', 'adage.com',
+            'campaignlive.com', 'thedrum.com', 'marketingweek.com',
+            'thinkwithgoogle.com', 'creativepool.com',
+            'bestadsontv.com', 'shots.net'
+        ]
+
+        priority_urls = []
+        other_urls = []
+
+        for url in urls:
+            url_lower = url.lower()
+            if any(domain in url_lower for domain in priority_domains):
+                priority_urls.append(url)
+            else:
+                other_urls.append(url)
+
+        # Return priority URLs first, then others
+        return priority_urls + other_urls
+
     async def _extract_patterns(
         self,
         raw_research: List[str],
+        firecrawl_results: List[FirecrawlExtractResult],
         industry: str,
         business_name: str,
         goals: List[str],
         is_product_launch: bool
     ) -> CommercialIntelligence:
         """
-        Extract commercial patterns from research or use intelligent fallbacks.
+        Extract commercial patterns from research + Firecrawl data, or use intelligent fallbacks.
 
-        If research is available, uses Claude to extract structured patterns.
-        Otherwise, uses industry-specific fallback patterns.
+        Hybrid approach:
+        1. Firecrawl data provides real structured metadata from scraped pages
+        2. Perplexity research provides context and trends
+        3. Fallback patterns fill gaps when data is unavailable
         """
         # Industry-specific fallback patterns
         INDUSTRY_PATTERNS = {
@@ -938,14 +1260,40 @@ class CommercialCuratorAgent:
         industry_key = industry.lower().replace(" ", "_")
         patterns = INDUSTRY_PATTERNS.get(industry_key, INDUSTRY_PATTERNS["default"])
 
-        # Build trending commercials from research or defaults
+        # Build trending commercials from Firecrawl data + research
         trending_commercials = []
         product_launches = []
 
-        if raw_research:
-            # Parse research for specific commercial references
-            # For now, create synthesized references based on patterns
-            trending_commercials = [
+        # PRIORITY 1: Use Firecrawl deep-scraped data (most accurate)
+        successful_firecrawl = [r for r in firecrawl_results if r.success]
+
+        for idx, fc in enumerate(successful_firecrawl[:3]):
+            trending_commercials.append(
+                CommercialReference(
+                    title=f"Scraped Commercial #{idx + 1}",
+                    brand=fc.raw_content or "Unknown Brand",
+                    industry=industry,
+                    hook_technique=fc.hook_technique or patterns["hooks"][0]["technique"],
+                    hook_text=fc.raw_content or patterns["hooks"][0]["text"],
+                    cta_type="custom",
+                    cta_text=fc.cta_text or patterns["ctas"][0]["text"],
+                    shot_composition=patterns["shot_sequence"],
+                    camera_movements=["slow_zoom", "tracking", "pan"],
+                    color_palette=fc.color_palette if fc.color_palette else patterns["color_palette"],
+                    visual_style=patterns["visual_style"],
+                    music_style=patterns["music_style"],
+                    voiceover_tone=fc.voiceover_style or patterns["voiceover_tone"],
+                    pacing="moderate",
+                    transition_types=["cut", "fade", "dissolve"]
+                )
+            )
+
+            logger.debug(f"Firecrawl data integrated: hook={fc.hook_technique}, cta={fc.cta_text}")
+
+        # PRIORITY 2: Supplement with synthesized data from Perplexity research
+        if raw_research and len(trending_commercials) < 3:
+            # Add synthesized reference based on patterns + research context
+            trending_commercials.append(
                 CommercialReference(
                     title=f"Top {industry.title()} Brand Campaign 2025",
                     brand=f"Industry Leader",
@@ -963,7 +1311,36 @@ class CommercialCuratorAgent:
                     pacing="moderate",
                     transition_types=["cut", "fade", "dissolve"]
                 )
-            ]
+            )
+
+        # Merge Firecrawl insights into pattern recommendations
+        firecrawl_hooks = [fc.hook_technique for fc in successful_firecrawl if fc.hook_technique]
+        firecrawl_ctas = [fc.cta_text for fc in successful_firecrawl if fc.cta_text]
+        firecrawl_vo_styles = [fc.voiceover_style for fc in successful_firecrawl if fc.voiceover_style]
+        firecrawl_colors = []
+        for fc in successful_firecrawl:
+            if fc.color_palette:
+                firecrawl_colors.extend(fc.color_palette)
+
+        # Enhance patterns with Firecrawl data
+        if firecrawl_hooks:
+            # Add discovered hook techniques to the top
+            for hook in firecrawl_hooks[:2]:
+                patterns["hooks"].insert(0, {
+                    "technique": hook,
+                    "text": f"Trending: {hook}",
+                    "effectiveness": 0.90,
+                    "source": "firecrawl"
+                })
+
+        if firecrawl_ctas:
+            for cta in firecrawl_ctas[:2]:
+                patterns["ctas"].insert(0, {
+                    "type": "scraped",
+                    "text": cta,
+                    "conversion": 0.15,
+                    "source": "firecrawl"
+                })
 
         if is_product_launch:
             product_launches = [
@@ -977,6 +1354,24 @@ class CommercialCuratorAgent:
                 )
             ]
 
+        # Build color palettes: Firecrawl colors take priority
+        color_palettes = []
+        if firecrawl_colors:
+            # Dedupe while preserving order
+            seen = set()
+            unique_colors = []
+            for c in firecrawl_colors:
+                if c not in seen:
+                    seen.add(c)
+                    unique_colors.append(c)
+            if unique_colors:
+                color_palettes.append(unique_colors[:5])  # Max 5 colors
+        color_palettes.append(patterns["color_palette"])  # Fallback
+
+        # Build voiceover tones: Firecrawl styles + fallback
+        voiceover_tones = list(set(firecrawl_vo_styles)) if firecrawl_vo_styles else []
+        voiceover_tones.append(patterns["voiceover_tone"])
+
         return CommercialIntelligence(
             industry=industry,
             generated_at=datetime.utcnow().isoformat(),
@@ -985,24 +1380,28 @@ class CommercialCuratorAgent:
             top_hook_techniques=patterns["hooks"],
             top_cta_patterns=patterns["ctas"],
             recommended_shot_sequence=patterns["shot_sequence"],
-            recommended_color_palettes=[patterns["color_palette"]],
+            recommended_color_palettes=color_palettes,
             recommended_music_styles=[patterns["music_style"]],
-            recommended_voiceover_tones=[patterns["voiceover_tone"]],
+            recommended_voiceover_tones=voiceover_tones,
             industry_trends=[
                 f"AI-enhanced customer experiences in {industry}",
                 "Short-form vertical video dominance",
                 "Authenticity and social proof emphasis",
-                "Mobile-first ad consumption"
+                "Mobile-first ad consumption",
+                f"Firecrawl scraped {len(successful_firecrawl)} real commercials" if successful_firecrawl else "Using industry pattern database"
             ]
         )
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get agent statistics"""
+        """Get agent statistics including Firecrawl stats"""
         return {
             "agent": "commercial_curator",
             "researches_performed": self.stats["researches_performed"],
             "total_cost_usd": round(self.stats["total_cost"], 2),
-            "cache_hits": self.stats["cache_hits"]
+            "cache_hits": self.stats["cache_hits"],
+            "urls_scraped": self.stats["urls_scraped"],
+            "firecrawl_cost_usd": round(self.stats["firecrawl_cost"], 2),
+            "firecrawl_stats": self.firecrawl.get_stats() if self.firecrawl.api_key else None
         }
 
 

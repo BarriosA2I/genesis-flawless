@@ -45,6 +45,10 @@ services:
       - key: PERPLEXITY_API_KEY
         sync: false  # Required for Commercial Curator Agent
 
+      # Commercial Curator (Agent 0.5) - Firecrawl for deep scraping commercials
+      - key: FIRECRAWL_API_KEY
+        sync: false  # Required for deep scraping commercial URLs
+
       # Video Generation (Agent 4) - KIE.ai VEO 3.1
       - key: KIE_API_KEY
         sync: false  # Required for video generation
@@ -93,7 +97,8 @@ services:
 # 6. Configure secrets in Dashboard:
 #    - ANTHROPIC_API_KEY
 #    - OPENAI_API_KEY
-#    - PERPLEXITY_API_KEY (Commercial Curator Agent 0.5)
+#    - PERPLEXITY_API_KEY (Commercial Curator Agent 0.5 - Perplexity research)
+#    - FIRECRAWL_API_KEY (Commercial Curator Agent 0.5 - Deep scraping)
 #    - KIE_API_KEY (Video Generator Agent 4)
 #    - ELEVENLABS_API_KEY (Voiceover Generator Agent 5)
 # 7. Deploy!
