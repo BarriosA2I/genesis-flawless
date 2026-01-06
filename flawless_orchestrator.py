@@ -70,6 +70,9 @@ import time
 import uuid
 
 import aiohttp
+import httpx
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -934,21 +937,51 @@ class CommercialCuratorAgent:
         "professional service advertising video trends"
     ]
 
+    # RAG retrieval configuration
+    RAG_MIN_REFERENCES = 3  # Minimum refs needed to use RAG
+    RAG_CONFIDENCE_THRESHOLD = 0.7  # Minimum confidence score
+    RAG_COST_PER_QUERY = 0.001  # Cost for RAG lookup (embedding + search)
+
     def __init__(
         self,
         perplexity_api_key: Optional[str] = None,
         firecrawl_api_key: Optional[str] = None,
-        anthropic_client=None
+        anthropic_client=None,
+        qdrant_url: Optional[str] = None,
+        qdrant_api_key: Optional[str] = None,
+        voyage_api_key: Optional[str] = None
     ):
         self.api_key = perplexity_api_key or os.getenv("PERPLEXITY_API_KEY")
         self.firecrawl = FirecrawlClient(api_key=firecrawl_api_key)
         self.anthropic = anthropic_client
+
+        # RAG retrieval configuration
+        self.qdrant_url = qdrant_url or os.getenv("QDRANT_URL")
+        self.qdrant_api_key = qdrant_api_key or os.getenv("QDRANT_API_KEY")
+        self.voyage_api_key = voyage_api_key or os.getenv("VOYAGE_API_KEY")
+        self.qdrant_collection = os.getenv("QDRANT_COLLECTION", "commercial_references")
+
+        # Initialize Qdrant client if configured
+        self.qdrant_client = None
+        if self.qdrant_url and self.qdrant_api_key:
+            try:
+                self.qdrant_client = QdrantClient(
+                    url=self.qdrant_url,
+                    api_key=self.qdrant_api_key
+                )
+                logger.info("Qdrant client initialized for RAG retrieval")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Qdrant client: {e}")
+
         self.stats = {
             "researches_performed": 0,
             "total_cost": 0.0,
             "cache_hits": 0,
             "urls_scraped": 0,
-            "firecrawl_cost": 0.0
+            "firecrawl_cost": 0.0,
+            "rag_hits": 0,
+            "rag_misses": 0,
+            "rag_cost": 0.0
         }
 
         if not self.api_key:
@@ -957,7 +990,8 @@ class CommercialCuratorAgent:
         logger.info(
             f"CommercialCuratorAgent initialized "
             f"(perplexity={'set' if self.api_key else 'NOT SET'}, "
-            f"firecrawl={'set' if self.firecrawl.api_key else 'NOT SET'})"
+            f"firecrawl={'set' if self.firecrawl.api_key else 'NOT SET'}, "
+            f"rag={'set' if self.qdrant_client else 'NOT SET'})"
         )
 
     async def gather_commercial_intelligence(
@@ -984,6 +1018,38 @@ class CommercialCuratorAgent:
 
         # Normalize industry
         industry_key = industry.lower().replace(" ", "_")
+
+        # =====================================================================
+        # PHASE 0: RAG RETRIEVAL (Fast Path - ~$0.001 vs $0.40-0.50 for live)
+        # =====================================================================
+        # Try RAG retrieval first if library has enough references
+        if self.qdrant_client:
+            rag_result = await self._try_rag_retrieval(
+                industry=industry_key,
+                business_name=business_name,
+                goals=goals,
+                is_product_launch=is_product_launch
+            )
+
+            if rag_result:
+                # RAG hit - return cached intelligence
+                processing_time = (time.time() - start_time) * 1000
+                rag_result.processing_time_ms = processing_time
+                rag_result.cost_usd = self.RAG_COST_PER_QUERY
+
+                self.stats["rag_hits"] += 1
+                self.stats["rag_cost"] += self.RAG_COST_PER_QUERY
+                self.stats["total_cost"] += self.RAG_COST_PER_QUERY
+
+                logger.info(
+                    f"RAG retrieval success for '{industry}' - "
+                    f"${self.RAG_COST_PER_QUERY:.4f} (99.75% savings vs live)"
+                )
+                return rag_result
+
+            # RAG miss - continue to live research
+            self.stats["rag_misses"] += 1
+            logger.info(f"RAG miss for '{industry}' - falling back to live research")
 
         # Get industry-specific queries
         queries = self.INDUSTRY_QUERIES.get(industry_key, self.DEFAULT_QUERIES)
@@ -1070,6 +1136,229 @@ class CommercialCuratorAgent:
         )
 
         return intelligence
+
+    # =========================================================================
+    # RAG RETRIEVAL METHODS (Fast Path - $0.001 per query)
+    # =========================================================================
+
+    async def _try_rag_retrieval(
+        self,
+        industry: str,
+        business_name: str,
+        goals: List[str],
+        is_product_launch: bool
+    ) -> Optional['CommercialIntelligence']:
+        """
+        Try to retrieve commercial intelligence from Qdrant vector store.
+
+        Returns:
+            CommercialIntelligence if sufficient references found, None otherwise
+        """
+        if not self.qdrant_client:
+            return None
+
+        try:
+            # Check if we have enough references for this industry
+            count_result = self.qdrant_client.count(
+                collection_name=self.qdrant_collection,
+                count_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="industry",
+                            match=MatchValue(value=industry)
+                        )
+                    ]
+                )
+            )
+
+            ref_count = count_result.count
+
+            if ref_count < self.RAG_MIN_REFERENCES:
+                logger.info(
+                    f"Industry '{industry}' has {ref_count} refs "
+                    f"(need {self.RAG_MIN_REFERENCES}) - skipping RAG"
+                )
+                return None
+
+            # Generate query embedding
+            query_text = f"{industry} commercial for {business_name} goals: {', '.join(goals)}"
+            if is_product_launch:
+                query_text += " product launch"
+
+            query_embedding = await self._embed_query(query_text)
+            if not query_embedding:
+                return None
+
+            # Search for similar commercials
+            results = self.qdrant_client.search(
+                collection_name=self.qdrant_collection,
+                query_vector=query_embedding,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="industry",
+                            match=MatchValue(value=industry)
+                        )
+                    ]
+                ),
+                limit=5,
+                score_threshold=0.6
+            )
+
+            if len(results) < self.RAG_MIN_REFERENCES:
+                logger.info(f"Only {len(results)} relevant results - skipping RAG")
+                return None
+
+            # Convert results to CommercialIntelligence
+            return self._build_intelligence_from_rag(
+                results=results,
+                industry=industry,
+                business_name=business_name
+            )
+
+        except Exception as e:
+            logger.warning(f"RAG retrieval failed: {e}")
+            return None
+
+    async def _embed_query(self, text: str) -> Optional[List[float]]:
+        """Generate embedding for query using Voyage AI or OpenAI"""
+        # Try Voyage AI first
+        if self.voyage_api_key:
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.post(
+                        "https://api.voyageai.com/v1/embeddings",
+                        headers={
+                            "Authorization": f"Bearer {self.voyage_api_key}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "model": "voyage-3-lite",
+                            "input": [text],
+                            "input_type": "query"
+                        }
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        return data["data"][0]["embedding"]
+            except Exception as e:
+                logger.warning(f"Voyage embedding failed: {e}")
+
+        # Fallback to OpenAI
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.post(
+                        "https://api.openai.com/v1/embeddings",
+                        headers={
+                            "Authorization": f"Bearer {openai_key}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "model": "text-embedding-3-small",
+                            "input": text
+                        }
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        embedding = data["data"][0]["embedding"]
+                        # Truncate to match Voyage dimensions (1024)
+                        return embedding[:1024]
+            except Exception as e:
+                logger.warning(f"OpenAI embedding failed: {e}")
+
+        return None
+
+    def _build_intelligence_from_rag(
+        self,
+        results: List,
+        industry: str,
+        business_name: str
+    ) -> 'CommercialIntelligence':
+        """Build CommercialIntelligence from Qdrant search results"""
+        # Extract common patterns from results
+        hook_techniques = {}
+        cta_types = {}
+        visual_styles = {}
+        music_styles = {}
+        voiceover_tones = {}
+        color_palettes = []
+        shot_compositions = []
+
+        for result in results:
+            payload = result.payload
+
+            # Count techniques
+            hook = payload.get("hook_technique", "question")
+            hook_techniques[hook] = hook_techniques.get(hook, 0) + 1
+
+            cta = payload.get("cta_type", "visit_website")
+            cta_types[cta] = cta_types.get(cta, 0) + 1
+
+            style = payload.get("visual_style", "cinematic")
+            visual_styles[style] = visual_styles.get(style, 0) + 1
+
+            music = payload.get("music_style", "corporate")
+            music_styles[music] = music_styles.get(music, 0) + 1
+
+            vo = payload.get("voiceover_tone", "professional")
+            voiceover_tones[vo] = voiceover_tones.get(vo, 0) + 1
+
+            # Collect arrays
+            colors = payload.get("color_palette", [])
+            if colors:
+                color_palettes.append(colors)
+
+            shots = payload.get("shot_composition", [])
+            if shots:
+                shot_compositions.extend(shots)
+
+        # Sort by frequency
+        top_hook = sorted(hook_techniques.items(), key=lambda x: -x[1])
+        top_cta = sorted(cta_types.items(), key=lambda x: -x[1])
+        top_visual = sorted(visual_styles.items(), key=lambda x: -x[1])
+        top_music = sorted(music_styles.items(), key=lambda x: -x[1])
+        top_vo = sorted(voiceover_tones.items(), key=lambda x: -x[1])
+
+        # Build intelligence object
+        return CommercialIntelligence(
+            industry=industry,
+            generated_at=datetime.utcnow().isoformat(),
+            trending_commercials=[
+                CommercialReference(
+                    title=r.payload.get("title", "Unknown"),
+                    brand=r.payload.get("brand", "Unknown"),
+                    industry=industry,
+                    hook_technique=r.payload.get("hook_technique", "question"),
+                    cta_type=r.payload.get("cta_type", "visit_website"),
+                    visual_style=r.payload.get("visual_style", "cinematic"),
+                    source_url=r.payload.get("source_url", "")
+                )
+                for r in results[:3]
+            ],
+            product_launches=[],
+            top_hook_techniques=[
+                {"technique": t[0], "count": t[1]}
+                for t in top_hook[:3]
+            ],
+            top_cta_patterns=[
+                {"type": t[0], "count": t[1]}
+                for t in top_cta[:3]
+            ],
+            recommended_shot_sequence=list(dict.fromkeys(shot_compositions))[:6],
+            recommended_color_palettes=color_palettes[:3] if color_palettes else [["#FFFFFF", "#000000"]],
+            recommended_music_styles=[t[0] for t in top_music[:2]],
+            recommended_voiceover_tones=[t[0] for t in top_vo[:2]],
+            industry_trends=[
+                f"Top hook: {top_hook[0][0]}" if top_hook else "question hooks",
+                f"Visual style: {top_visual[0][0]}" if top_visual else "cinematic",
+                f"Based on {len(results)} reference commercials"
+            ],
+            source="rag_retrieval",
+            processing_time_ms=0,
+            cost_usd=self.RAG_COST_PER_QUERY
+        )
 
     async def _perplexity_search(self, query: str) -> Optional[str]:
         """Perform a Perplexity AI search query"""
