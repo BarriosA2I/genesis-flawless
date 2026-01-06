@@ -37,14 +37,22 @@ services:
       # AI API Keys (from secrets)
       - key: ANTHROPIC_API_KEY
         sync: false  # Set manually in dashboard
-      
+
       - key: OPENAI_API_KEY
         sync: false  # Set manually in dashboard
-      
-      # Optional: Perplexity for TRINITY
+
+      # Commercial Curator (Agent 0.5) - Perplexity for trending commercial research
       - key: PERPLEXITY_API_KEY
-        sync: false
-      
+        sync: false  # Required for Commercial Curator Agent
+
+      # Video Generation (Agent 4) - KIE.ai VEO 3.1
+      - key: KIE_API_KEY
+        sync: false  # Required for video generation
+
+      # Voiceover Generation (Agent 5) - ElevenLabs
+      - key: ELEVENLABS_API_KEY
+        sync: false  # Required for voiceover generation
+
       # Configuration
       - key: ENVIRONMENT
         value: production
@@ -85,7 +93,9 @@ services:
 # 6. Configure secrets in Dashboard:
 #    - ANTHROPIC_API_KEY
 #    - OPENAI_API_KEY
-#    - PERPLEXITY_API_KEY (optional)
+#    - PERPLEXITY_API_KEY (Commercial Curator Agent 0.5)
+#    - KIE_API_KEY (Video Generator Agent 4)
+#    - ELEVENLABS_API_KEY (Voiceover Generator Agent 5)
 # 7. Deploy!
 #
 # Post-deployment:
