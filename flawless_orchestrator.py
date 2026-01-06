@@ -106,6 +106,19 @@ from ghost_recovery import (
 # VORTEX v2.1 Video Assembly (Agent 6)
 from vortex.router import assemble_video_inprocess
 
+# RAGNAROK v4.0 Enhancement Agents (Phase 1)
+try:
+    from agents import (
+        EnhancementAgentFactory,
+        CompetitiveIntelligenceAgent,
+        CompetitiveIntelligenceRequest,
+        NarrativeArcValidatorAgent,
+        NarrativeValidationRequest,
+    )
+    ENHANCEMENT_AGENTS_AVAILABLE = True
+except ImportError:
+    ENHANCEMENT_AGENTS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -324,7 +337,8 @@ class PipelineState:
     mode: ProcessingMode = ProcessingMode.SYSTEM_2_DEEP
     
     # Results
-    commercial_intelligence: Optional[CommercialIntelligence] = None  # NEW: Agent 0.5
+    commercial_intelligence: Optional[CommercialIntelligence] = None  # Agent 0.5
+    competitive_intelligence: Optional[Any] = None  # Agent 0.75 - RAGNAROK v4.0
     trinity: Optional[TrinityResults] = None
     strategy: Optional[StrategyResults] = None
     video: Optional[VideoResults] = None
@@ -2954,7 +2968,43 @@ class FlawlessGenesisOrchestrator:
                         "progress": 55
                     }
                 )
-                
+
+                # =============================================================
+                # AGENT 0.75: Competitive Intelligence (RAGNAROK v4.0)
+                # =============================================================
+                if ENHANCEMENT_AGENTS_AVAILABLE:
+                    yield await self._emit_event(
+                        pipeline_id,
+                        EventType.AGENT_START.value,
+                        {"agent": "competitive_intel", "description": "Analyzing market positioning..."}
+                    )
+
+                    try:
+                        comp_intel_agent = CompetitiveIntelligenceAgent(
+                            qdrant_client=self.qdrant_client if hasattr(self, 'qdrant_client') else None
+                        )
+                        comp_result = await comp_intel_agent.analyze(CompetitiveIntelligenceRequest(
+                            industry=lead.industry,
+                            product_category=lead.industry,
+                            client_usp=strategy.differentiators[0] if strategy.differentiators else lead.business_name
+                        ))
+                        state.competitive_intelligence = comp_result
+                        state.total_cost += comp_result.cost_usd
+
+                        yield await self._emit_event(
+                            pipeline_id,
+                            EventType.AGENT_COMPLETE.value,
+                            {
+                                "agent": "competitive_intel",
+                                "differentiation_score": comp_result.differentiation_score,
+                                "white_space_opportunities": len(comp_result.white_space_opportunities),
+                                "cost_usd": comp_result.cost_usd
+                            }
+                        )
+                        logger.info(f"[{pipeline_id}] Agent 0.75 Competitive Intel: diff_score={comp_result.differentiation_score:.2f}")
+                    except Exception as e:
+                        logger.warning(f"[{pipeline_id}] Agent 0.75 failed (non-blocking): {e}")
+
                 # =============================================================
                 # PHASE 4: RAGNAROK Video (if requested)
                 # =============================================================

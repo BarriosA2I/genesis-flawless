@@ -37,3 +37,9 @@ orjson>=3.9.0
 
 # VORTEX v2.1 Video Assembly Dependencies
 sse-starlette>=1.8.2
+
+# RAGNAROK v4.0 Enhancement Agents
+numpy>=1.24.0
+
+# Qdrant Vector Store
+qdrant-client>=1.7.0
