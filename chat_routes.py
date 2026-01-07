@@ -201,11 +201,13 @@ async def create_session(request: SessionRequest):
         # Store in Redis if available
         store = get_session_store()
         if store and store._available:
-            store.create_session(
-                session_id=session_id,
-                client_name=request.client_name or "",
-                project_type=request.project_type or "video_commercial"
-            )
+            store.save(session_id, {
+                "session_id": session_id,
+                "client_name": request.client_name or "",
+                "project_type": request.project_type or "video_commercial",
+                "phase": "greeting",
+                "created_at": created_at
+            })
 
         logger.info(f"Session created: {session_id}")
 
@@ -242,7 +244,7 @@ async def get_session(session_id: str):
         # Check Redis store
         store = get_session_store()
         if store and store._available:
-            session_data = store.get_session(session_id)
+            session_data = store.load(session_id)
             if session_data:
                 return SessionResponse(
                     session_id=session_id,
@@ -275,7 +277,7 @@ async def delete_session(session_id: str):
         # Remove from Redis
         store = get_session_store()
         if store and store._available:
-            store.delete_session(session_id)
+            store.delete(session_id)
 
         logger.info(f"Session deleted: {session_id}")
         return {"status": "deleted", "session_id": session_id}
