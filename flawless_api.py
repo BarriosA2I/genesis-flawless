@@ -884,12 +884,12 @@ async def adapt_platform(request: PlatformAdaptRequest):
                 target_platform=platform
             )
             adaptations[platform] = {
-                "aspect_ratio": adapt.aspect_ratio,
-                "duration_seconds": adapt.duration_seconds,
-                "text_overlays": adapt.text_overlays,
+                "platform": adapt.platform,
+                "adapted_content": adapt.adapted_content,
+                "format_specs": adapt.format_specs,
                 "hashtags": adapt.hashtags,
-                "optimal_posting_times": adapt.optimal_posting_times,
-                "platform_specific_hook": adapt.platform_specific_hook
+                "optimal_posting_time": adapt.optimal_posting_time,
+                "engagement_prediction": adapt.engagement_prediction
             }
 
         return {
@@ -922,7 +922,7 @@ async def hunt_trends(request: TrendHuntRequest):
         raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
 
     try:
-        trends = await legendary_coordinator.hunter.hunt_trends(
+        trend_report = await legendary_coordinator.hunter.hunt_trends(
             industry=request.industry,
             keywords=request.keywords,
             lookback_days=request.lookback_days
@@ -932,15 +932,14 @@ async def hunt_trends(request: TrendHuntRequest):
             "status": "success",
             "agent": "THE HUNTER (14)",
             "industry": request.industry,
-            "trends": {
-                "visual_trends": trends.visual_trends,
-                "audio_trends": trends.audio_trends,
-                "narrative_trends": trends.narrative_trends,
-                "emerging_hashtags": trends.emerging_hashtags,
-                "trend_velocity": trends.trend_velocity,
-                "recommended_styles": trends.recommended_styles
-            },
-            "freshness": trends.freshness_score
+            "report": {
+                "trends": trend_report.trends,
+                "emerging": trend_report.emerging,
+                "declining": trend_report.declining,
+                "opportunities": trend_report.opportunities,
+                "risks": trend_report.risks,
+                "recommended_topics": trend_report.recommended_topics
+            }
         }
 
     except Exception as e:
@@ -977,7 +976,7 @@ async def optimize_budget(request: BudgetOptimizeRequest):
         }
         goals = [request.campaign_goal] if isinstance(request.campaign_goal, str) else request.campaign_goal
 
-        optimization = await legendary_coordinator.accountant.optimize_budget(
+        budget_plan = await legendary_coordinator.accountant.optimize_budget(
             project=project,
             constraints=constraints,
             goals=goals
@@ -988,14 +987,11 @@ async def optimize_budget(request: BudgetOptimizeRequest):
             "agent": "THE ACCOUNTANT (15)",
             "total_budget": request.total_budget,
             "optimization": {
-                "platform_allocations": optimization.platform_allocations,
-                "daily_budget": optimization.daily_budget,
-                "expected_reach": optimization.expected_reach,
-                "expected_impressions": optimization.expected_impressions,
-                "expected_cpm": optimization.expected_cpm,
-                "expected_cpc": optimization.expected_cpc,
-                "roi_estimate": optimization.roi_estimate,
-                "confidence": optimization.confidence
+                "allocation": budget_plan.allocation,
+                "expected_roi": budget_plan.expected_roi,
+                "cost_per_result": budget_plan.cost_per_result,
+                "savings_opportunities": budget_plan.savings_opportunities,
+                "risk_assessment": budget_plan.risk_assessment
             }
         }
 
