@@ -1,0 +1,97 @@
+{
+  "task": "image_to_image_variation",
+  "input_image": "{{hero_screenshot_or_ui_reference}}",
+  "goal": "Generate a premium AI assistant visual overlay concept that matches the existing Barrios A2I site (do NOT redesign layout).",
+  "style": {
+    "palette": {
+      "background": {
+        "obsidian_950": "#030005",
+        "navy_900": "#0B1220",
+        "slate_900": "#0E1626",
+        "panel": "rgba(255,255,255,0.06)",
+        "panel_border": "rgba(255,255,255,0.10)"
+      },
+      "text": {
+        "primary": "rgba(255,255,255,0.92)",
+        "secondary": "rgba(255,255,255,0.70)",
+        "muted": "rgba(255,255,255,0.55)"
+      },
+      "accent": {
+        "cyan": "#00C2FF",
+        "teal": "#22D3EE",
+        "electric_blue": "#3B82F6",
+        "success": "#10B981",
+        "warning": "#F59E0B",
+        "danger": "#EF4444"
+      },
+      "effects": {
+        "glow_cyan": "0 0 24px rgba(0,194,255,0.35)",
+        "glow_teal": "0 0 24px rgba(34,211,238,0.28)"
+      }
+    },
+    "fonts": {
+      "display": [
+        "Sora",
+        "Inter",
+        "system-ui",
+        "sans-serif"
+      ],
+      "body": [
+        "Inter",
+        "system-ui",
+        "sans-serif"
+      ],
+      "mono": [
+        "JetBrains Mono",
+        "ui-monospace",
+        "SFMono-Regular",
+        "Menlo",
+        "Monaco",
+        "Consolas",
+        "Liberation Mono",
+        "Courier New",
+        "monospace"
+      ]
+    },
+    "keywords": [
+      "obsidian",
+      "glass panels",
+      "neon cyan HUD accents",
+      "enterprise sci-fi",
+      "precise geometry"
+    ],
+    "avoid": [
+      "matrix rain",
+      "hacker skulls",
+      "cheap neon gradients",
+      "cartoon blobs",
+      "fake readable UI text"
+    ]
+  },
+  "variations": [
+    {
+      "name": "Holographic Assistant Core",
+      "description": "Subtle holographic presence behind the hero; thin arcs + node constellations; breathing cyan glow."
+    },
+    {
+      "name": "Neural Lattice Overlay",
+      "description": "Geometric node/edge lattice wrapping hero content without covering text."
+    },
+    {
+      "name": "Command Halo",
+      "description": "Circular halo system with ticks + micro marks (abstract, not readable) and soft glow."
+    },
+    {
+      "name": "Adaptive Glass Console",
+      "description": "Translucent assistant panel layer; minimal controls; clean borders; premium reflections."
+    },
+    {
+      "name": "Ambient Data Fog",
+      "description": "Ultra-light volumetric fog + particles; occasional cyan pulses; preserve readability."
+    }
+  ],
+  "output": {
+    "format": "png",
+    "size": "1024x1792_or_1792x1024"
+  }
+}

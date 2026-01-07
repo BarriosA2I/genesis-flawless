@@ -1,0 +1,90 @@
+{
+  "brand": {
+    "name": "Barrios A2I",
+    "product": "AI Creative Director (Neural Ad Forge)",
+    "positioning": "Autonomous intelligence systems + production-ready creative briefs for AI video.",
+    "design_intent": "Premium, cinematic, enterprise-grade; obsidian/teal with neon-cyan energy; glass + HUD accents + precise geometry."
+  },
+  "typography": {
+    "font_stack": {
+      "display": [
+        "Sora",
+        "Inter",
+        "system-ui",
+        "sans-serif"
+      ],
+      "body": [
+        "Inter",
+        "system-ui",
+        "sans-serif"
+      ],
+      "mono": [
+        "JetBrains Mono",
+        "ui-monospace",
+        "SFMono-Regular",
+        "Menlo",
+        "Monaco",
+        "Consolas",
+        "Liberation Mono",
+        "Courier New",
+        "monospace"
+      ]
+    },
+    "scale": {
+      "h1": "clamp(2.25rem, 4vw, 3.5rem)",
+      "h2": "clamp(1.75rem, 2.6vw, 2.5rem)",
+      "h3": "clamp(1.25rem, 1.8vw, 1.75rem)",
+      "body": "1rem",
+      "small": "0.875rem"
+    }
+  },
+  "colors": {
+    "background": {
+      "obsidian_950": "#030005",
+      "navy_900": "#0B1220",
+      "slate_900": "#0E1626",
+      "panel": "rgba(255,255,255,0.06)",
+      "panel_border": "rgba(255,255,255,0.10)"
+    },
+    "text": {
+      "primary": "rgba(255,255,255,0.92)",
+      "secondary": "rgba(255,255,255,0.70)",
+      "muted": "rgba(255,255,255,0.55)"
+    },
+    "accent": {
+      "cyan": "#00C2FF",
+      "teal": "#22D3EE",
+      "electric_blue": "#3B82F6",
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444"
+    },
+    "effects": {
+      "glow_cyan": "0 0 24px rgba(0,194,255,0.35)",
+      "glow_teal": "0 0 24px rgba(34,211,238,0.28)"
+    }
+  },
+  "radii": {
+    "sm": 10,
+    "md": 14,
+    "lg": 18,
+    "xl": 24
+  },
+  "shadows": {
+    "soft": "0 12px 40px rgba(0,0,0,0.35)",
+    "glow": "0 0 0 1px rgba(255,255,255,0.08), 0 0 28px rgba(0,194,255,0.18)"
+  },
+  "motion": {
+    "principles": [
+      "Subtle, purposeful motion. No gimmicks.",
+      "Prefer slow breathing glows, gentle parallax, and micro-interactions.",
+      "Always respect prefers-reduced-motion."
+    ],
+    "durations_ms": {
+      "micro": 120,
+      "short": 220,
+      "med": 420,
+      "long": 800
+    }
+  }
+}

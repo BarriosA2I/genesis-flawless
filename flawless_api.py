@@ -55,6 +55,9 @@ from ghost_recovery import EventType, SSEResponse
 # Import VORTEX v2.1 video assembly router
 from vortex.router import router as vortex_router, initialize_vortex
 
+# Import Chat routes (migrated from creative-director-api)
+from chat_routes import router as chat_router
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -264,6 +267,9 @@ app.add_middleware(
 
 # Include VORTEX v2.1 video assembly routes
 app.include_router(vortex_router)
+
+# Include Chat routes (migrated from creative-director-api)
+app.include_router(chat_router)
 
 
 # =============================================================================

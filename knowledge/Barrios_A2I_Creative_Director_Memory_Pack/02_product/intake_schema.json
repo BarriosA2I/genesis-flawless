@@ -1,0 +1,107 @@
+{
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Business & Offer",
+      "goal": "Capture what they sell + the core outcome.",
+      "questions": [
+        "Business name?",
+        "What are we advertising?",
+        "What is the #1 outcome customers get?"
+      ],
+      "validation": [
+        "Outcome stated plainly"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Differentiator",
+      "goal": "Find the sharp wedge.",
+      "questions": [
+        "What makes you different?",
+        "What proof/credibility exists (no invented numbers)?"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Offer Structure",
+      "goal": "Turn it into a clear package.",
+      "questions": [
+        "What\u2019s included?",
+        "Price range/starting price?",
+        "Any guarantee/promo/urgency?"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Target Audience",
+      "goal": "Define who we\u2019re talking to.",
+      "questions": [
+        "Who is this for?",
+        "Where are they (if relevant)?",
+        "What do they already believe?"
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Pain + Stakes",
+      "goal": "Name the problem + cost of doing nothing.",
+      "questions": [
+        "What\u2019s the pain?",
+        "What happens if they do nothing?"
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "Transformation",
+      "goal": "Show the after-state.",
+      "questions": [
+        "What does success look like?",
+        "What does a \u2018great day\u2019 look like after using you?"
+      ]
+    },
+    {
+      "phase": 7,
+      "name": "Hook Strategy",
+      "goal": "Define the first 2 seconds.",
+      "questions": [
+        "Hook style (shock/curiosity/proof/contrast/humor/authority)?",
+        "Any lead lines/claims?"
+      ]
+    },
+    {
+      "phase": 8,
+      "name": "Tone & Visual Style",
+      "goal": "Lock creative direction.",
+      "questions": [
+        "Pick tone (premium/playful/intense/warm/cinematic/doc/comedic).",
+        "Must-avoid vibes?"
+      ]
+    },
+    {
+      "phase": 9,
+      "name": "CTA",
+      "goal": "Make next step obvious.",
+      "questions": [
+        "What should viewer do next?",
+        "What incentive helps them act now?"
+      ]
+    },
+    {
+      "phase": 10,
+      "name": "Production Constraints",
+      "goal": "Make it runnable.",
+      "questions": [
+        "Target platform(s)?",
+        "Aspect ratio?",
+        "Any required scenes/props/branding?"
+      ]
+    }
+  ],
+  "outputs": {
+    "brief_template": "04_examples/brief_template.md",
+    "veo_template": "03_prompting/veo_3_scene_template.md",
+    "sora_template": "03_prompting/sora_2_script_template.md",
+    "nanobanana_template": "03_prompting/nanobanana_image_json_template.json"
+  }
+}

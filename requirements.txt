@@ -43,3 +43,7 @@ numpy>=1.24.0
 
 # Qdrant Vector Store
 qdrant-client>=1.7.0
+
+# LangGraph Orchestration (for video brief intake)
+langgraph>=0.0.20
+langchain-core>=0.1.0
