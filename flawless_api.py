@@ -756,7 +756,7 @@ class PlatformAdaptRequest(BaseModel):
 class TrendHuntRequest(BaseModel):
     """Request for trend hunting"""
     industry: str = Field(..., description="Industry to scout")
-    categories: List[str] = Field(default_factory=lambda: ["visual", "audio", "narrative"])
+    keywords: List[str] = Field(default_factory=lambda: ["visual", "audio", "narrative"], description="Keywords/categories to search for")
     lookback_days: int = Field(7, description="Days to look back for trends")
 
 
@@ -876,27 +876,27 @@ async def adapt_platform(request: PlatformAdaptRequest):
         raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
 
     try:
-        adaptations = await legendary_coordinator.chameleon.adapt_content(
-            original_content=request.content,
-            source_platform=request.source_platform,
-            target_platforms=request.target_platforms
-        )
+        # adapt_for_platform takes a single platform, so loop through targets
+        adaptations = {}
+        for platform in request.target_platforms:
+            adapt = await legendary_coordinator.chameleon.adapt_for_platform(
+                content=request.content,
+                target_platform=platform
+            )
+            adaptations[platform] = {
+                "aspect_ratio": adapt.aspect_ratio,
+                "duration_seconds": adapt.duration_seconds,
+                "text_overlays": adapt.text_overlays,
+                "hashtags": adapt.hashtags,
+                "optimal_posting_times": adapt.optimal_posting_times,
+                "platform_specific_hook": adapt.platform_specific_hook
+            }
 
         return {
             "status": "success",
             "agent": "THE CHAMELEON (12)",
             "source_platform": request.source_platform,
-            "adaptations": {
-                platform: {
-                    "aspect_ratio": adapt.aspect_ratio,
-                    "duration_seconds": adapt.duration_seconds,
-                    "text_overlays": adapt.text_overlays,
-                    "hashtags": adapt.hashtags,
-                    "optimal_posting_times": adapt.optimal_posting_times,
-                    "platform_specific_hook": adapt.platform_specific_hook
-                }
-                for platform, adapt in adaptations.items()
-            }
+            "adaptations": adaptations
         }
 
     except Exception as e:
@@ -922,9 +922,9 @@ async def hunt_trends(request: TrendHuntRequest):
         raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
 
     try:
-        trends = await legendary_coordinator.hunter.scout_trends(
+        trends = await legendary_coordinator.hunter.hunt_trends(
             industry=request.industry,
-            categories=request.categories,
+            keywords=request.keywords,
             lookback_days=request.lookback_days
         )
 
@@ -965,12 +965,22 @@ async def optimize_budget(request: BudgetOptimizeRequest):
         raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
 
     try:
+        # optimize_budget expects project dict, constraints dict, and goals list
+        project = {
+            "platforms": request.platforms,
+            "duration_days": request.duration_days,
+            "industry": request.industry
+        }
+        constraints = {
+            "total_budget": request.total_budget,
+            "max_daily": request.total_budget / max(request.duration_days, 1)
+        }
+        goals = [request.campaign_goal] if isinstance(request.campaign_goal, str) else request.campaign_goal
+
         optimization = await legendary_coordinator.accountant.optimize_budget(
-            total_budget=request.total_budget,
-            platforms=request.platforms,
-            campaign_goal=request.campaign_goal,
-            duration_days=request.duration_days,
-            industry=request.industry
+            project=project,
+            constraints=constraints,
+            goals=goals
         )
 
         return {
