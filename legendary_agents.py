@@ -90,6 +90,40 @@ def _ensure_metrics_initialized():
     logger.info("Legendary agents Prometheus metrics initialized")
 
 
+def record_agent_call(agent_name: str):
+    """Record an agent call metric (fault-tolerant)."""
+    try:
+        _ensure_metrics_initialized()
+        metric = _metrics_registry.get('legendary_agent_calls')
+        if metric:
+            metric.labels(agent_name=agent_name).inc()
+    except Exception as e:
+        logger.debug(f"Metrics unavailable: {e}")
+
+
+def record_agent_latency(agent_name: str, latency_ms: float):
+    """Record agent latency metric (fault-tolerant)."""
+    try:
+        _ensure_metrics_initialized()
+        metric = _metrics_registry.get('legendary_agent_latency')
+        if metric:
+            metric.labels(agent_name=agent_name).observe(latency_ms)
+    except Exception as e:
+        logger.debug(f"Metrics unavailable: {e}")
+
+
+def record_viral_score(content_type: str, score: float):
+    """Record viral score metric (fault-tolerant)."""
+    try:
+        _ensure_metrics_initialized()
+        metric = _metrics_registry.get('viral_score')
+        if metric:
+            metric.labels(content_type=content_type).set(score)
+    except Exception as e:
+        logger.debug(f"Metrics unavailable: {e}")
+
+
+# Keep original getters for backwards compatibility
 def get_legendary_agent_calls() -> Optional[Counter]:
     """Get the legendary agent calls counter."""
     _ensure_metrics_initialized()
@@ -275,8 +309,7 @@ class TheAuteur:
         """Analyze video quality against brief and brand guidelines"""
 
         with tracer.start_as_current_span("auteur_analyze") as span:
-            if get_legendary_agent_calls():
-                get_legendary_agent_calls().labels(agent_name=self.name).inc()
+            record_agent_call(self.name)
             start_time = datetime.now()
 
             # Sample frames for analysis (every 5th frame, max 10)
@@ -320,8 +353,7 @@ technical_issues (list), recommendations (list), overall_score"""
             )
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            if get_legendary_agent_latency():
-                get_legendary_agent_latency().labels(agent_name=self.name).observe(latency_ms)
+            record_agent_latency(self.name, latency_ms)
 
             span.set_attribute("overall_score", analysis.overall_score)
             span.set_attribute("approved", analysis.approved)
@@ -367,8 +399,7 @@ class TheGeneticist:
         """Evolve a prompt through genetic optimization"""
 
         with tracer.start_as_current_span("geneticist_evolve") as span:
-            if get_legendary_agent_calls():
-                get_legendary_agent_calls().labels(agent_name=self.name).inc()
+            record_agent_call(self.name)
             start_time = datetime.now()
 
             # Initialize population with mutations
@@ -395,8 +426,7 @@ class TheGeneticist:
                 all_mutations.append(f"Gen{gen+1}: crossover/mutation applied")
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            if get_legendary_agent_latency():
-                get_legendary_agent_latency().labels(agent_name=self.name).observe(latency_ms)
+            record_agent_latency(self.name, latency_ms)
 
             logger.info(f"[{self.name}] Evolution complete: improvement={best_score - 0.5:.2f}")
 
@@ -474,8 +504,7 @@ class TheOracle:
         """Predict viral potential of content"""
 
         with tracer.start_as_current_span("oracle_predict") as span:
-            if get_legendary_agent_calls():
-                get_legendary_agent_calls().labels(agent_name=self.name).inc()
+            record_agent_call(self.name)
             start_time = datetime.now()
 
             trends = await self._get_trends(target_platforms) if self.trend_api else []
@@ -516,12 +545,10 @@ Analyze and predict viral potential. Respond in JSON:
                 confidence=result.get('confidence', 0.7)
             )
 
-            if get_viral_score():
-                get_viral_score().labels(content_type=content.get('type', 'video')).set(prediction.viral_score)
+            record_viral_score(content.get('type', 'video'), prediction.viral_score)
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            if get_legendary_agent_latency():
-                get_legendary_agent_latency().labels(agent_name=self.name).observe(latency_ms)
+            record_agent_latency(self.name, latency_ms)
 
             span.set_attribute("viral_score", prediction.viral_score)
             logger.info(f"[{self.name}] Prediction: viral_score={prediction.viral_score:.2f}, confidence={prediction.confidence:.2f}")
@@ -579,8 +606,7 @@ class TheChameleon:
         """Adapt content for specific platform"""
 
         with tracer.start_as_current_span("chameleon_adapt") as span:
-            if get_legendary_agent_calls():
-                get_legendary_agent_calls().labels(agent_name=self.name).inc()
+            record_agent_call(self.name)
             start_time = datetime.now()
 
             specs = self.PLATFORM_SPECS.get(target_platform, {})
@@ -618,8 +644,7 @@ Adapt content for {target_platform}. Respond in JSON:
             )
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            if get_legendary_agent_latency():
-                get_legendary_agent_latency().labels(agent_name=self.name).observe(latency_ms)
+            record_agent_latency(self.name, latency_ms)
 
             span.set_attribute("platform", target_platform)
             logger.info(f"[{self.name}] Adapted for {target_platform}: engagement_pred={adaptation.engagement_prediction:.2f}")
@@ -659,8 +684,7 @@ class TheMemory:
         """Retrieve comprehensive client profile"""
 
         with tracer.start_as_current_span("memory_retrieve") as span:
-            if get_legendary_agent_calls():
-                get_legendary_agent_calls().labels(agent_name=self.name).inc()
+            record_agent_call(self.name)
             start_time = datetime.now()
 
             client_data = await self.vector_db.search(
@@ -691,8 +715,7 @@ avoid_patterns, voice_characteristics, historical_performance"""
             )
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            if get_legendary_agent_latency():
-                get_legendary_agent_latency().labels(agent_name=self.name).observe(latency_ms)
+            record_agent_latency(self.name, latency_ms)
 
             span.set_attribute("client_id", client_id)
             logger.info(f"[{self.name}] Retrieved DNA for client: {client_id}")
@@ -758,8 +781,7 @@ class TheHunter:
         """Hunt for relevant trends"""
 
         with tracer.start_as_current_span("hunter_scout") as span:
-            if get_legendary_agent_calls():
-                get_legendary_agent_calls().labels(agent_name=self.name).inc()
+            record_agent_call(self.name)
             start_time = datetime.now()
 
             raw_trends = await self._gather_trends(industry, keywords, lookback_days)
@@ -796,8 +818,7 @@ Analyze trends. Respond in JSON:
             )
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            if get_legendary_agent_latency():
-                get_legendary_agent_latency().labels(agent_name=self.name).observe(latency_ms)
+            record_agent_latency(self.name, latency_ms)
 
             span.set_attribute("industry", industry)
             logger.info(f"[{self.name}] Hunted {len(report.trends)} trends for {industry}")
@@ -856,8 +877,7 @@ class TheAccountant:
         """Optimize budget allocation for project"""
 
         with tracer.start_as_current_span("accountant_optimize") as span:
-            if get_legendary_agent_calls():
-                get_legendary_agent_calls().labels(agent_name=self.name).inc()
+            record_agent_call(self.name)
             start_time = datetime.now()
 
             prompt = f"""You are THE ACCOUNTANT, a budget optimization expert.
@@ -894,8 +914,7 @@ Optimize budget. Respond in JSON:
             )
 
             latency_ms = (datetime.now() - start_time).total_seconds() * 1000
-            if get_legendary_agent_latency():
-                get_legendary_agent_latency().labels(agent_name=self.name).observe(latency_ms)
+            record_agent_latency(self.name, latency_ms)
 
             span.set_attribute("expected_roi", optimization.expected_roi)
             logger.info(f"[{self.name}] Optimized budget: total=${optimization.total_budget:.2f}, ROI={optimization.expected_roi:.1f}x")
