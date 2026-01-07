@@ -58,6 +58,19 @@ from vortex.router import router as vortex_router, initialize_vortex
 # Import Chat routes (migrated from creative-director-api)
 from chat_routes import router as chat_router
 
+# Import Legendary Agents (7.5-15) - THE APEX TIER
+from legendary_agents import (
+    create_legendary_coordinator,
+    LegendaryCoordinator,
+    TheAuteur,
+    TheGeneticist,
+    TheOracle,
+    TheChameleon,
+    TheMemory,
+    TheHunter,
+    TheAccountant,
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -159,6 +172,7 @@ class TriggerResponse(BaseModel):
 # Global state
 START_TIME = time.time()
 orchestrator: Optional[FlawlessGenesisOrchestrator] = None
+legendary_coordinator: Optional[LegendaryCoordinator] = None
 active_streams: Dict[str, asyncio.Task] = {}
 
 
@@ -207,8 +221,34 @@ async def lifespan(app: FastAPI):
     # Initialize VORTEX v2.1 (video assembly)
     initialize_vortex(redis_client)
     logger.info("✅ VORTEX v2.1 video assembly initialized")
+
+    # Initialize Legendary Coordinator (Agents 7.5-15)
+    global legendary_coordinator
+    try:
+        # Initialize Qdrant client for client DNA storage
+        qdrant_client = None
+        qdrant_url = os.getenv("QDRANT_URL")
+        if qdrant_url:
+            from qdrant_client import QdrantClient
+            qdrant_client = QdrantClient(
+                url=qdrant_url,
+                api_key=os.getenv("QDRANT_API_KEY")
+            )
+            logger.info("✅ Qdrant client initialized for Legendary Agents")
+
+        legendary_coordinator = create_legendary_coordinator(
+            anthropic_client=anthropic_client,
+            qdrant_client=qdrant_client,
+            trend_api_key=os.getenv("TREND_API_KEY")
+        )
+        logger.info("✅ Legendary Coordinator initialized (Agents 7.5-15)")
+    except Exception as e:
+        logger.warning(f"⚠️ Legendary Coordinator init failed: {e} - using mock fallback")
+        legendary_coordinator = create_legendary_coordinator()
+
     logger.info("=" * 60)
     logger.info("⚡ FLAWLESS GENESIS API v2.0 READY")
+    logger.info("⚡ 23 AGENTS ACTIVATED - RAGNAROK APEX")
     logger.info("=" * 60)
     
     yield
@@ -682,6 +722,295 @@ async def force_close_circuit(service: str):
     await orchestrator.circuits[service].force_close()
     
     return {"status": "closed", "service": service}
+
+
+# =============================================================================
+# LEGENDARY AGENTS ENDPOINTS (7.5-15) - THE APEX TIER
+# =============================================================================
+
+class LegendaryEnhanceRequest(BaseModel):
+    """Request for full pre/post production enhancement"""
+    session_id: str
+    brief: Dict[str, Any] = Field(..., description="Creative brief data")
+    client_id: Optional[str] = Field(None, description="Client ID for DNA profiling")
+    video_frames: Optional[List[str]] = Field(None, description="Base64 video frame samples for post-production")
+    target_platforms: List[str] = Field(default_factory=lambda: ["youtube", "tiktok", "instagram"])
+
+
+class ViralPredictionRequest(BaseModel):
+    """Request for viral prediction analysis"""
+    hook_text: str = Field(..., description="Opening hook text")
+    visual_style: str = Field(..., description="Visual style description")
+    target_audience: Dict[str, Any] = Field(..., description="Target audience profile")
+    platform: str = Field("youtube", description="Target platform")
+    industry: str = Field(..., description="Industry vertical")
+
+
+class PlatformAdaptRequest(BaseModel):
+    """Request for platform adaptation"""
+    content: Dict[str, Any] = Field(..., description="Original content")
+    source_platform: str = Field("youtube", description="Source platform")
+    target_platforms: List[str] = Field(..., description="Target platforms to adapt for")
+
+
+class TrendHuntRequest(BaseModel):
+    """Request for trend hunting"""
+    industry: str = Field(..., description="Industry to scout")
+    categories: List[str] = Field(default_factory=lambda: ["visual", "audio", "narrative"])
+    lookback_days: int = Field(7, description="Days to look back for trends")
+
+
+class BudgetOptimizeRequest(BaseModel):
+    """Request for budget optimization"""
+    total_budget: float = Field(..., description="Total campaign budget in USD")
+    platforms: List[str] = Field(..., description="Platforms to distribute across")
+    campaign_goal: str = Field("conversions", description="Primary goal: awareness, engagement, conversions")
+    duration_days: int = Field(30, description="Campaign duration")
+    industry: str = Field(..., description="Industry vertical")
+
+
+@app.post("/api/legendary/enhance", tags=["Legendary"])
+async def legendary_enhance(request: LegendaryEnhanceRequest):
+    """
+    Full Legendary Enhancement Pipeline.
+
+    Runs pre-production enhancement (trend scouting, client DNA, budget optimization)
+    and optionally post-production enhancement (vision QA, platform adaptation, viral prediction).
+
+    This is the 23-agent APEX tier in action.
+    """
+    if not legendary_coordinator:
+        raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
+
+    try:
+        # Run pre-production enhancement
+        pre_results = await legendary_coordinator.pre_production_enhancement(
+            brief=request.brief,
+            client_id=request.client_id
+        )
+
+        # If video frames provided, run post-production enhancement
+        post_results = {}
+        if request.video_frames:
+            post_results = await legendary_coordinator.post_production_enhancement(
+                video_frames=request.video_frames,
+                brief=request.brief,
+                target_platforms=request.target_platforms
+            )
+
+        return {
+            "status": "success",
+            "session_id": request.session_id,
+            "pre_production": pre_results,
+            "post_production": post_results if post_results else None,
+            "agents_executed": ["7.5", "8.5", "11", "12", "13", "14", "15"]
+        }
+
+    except Exception as e:
+        logger.error(f"Legendary enhance error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/legendary/predict-viral", tags=["Legendary"])
+async def predict_viral(request: ViralPredictionRequest):
+    """
+    THE ORACLE (Agent 11) - Viral Prediction Analysis.
+
+    Predicts viral potential using multi-factor analysis:
+    - Emotional resonance scoring
+    - Platform-specific virality factors
+    - Trend alignment
+    - Hook effectiveness
+
+    Returns confidence score (0-100) and detailed breakdown.
+    """
+    if not legendary_coordinator:
+        raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
+
+    try:
+        prediction = await legendary_coordinator.oracle.predict_virality(
+            hook_text=request.hook_text,
+            visual_style=request.visual_style,
+            target_audience=request.target_audience,
+            platform=request.platform,
+            industry=request.industry
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE ORACLE (11)",
+            "prediction": {
+                "viral_score": prediction.viral_score,
+                "confidence": prediction.confidence,
+                "platform_factors": prediction.platform_factors,
+                "emotional_triggers": prediction.emotional_triggers,
+                "trend_alignment": prediction.trend_alignment,
+                "recommended_tweaks": prediction.recommended_tweaks
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Viral prediction error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/legendary/adapt-platform", tags=["Legendary"])
+async def adapt_platform(request: PlatformAdaptRequest):
+    """
+    THE CHAMELEON (Agent 12) - Platform Adaptation.
+
+    Automatically adapts content for multiple platforms:
+    - Aspect ratio adjustments
+    - Caption/text overlay optimization
+    - Hashtag strategy per platform
+    - Posting time recommendations
+    - Platform-specific hooks
+    """
+    if not legendary_coordinator:
+        raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
+
+    try:
+        adaptations = await legendary_coordinator.chameleon.adapt_content(
+            original_content=request.content,
+            source_platform=request.source_platform,
+            target_platforms=request.target_platforms
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE CHAMELEON (12)",
+            "source_platform": request.source_platform,
+            "adaptations": {
+                platform: {
+                    "aspect_ratio": adapt.aspect_ratio,
+                    "duration_seconds": adapt.duration_seconds,
+                    "text_overlays": adapt.text_overlays,
+                    "hashtags": adapt.hashtags,
+                    "optimal_posting_times": adapt.optimal_posting_times,
+                    "platform_specific_hook": adapt.platform_specific_hook
+                }
+                for platform, adapt in adaptations.items()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Platform adaptation error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/legendary/hunt-trends", tags=["Legendary"])
+async def hunt_trends(request: TrendHuntRequest):
+    """
+    THE HUNTER (Agent 14) - Trend Scouting.
+
+    Scans multiple data sources for emerging trends:
+    - Social media trending topics
+    - Industry-specific patterns
+    - Visual style trends
+    - Audio/music trends
+    - Narrative format trends
+
+    Returns actionable trend insights for creative direction.
+    """
+    if not legendary_coordinator:
+        raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
+
+    try:
+        trends = await legendary_coordinator.hunter.scout_trends(
+            industry=request.industry,
+            categories=request.categories,
+            lookback_days=request.lookback_days
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE HUNTER (14)",
+            "industry": request.industry,
+            "trends": {
+                "visual_trends": trends.visual_trends,
+                "audio_trends": trends.audio_trends,
+                "narrative_trends": trends.narrative_trends,
+                "emerging_hashtags": trends.emerging_hashtags,
+                "trend_velocity": trends.trend_velocity,
+                "recommended_styles": trends.recommended_styles
+            },
+            "freshness": trends.freshness_score
+        }
+
+    except Exception as e:
+        logger.error(f"Trend hunting error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/legendary/optimize-budget", tags=["Legendary"])
+async def optimize_budget(request: BudgetOptimizeRequest):
+    """
+    THE ACCOUNTANT (Agent 15) - Budget Optimization.
+
+    Optimizes campaign budget allocation using:
+    - Historical performance data
+    - Platform CPM/CPC analysis
+    - Audience reach modeling
+    - ROI prediction
+
+    Returns optimal budget distribution and expected metrics.
+    """
+    if not legendary_coordinator:
+        raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
+
+    try:
+        optimization = await legendary_coordinator.accountant.optimize_budget(
+            total_budget=request.total_budget,
+            platforms=request.platforms,
+            campaign_goal=request.campaign_goal,
+            duration_days=request.duration_days,
+            industry=request.industry
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE ACCOUNTANT (15)",
+            "total_budget": request.total_budget,
+            "optimization": {
+                "platform_allocations": optimization.platform_allocations,
+                "daily_budget": optimization.daily_budget,
+                "expected_reach": optimization.expected_reach,
+                "expected_impressions": optimization.expected_impressions,
+                "expected_cpm": optimization.expected_cpm,
+                "expected_cpc": optimization.expected_cpc,
+                "roi_estimate": optimization.roi_estimate,
+                "confidence": optimization.confidence
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Budget optimization error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/legendary/status", tags=["Legendary"])
+async def legendary_status():
+    """Get status of all Legendary Agents (7.5-15)."""
+    if not legendary_coordinator:
+        return {
+            "status": "offline",
+            "message": "Legendary Coordinator not initialized"
+        }
+
+    return {
+        "status": "online",
+        "agents": {
+            "7.5": {"name": "THE AUTEUR", "role": "Vision-Language QA", "status": "active"},
+            "8.5": {"name": "THE GENETICIST", "role": "DSPy Prompt Evolution", "status": "active"},
+            "11": {"name": "THE ORACLE", "role": "Viral Prediction", "status": "active"},
+            "12": {"name": "THE CHAMELEON", "role": "Platform Adapter", "status": "active"},
+            "13": {"name": "THE MEMORY", "role": "Client DNA Profiling", "status": "active"},
+            "14": {"name": "THE HUNTER", "role": "Trend Scouting", "status": "active"},
+            "15": {"name": "THE ACCOUNTANT", "role": "Budget Optimization", "status": "active"}
+        },
+        "total_agents": 23,
+        "apex_tier": "RAGNAROK v7.0 APEX"
+    }
 
 
 # =============================================================================

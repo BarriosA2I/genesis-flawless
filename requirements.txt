@@ -41,6 +41,9 @@ sse-starlette>=1.8.2
 # RAGNAROK v4.0 Enhancement Agents
 numpy>=1.24.0
 
+# RAGNAROK v7.0 APEX Legendary Agents (7.5-15)
+scipy>=1.10.0
+
 # Qdrant Vector Store
 qdrant-client>=1.7.0
 
