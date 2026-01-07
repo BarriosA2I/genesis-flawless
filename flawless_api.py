@@ -833,7 +833,6 @@ async def predict_viral(request: ViralPredictionRequest):
             "hook_text": request.hook_text,
             "visual_style": request.visual_style,
             "industry": request.industry,
-            **request.content
         }
         target_platforms = [request.platform] if request.platform else ["tiktok"]
 
