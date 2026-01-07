@@ -71,6 +71,12 @@ from legendary_agents import (
     TheAccountant,
 )
 
+# Import THE CURATOR (Agent 16) - Autonomous Commercial Intelligence
+from commercial_curator import (
+    TheCurator, CuratorConfig, Platform, PatternType,
+    create_curator, ExtractedPattern, TrendSignal
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -173,6 +179,7 @@ class TriggerResponse(BaseModel):
 START_TIME = time.time()
 orchestrator: Optional[FlawlessGenesisOrchestrator] = None
 legendary_coordinator: Optional[LegendaryCoordinator] = None
+curator: Optional[TheCurator] = None
 active_streams: Dict[str, asyncio.Task] = {}
 
 
@@ -246,9 +253,36 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Legendary Coordinator init failed: {e} - using mock fallback")
         legendary_coordinator = create_legendary_coordinator()
 
+    # Initialize THE CURATOR (Agent 16) - Autonomous Commercial Intelligence
+    global curator
+    try:
+        curator_config = CuratorConfig(
+            discovery_interval_hours=6,
+            consolidation_hour=2,
+            cleanup_day=0,
+            max_ads_per_cycle=100,
+            industries=[
+                "technology", "healthcare", "finance", "retail",
+                "automotive", "travel", "food", "entertainment",
+                "real_estate", "education", "fitness", "beauty"
+            ]
+        )
+
+        curator = create_curator(
+            llm_client=None,  # Uses mock for now
+            qdrant_client=qdrant_client,
+            meta_token=os.getenv("META_AD_LIBRARY_TOKEN"),
+            tiktok_token=os.getenv("TIKTOK_CREATIVE_TOKEN"),
+            config=curator_config
+        )
+        logger.info("✅ THE CURATOR initialized (Agent 16)")
+    except Exception as e:
+        logger.warning(f"⚠️ Curator init failed: {e} - using mock")
+        curator = create_curator()
+
     logger.info("=" * 60)
     logger.info("⚡ FLAWLESS GENESIS API v2.0 READY")
-    logger.info("⚡ 23 AGENTS ACTIVATED - RAGNAROK APEX")
+    logger.info("⚡ 24 AGENTS ACTIVATED - RAGNAROK v3.0 APEX")
     logger.info("=" * 60)
     
     yield
@@ -769,6 +803,22 @@ class BudgetOptimizeRequest(BaseModel):
     industry: str = Field(..., description="Industry vertical")
 
 
+# =============================================================================
+# THE CURATOR REQUEST MODELS (Agent 16)
+# =============================================================================
+
+class CuratorEnhanceBriefRequest(BaseModel):
+    """Request to enhance a creative brief with curator intelligence"""
+    brief: Dict[str, Any] = Field(..., description="Creative brief to enhance")
+    industry: str = Field(..., description="Industry vertical")
+
+
+class CuratorTrendsRequest(BaseModel):
+    """Request for trending patterns"""
+    industry: Optional[str] = Field(None, description="Filter by industry")
+    lookback_days: int = Field(14, description="Days to look back")
+
+
 @app.post("/api/legendary/enhance", tags=["Legendary"])
 async def legendary_enhance(request: LegendaryEnhanceRequest):
     """
@@ -1002,7 +1052,7 @@ async def optimize_budget(request: BudgetOptimizeRequest):
 
 @app.get("/api/legendary/status", tags=["Legendary"])
 async def legendary_status():
-    """Get status of all Legendary Agents (7.5-15)."""
+    """Get status of all Legendary Agents (7.5-16)."""
     if not legendary_coordinator:
         return {
             "status": "offline",
@@ -1018,11 +1068,270 @@ async def legendary_status():
             "12": {"name": "THE CHAMELEON", "role": "Platform Adapter", "status": "active"},
             "13": {"name": "THE MEMORY", "role": "Client DNA Profiling", "status": "active"},
             "14": {"name": "THE HUNTER", "role": "Trend Scouting", "status": "active"},
-            "15": {"name": "THE ACCOUNTANT", "role": "Budget Optimization", "status": "active"}
+            "15": {"name": "THE ACCOUNTANT", "role": "Budget Optimization", "status": "active"},
+            "16": {"name": "THE CURATOR", "role": "Commercial Intelligence", "status": "active" if curator else "initializing"}
         },
-        "total_agents": 23,
-        "apex_tier": "RAGNAROK v7.0 APEX"
+        "total_agents": 24,
+        "apex_tier": "RAGNAROK v3.0 APEX"
     }
+
+
+# =============================================================================
+# THE CURATOR ENDPOINTS (Agent 16) - Autonomous Commercial Intelligence
+# =============================================================================
+
+@app.post("/api/curator/enhance-brief", tags=["Curator"])
+async def curator_enhance_brief(request: CuratorEnhanceBriefRequest):
+    """
+    THE CURATOR (Agent 16) - Enhance Creative Brief.
+
+    Enriches a creative brief with competitive intelligence:
+    - Top-performing hooks from similar ads
+    - Proven CTA patterns for the industry
+    - Trending visual styles
+    - Platform-specific optimizations
+    """
+    if not curator:
+        raise HTTPException(status_code=503, detail="Curator not initialized")
+
+    try:
+        enhanced = await curator.enhance_brief(
+            brief=request.brief,
+            industry=request.industry
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE CURATOR (16)",
+            "enhanced_brief": enhanced
+        }
+    except Exception as e:
+        logger.error(f"Brief enhancement error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/curator/hooks/{industry}", tags=["Curator"])
+async def curator_get_hooks(
+    industry: str,
+    limit: int = Query(10, ge=1, le=50, description="Number of hooks to return")
+):
+    """
+    THE CURATOR (Agent 16) - Get Top Hooks.
+
+    Returns the highest-performing hook patterns for an industry.
+    Hooks are ranked by engagement score and recency.
+    """
+    if not curator:
+        raise HTTPException(status_code=503, detail="Curator not initialized")
+
+    try:
+        hooks = await curator.pattern_indexer.get_top_patterns(
+            pattern_type=PatternType.HOOK,
+            industry=industry,
+            limit=limit
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE CURATOR (16)",
+            "industry": industry,
+            "hooks": [
+                {
+                    "text": h.text,
+                    "effectiveness_score": h.effectiveness_score,
+                    "platform": h.platform.value if h.platform else "multi",
+                    "industry": h.industry
+                }
+                for h in hooks
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Hook retrieval error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/curator/ctas/{industry}", tags=["Curator"])
+async def curator_get_ctas(
+    industry: str,
+    limit: int = Query(10, ge=1, le=50, description="Number of CTAs to return")
+):
+    """
+    THE CURATOR (Agent 16) - Get Top CTAs.
+
+    Returns proven call-to-action patterns for an industry.
+    CTAs are ranked by conversion effectiveness.
+    """
+    if not curator:
+        raise HTTPException(status_code=503, detail="Curator not initialized")
+
+    try:
+        ctas = await curator.pattern_indexer.get_top_patterns(
+            pattern_type=PatternType.CTA,
+            industry=industry,
+            limit=limit
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE CURATOR (16)",
+            "industry": industry,
+            "ctas": [
+                {
+                    "text": c.text,
+                    "effectiveness_score": c.effectiveness_score,
+                    "platform": c.platform.value if c.platform else "multi",
+                    "industry": c.industry
+                }
+                for c in ctas
+            ]
+        }
+    except Exception as e:
+        logger.error(f"CTA retrieval error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/curator/styles/{industry}", tags=["Curator"])
+async def curator_get_styles(
+    industry: str,
+    limit: int = Query(10, ge=1, le=50, description="Number of styles to return")
+):
+    """
+    THE CURATOR (Agent 16) - Get Trending Visual Styles.
+
+    Returns trending visual styles for an industry.
+    Styles include color palettes, typography, and composition patterns.
+    """
+    if not curator:
+        raise HTTPException(status_code=503, detail="Curator not initialized")
+
+    try:
+        styles = await curator.pattern_indexer.get_top_patterns(
+            pattern_type=PatternType.VISUAL_STYLE,
+            industry=industry,
+            limit=limit
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE CURATOR (16)",
+            "industry": industry,
+            "styles": [
+                {
+                    "text": s.text,
+                    "effectiveness_score": s.effectiveness_score,
+                    "platform": s.platform.value if s.platform else "multi",
+                    "industry": s.industry
+                }
+                for s in styles
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Style retrieval error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/curator/trends", tags=["Curator"])
+async def curator_get_trends(request: CuratorTrendsRequest):
+    """
+    THE CURATOR (Agent 16) - Get Trending Patterns.
+
+    Detects emerging trends across all platforms:
+    - Rising hooks and CTAs
+    - Viral visual styles
+    - Platform-specific trends
+    - Industry momentum signals
+    """
+    if not curator:
+        raise HTTPException(status_code=503, detail="Curator not initialized")
+
+    try:
+        trends = await curator.trend_detector.detect_trends(
+            industry=request.industry,
+            lookback_days=request.lookback_days
+        )
+
+        return {
+            "status": "success",
+            "agent": "THE CURATOR (16)",
+            "industry": request.industry or "all",
+            "lookback_days": request.lookback_days,
+            "trends": [
+                {
+                    "pattern_type": t.pattern_type.value,
+                    "momentum_score": t.momentum_score,
+                    "growth_rate": t.growth_rate,
+                    "platform": t.platform.value if t.platform else "multi",
+                    "representative_examples": t.representative_examples[:3]
+                }
+                for t in trends
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Trend detection error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/curator/status", tags=["Curator"])
+async def curator_status():
+    """Get THE CURATOR (Agent 16) status and statistics."""
+    if not curator:
+        return {
+            "status": "offline",
+            "message": "Curator not initialized"
+        }
+
+    return {
+        "status": "online",
+        "agent": "THE CURATOR (16)",
+        "role": "Autonomous Commercial Intelligence",
+        "capabilities": [
+            "Ad discovery (Meta, TikTok, YouTube)",
+            "Pattern extraction (hooks, CTAs, styles)",
+            "Trend detection with momentum scoring",
+            "Brief enhancement with competitive intel"
+        ],
+        "stats": {
+            "running": curator.is_running,
+            "industries_tracked": len(curator.config.industries),
+            "discovery_interval_hours": curator.config.discovery_interval_hours
+        }
+    }
+
+
+@app.post("/api/curator/start", tags=["Curator"])
+async def curator_start():
+    """Start THE CURATOR's autonomous discovery cycle."""
+    if not curator:
+        raise HTTPException(status_code=503, detail="Curator not initialized")
+
+    try:
+        await curator.start()
+        return {
+            "status": "success",
+            "message": "Curator discovery cycle started",
+            "is_running": curator.is_running
+        }
+    except Exception as e:
+        logger.error(f"Curator start error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/curator/stop", tags=["Curator"])
+async def curator_stop():
+    """Stop THE CURATOR's autonomous discovery cycle."""
+    if not curator:
+        raise HTTPException(status_code=503, detail="Curator not initialized")
+
+    try:
+        await curator.stop()
+        return {
+            "status": "success",
+            "message": "Curator discovery cycle stopped",
+            "is_running": curator.is_running
+        }
+    except Exception as e:
+        logger.error(f"Curator stop error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
