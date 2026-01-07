@@ -828,12 +828,19 @@ async def predict_viral(request: ViralPredictionRequest):
         raise HTTPException(status_code=503, detail="Legendary Coordinator not initialized")
 
     try:
+        # Build content dict from request fields
+        content = {
+            "hook_text": request.hook_text,
+            "visual_style": request.visual_style,
+            "industry": request.industry,
+            **request.content
+        }
+        target_platforms = [request.platform] if request.platform else ["tiktok"]
+
         prediction = await legendary_coordinator.oracle.predict_virality(
-            hook_text=request.hook_text,
-            visual_style=request.visual_style,
-            target_audience=request.target_audience,
-            platform=request.platform,
-            industry=request.industry
+            content=content,
+            target_platforms=target_platforms,
+            target_audience=request.target_audience
         )
 
         return {
