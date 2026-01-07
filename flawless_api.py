@@ -77,6 +77,12 @@ from commercial_curator import (
     create_curator, ExtractedPattern, TrendSignal
 )
 
+# Import NEXUS BRIDGE (Commercial_Lab Production Pipeline)
+from nexus_bridge import (
+    NexusBridge, ProductionPhase, ProductionStatus, ProductionState,
+    create_nexus_bridge
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -180,6 +186,7 @@ START_TIME = time.time()
 orchestrator: Optional[FlawlessGenesisOrchestrator] = None
 legendary_coordinator: Optional[LegendaryCoordinator] = None
 curator: Optional[TheCurator] = None
+nexus_bridge: Optional[NexusBridge] = None
 active_streams: Dict[str, asyncio.Task] = {}
 
 
@@ -280,9 +287,21 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Curator init failed: {e} - using mock")
         curator = create_curator()
 
+    # Initialize NEXUS BRIDGE (Commercial_Lab Production Pipeline)
+    global nexus_bridge
+    try:
+        nexus_bridge = create_nexus_bridge(
+            redis_client=redis_client,
+            curator=curator
+        )
+        logger.info("✅ NEXUS BRIDGE initialized (Commercial_Lab Pipeline)")
+    except Exception as e:
+        logger.warning(f"⚠️ Nexus Bridge init failed: {e} - using default")
+        nexus_bridge = create_nexus_bridge()
+
     logger.info("=" * 60)
     logger.info("⚡ FLAWLESS GENESIS API v2.0 READY")
-    logger.info("⚡ 24 AGENTS ACTIVATED - RAGNAROK v3.0 APEX")
+    logger.info("⚡ 24 AGENTS + COMMERCIAL_LAB PIPELINE ACTIVATED")
     logger.info("=" * 60)
     
     yield
@@ -819,6 +838,23 @@ class CuratorTrendsRequest(BaseModel):
     lookback_days: int = Field(14, description="Days to look back")
 
 
+# =============================================================================
+# COMMERCIAL_LAB PRODUCTION REQUEST MODELS
+# =============================================================================
+
+class ProductionStartRequest(BaseModel):
+    """Request to start Commercial_Lab video production"""
+    brief: Dict[str, Any] = Field(..., description="Approved creative brief")
+    industry: str = Field(..., description="Industry vertical")
+    business_name: str = Field(..., description="Business name")
+    style: str = Field("modern", description="Visual style preference")
+    goals: List[str] = Field(default_factory=list, description="Business goals")
+    target_platforms: List[str] = Field(
+        default_factory=lambda: ["youtube", "tiktok", "instagram"],
+        description="Target platforms for video delivery"
+    )
+
+
 @app.post("/api/legendary/enhance", tags=["Legendary"])
 async def legendary_enhance(request: LegendaryEnhanceRequest):
     """
@@ -1332,6 +1368,80 @@ async def curator_stop():
     except Exception as e:
         logger.error(f"Curator stop error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# COMMERCIAL_LAB PRODUCTION ENDPOINTS
+# =============================================================================
+
+@app.post("/api/production/start/{session_id}", tags=["Commercial_Lab"])
+async def start_production(session_id: str, request: ProductionStartRequest):
+    """
+    Start Commercial_Lab video production.
+
+    Triggers the full RAGNAROK 8-agent pipeline:
+    1. Intelligence (TRINITY + Curator)
+    2. Story Creation
+    3. Prompt Engineering
+    4. Video Generation
+    5. Voiceover
+    6. Assembly
+    7. QA
+
+    Returns SSE stream of status updates for real-time UI feedback.
+    """
+    if not nexus_bridge:
+        raise HTTPException(status_code=503, detail="Production pipeline not initialized")
+
+    # Build full brief
+    approved_brief = {
+        **request.brief,
+        "business_name": request.business_name,
+        "industry": request.industry,
+        "style": request.style,
+        "goals": request.goals,
+        "target_platforms": request.target_platforms
+    }
+
+    async def generate():
+        async for state in nexus_bridge.start_production(session_id, approved_brief):
+            yield f"data: {json.dumps(state.to_dict())}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@app.get("/api/production/status/{session_id}", tags=["Commercial_Lab"])
+async def get_production_status(session_id: str):
+    """Get current production status for a session."""
+    if not nexus_bridge:
+        raise HTTPException(status_code=503, detail="Production pipeline not initialized")
+
+    state = nexus_bridge.get_production_status(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Production not found")
+
+    return state.to_dict()
+
+
+@app.get("/api/production/phases", tags=["Commercial_Lab"])
+async def get_production_phases():
+    """Get all production phase definitions."""
+    return {
+        "phases": [
+            {"id": p.value, "name": p.name, "order": i}
+            for i, p in enumerate(ProductionPhase)
+        ],
+        "total_phases": len(ProductionPhase),
+        "pipeline": "RAGNAROK v3.0 APEX"
+    }
 
 
 # =============================================================================
