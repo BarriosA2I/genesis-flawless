@@ -848,10 +848,10 @@ async def predict_viral(request: ViralPredictionRequest):
             "prediction": {
                 "viral_score": prediction.viral_score,
                 "confidence": prediction.confidence,
-                "platform_factors": prediction.platform_factors,
-                "emotional_triggers": prediction.emotional_triggers,
-                "trend_alignment": prediction.trend_alignment,
-                "recommended_tweaks": prediction.recommended_tweaks
+                "momentum": prediction.momentum,
+                "peak_timing": prediction.peak_timing,
+                "risk_factors": prediction.risk_factors,
+                "amplification_tips": prediction.amplification_tips
             }
         }
 
