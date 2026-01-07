@@ -27,29 +27,51 @@ from datetime import datetime
 from enum import Enum
 
 from opentelemetry import trace
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Histogram, Gauge, REGISTRY
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 # =============================================================================
-# PROMETHEUS METRICS
+# PROMETHEUS METRICS (with duplicate registration protection)
 # =============================================================================
 
-LEGENDARY_AGENT_CALLS = Counter(
+def get_or_create_counter(name: str, description: str, labelnames: list):
+    """Get existing counter or create new one, avoiding duplicate registration."""
+    try:
+        return Counter(name, description, labelnames)
+    except ValueError:
+        # Already registered, get from registry
+        return REGISTRY._names_to_collectors.get(name, Counter(name, description, labelnames))
+
+def get_or_create_histogram(name: str, description: str, labelnames: list, buckets: list):
+    """Get existing histogram or create new one, avoiding duplicate registration."""
+    try:
+        return Histogram(name, description, labelnames, buckets=buckets)
+    except ValueError:
+        return REGISTRY._names_to_collectors.get(name, Histogram(name, description, labelnames, buckets=buckets))
+
+def get_or_create_gauge(name: str, description: str, labelnames: list):
+    """Get existing gauge or create new one, avoiding duplicate registration."""
+    try:
+        return Gauge(name, description, labelnames)
+    except ValueError:
+        return REGISTRY._names_to_collectors.get(name, Gauge(name, description, labelnames))
+
+LEGENDARY_AGENT_CALLS = get_or_create_counter(
     'ragnarok_legendary_agent_calls_total',
     'Total calls to legendary agents',
     ['agent_name']
 )
 
-LEGENDARY_AGENT_LATENCY = Histogram(
+LEGENDARY_AGENT_LATENCY = get_or_create_histogram(
     'ragnarok_legendary_agent_latency_ms',
     'Legendary agent processing latency',
     ['agent_name'],
     buckets=[50, 100, 250, 500, 1000, 2500, 5000]
 )
 
-VIRAL_SCORE = Gauge(
+VIRAL_SCORE = get_or_create_gauge(
     'ragnarok_viral_prediction_score',
     'Latest viral prediction score',
     ['content_type']
