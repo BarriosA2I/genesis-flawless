@@ -159,6 +159,32 @@ except ImportError:
     IssueSeverity = None
     logger.warning("THE AUTEUR not available")
 
+# Import Enhancement Agents (15-23)
+try:
+    from agents.enhancement_agents import (
+        EnhancementOrchestrator, create_enhancement_orchestrator,
+        EnhancementSuiteResult, BudgetAllocation, ABTestPlan,
+        LocalizedContent, ComplianceResult, PerformancePrediction,
+        PublishSchedule, ThumbnailResult, CaptionResult, DistributionResult,
+        Platform, ComplianceStatus
+    )
+except ImportError:
+    EnhancementOrchestrator = None
+    create_enhancement_orchestrator = None
+    EnhancementSuiteResult = None
+    BudgetAllocation = None
+    ABTestPlan = None
+    LocalizedContent = None
+    ComplianceResult = None
+    PerformancePrediction = None
+    PublishSchedule = None
+    ThumbnailResult = None
+    CaptionResult = None
+    DistributionResult = None
+    Platform = None
+    ComplianceStatus = None
+    logger.warning("Enhancement Agents (15-23) not available")
+
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
@@ -597,6 +623,17 @@ class NexusBridge:
         else:
             logger.warning("THE AUTEUR not available")
 
+        # Enhancement Orchestrator (Agents 15-23)
+        self.enhancement_orchestrator = None
+        if create_enhancement_orchestrator:
+            try:
+                self.enhancement_orchestrator = create_enhancement_orchestrator()
+                logger.info("Enhancement Orchestrator initialized (Agents 15-23)")
+            except Exception as e:
+                logger.warning(f"Enhancement Orchestrator init failed: {e}")
+        else:
+            logger.warning("Enhancement Orchestrator not available")
+
     async def start_production(
         self,
         session_id: str,
@@ -855,6 +892,29 @@ class NexusBridge:
             else:
                 logger.warning(f"QA validation had issues: {qa_result}")
 
+            # =====================================================
+            # PHASE 9: ENHANCEMENT (Agents 15-23)
+            # =====================================================
+            yield self._update_state(
+                session_id, ProductionPhase.QA,  # Reuse QA phase for now
+                ProductionStatus.IN_PROGRESS, 96,
+                "Running enhancement suite (Agents 15-23)..."
+            )
+
+            enhancement_result = await self._run_enhancement_suite(
+                production_id=production_id,
+                video_url=assembly_result.get("video_urls", {}).get("youtube_1080p"),
+                script=script.get("full_script", ""),
+                brand_guidelines=approved_brief.get("brand_guidelines", {}),
+                budget=approved_brief.get("budget", 1000.0)
+            )
+
+            yield self._update_state(
+                session_id, ProductionPhase.QA,
+                ProductionStatus.IN_PROGRESS, 98,
+                f"Enhancement complete: {len(enhancement_result.get('agents_used', []))} agents"
+            )
+
             total_time = (time.time() - start_time)
             assembly_cost = assembly_result.get("cost", 0.0)
             voiceover_cost = voiceover_result.get("cost_usd", 0.15)
@@ -883,16 +943,23 @@ class NexusBridge:
                 metadata={
                     "total_duration_seconds": total_time,
                     "total_cost_usd": total_cost,
-                    "phases_completed": 9,
+                    "phases_completed": 10,  # Now includes enhancement phase
                     "script": script,
                     "prompts_count": len(prompts),
                     "assembly_render_time": assembly_result.get("render_time", 0),
-                    "qa_result": qa_result
+                    "qa_result": qa_result,
+                    "enhancement": enhancement_result,
+                    "agents_used": enhancement_result.get("agents_used", [])
                 },
                 artifacts={
                     **video_urls,
                     "voiceover": voiceover_url,
-                    "thumbnail": assembly_result.get("thumbnail_url")
+                    "thumbnail": assembly_result.get("thumbnail_url"),
+                    "thumbnails": enhancement_result.get("thumbnails", []),
+                    "captions": enhancement_result.get("captions", []),
+                    "schedule": enhancement_result.get("schedule", []),
+                    "compliance": enhancement_result.get("compliance", {}),
+                    "predictions": enhancement_result.get("predictions", {})
                 }
             )
             yield final_state
@@ -1846,6 +1913,170 @@ Return ONLY valid JSON array, no markdown."""
                 "status": "error",
                 "error": str(e),
                 "recommendation": "approve",
+                "source": "error"
+            }
+
+    async def _run_enhancement_suite(
+        self,
+        production_id: str,
+        video_url: Optional[str],
+        script: str,
+        brand_guidelines: Dict[str, Any],
+        budget: float = 1000.0
+    ) -> Dict[str, Any]:
+        """
+        Run enhancement suite using Agents 15-23.
+
+        Orchestrates 8 enhancement agents:
+        - Agent 15: BudgetOptimizer
+        - Agent 16: ABTestGenerator
+        - Agent 17: Localizer
+        - Agent 18: ComplianceChecker
+        - Agent 19: AnalyticsPredictor
+        - Agent 20: Scheduler
+        - Agent 21: ThumbnailGenerator
+        - Agent 22: CaptionGenerator
+        - Agent 23: Distributor
+
+        Args:
+            production_id: Unique production identifier
+            video_url: URL of the assembled video
+            script: Full script text
+            brand_guidelines: Brand color/style guidelines
+            budget: Production budget in USD
+
+        Returns:
+            Dict with enhancement results from all agents
+        """
+        if not self.enhancement_orchestrator:
+            logger.warning("[ENHANCEMENT] Orchestrator not available - returning defaults")
+            return {
+                "status": "skipped",
+                "reason": "enhancement_orchestrator_unavailable",
+                "agents_used": [],
+                "thumbnails": [],
+                "captions": [],
+                "schedule": [],
+                "compliance": {"status": "skipped"},
+                "predictions": {},
+                "source": "mock"
+            }
+
+        if not video_url:
+            logger.warning("[ENHANCEMENT] No video URL - using placeholder")
+            video_url = f"https://videos.barriosa2i.com/{production_id}/youtube.mp4"
+
+        try:
+            logger.info(f"[ENHANCEMENT] Running enhancement suite for {production_id}")
+
+            # Determine target platforms
+            target_platforms = [Platform.YOUTUBE, Platform.TIKTOK, Platform.INSTAGRAM]
+
+            # Run the enhancement orchestrator
+            result = await self.enhancement_orchestrator.enhance(
+                production_id=production_id,
+                video_url=video_url,
+                script=script if script else "Commercial script",
+                target_platforms=target_platforms,
+                target_locales=["en-US"],
+                budget=budget,
+                run_ab_tests=True,
+                distribute=False  # Don't auto-distribute
+            )
+
+            # Convert dataclass results to dicts
+            thumbnails = [
+                {
+                    "thumbnail_id": t.thumbnail_id,
+                    "url": t.url,
+                    "dimensions": t.dimensions,
+                    "click_bait_score": t.click_bait_score,
+                    "brand_alignment_score": t.brand_alignment_score
+                }
+                for t in result.thumbnails
+            ]
+
+            captions = [
+                {
+                    "caption_id": c.caption_id,
+                    "language": c.language,
+                    "format": c.format,
+                    "word_count": c.word_count,
+                    "accessibility_score": c.accessibility_score
+                }
+                for c in result.captions
+            ]
+
+            schedule = [
+                {
+                    "platform": s.platform.value,
+                    "publish_time": s.publish_time.isoformat(),
+                    "timezone": s.timezone,
+                    "expected_reach": s.expected_reach
+                }
+                for s in result.schedule
+            ]
+
+            compliance = {}
+            if result.compliance:
+                compliance = {
+                    "status": result.compliance.status.value,
+                    "risk_score": result.compliance.risk_score,
+                    "passed_checks": result.compliance.passed_checks[:5],
+                    "issues_count": len(result.compliance.issues),
+                    "recommendations": result.compliance.recommendations[:3]
+                }
+
+            predictions = {}
+            if result.predictions:
+                predictions = {
+                    "views_30d": result.predictions.views_30d,
+                    "engagement_rate": result.predictions.engagement_rate,
+                    "click_through_rate": result.predictions.click_through_rate,
+                    "conversion_rate": result.predictions.conversion_rate,
+                    "estimated_revenue": result.predictions.estimated_revenue,
+                    "risk_factors": result.predictions.risk_factors[:3]
+                }
+
+            budget_info = {}
+            if result.budget:
+                budget_info = {
+                    "total_budget": result.budget.total_budget,
+                    "production_cost": result.budget.production_cost,
+                    "roi_projection": result.budget.roi_projection,
+                    "savings_opportunities": result.budget.savings_opportunities[:3]
+                }
+
+            logger.info(
+                f"[ENHANCEMENT] Complete: {len(result.agents_used)} agents, "
+                f"{result.total_processing_time:.2f}s"
+            )
+
+            return {
+                "status": "completed",
+                "production_id": production_id,
+                "agents_used": result.agents_used,
+                "thumbnails": thumbnails,
+                "captions": captions,
+                "schedule": schedule,
+                "compliance": compliance,
+                "predictions": predictions,
+                "budget": budget_info,
+                "processing_time": result.total_processing_time,
+                "source": "enhancement_orchestrator"
+            }
+
+        except Exception as e:
+            logger.error(f"[ENHANCEMENT] Suite failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "agents_used": [],
+                "thumbnails": [],
+                "captions": [],
+                "schedule": [],
+                "compliance": {"status": "error"},
+                "predictions": {},
                 "source": "error"
             }
 
