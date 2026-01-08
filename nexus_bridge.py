@@ -1202,7 +1202,10 @@ class NexusBridge:
         return state
 
     async def _generate_script_with_claude(self, brief: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate video script using Claude API (Agent 2: Story Creator)"""
+        """Generate video script using Claude API (Agent 2: Story Creator)
+
+        Supports iteration-aware generation when improvement_directive is present.
+        """
 
         if not self.claude_client:
             # Fallback to template if no API key
@@ -1211,6 +1214,11 @@ class NexusBridge:
         try:
             hooks = brief.get("commercial_references", {}).get("hooks", [])
             ctas = brief.get("commercial_references", {}).get("ctas", [])
+
+            # Check for iteration feedback (Ralph System)
+            improvement_directive = brief.get("improvement_directive", "")
+            previous_score = brief.get("previous_score")
+            is_iteration = bool(improvement_directive)
 
             system_prompt = """You are a world-class commercial script writer. Generate a 30-second video script.
 
@@ -1239,13 +1247,37 @@ Desired CTA: {brief.get('brief', {}).get('call_to_action', 'Get started')}
 Style/Tone: {brief.get('style', 'professional')}
 
 Reference hooks to consider: {hooks[:3] if hooks else ['Stop scrolling.', 'What if...']}
-Reference CTAs: {ctas[:3] if ctas else ['Book your demo', 'Start free trial']}
+Reference CTAs: {ctas[:3] if ctas else ['Book your demo', 'Start free trial']}"""
 
-Return ONLY valid JSON, no markdown."""
+            # Add iteration-specific guidance if this is a re-run (Ralph System)
+            if is_iteration:
+                user_prompt += f"""
+
+=== CRITICAL: ITERATION FEEDBACK ===
+
+This is iteration attempt. The previous script scored {previous_score}/100 on creative quality.
+You MUST address this feedback to improve the score above 85:
+
+{improvement_directive}
+
+SPECIFIC IMPROVEMENTS REQUIRED:
+- If feedback mentions "hook" -> Create a MORE compelling, attention-grabbing opening
+- If feedback mentions "emotional" -> Add stronger emotional resonance and human connection
+- If feedback mentions "story" -> Strengthen narrative arc with clear tension and resolution
+- If feedback mentions "CTA" -> Make call-to-action clearer and more urgent
+- If feedback mentions "pacing" -> Improve timing and flow between sections
+
+DO NOT repeat the same script. Make SUBSTANTIAL creative improvements.
+The goal is to score 85+ on the next evaluation.
+
+=== END ITERATION FEEDBACK ==="""
+
+            user_prompt += "\n\nReturn ONLY valid JSON, no markdown."
 
             response = self.claude_client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=1024,
+                temperature=0.9 if is_iteration else 0.7,  # More creative on iterations
                 messages=[
                     {"role": "user", "content": user_prompt}
                 ],
@@ -1261,7 +1293,10 @@ Return ONLY valid JSON, no markdown."""
                     content = content[4:]
             script = json.loads(content)
 
-            logger.info(f"Claude generated script: {script.get('hook', '')[:40]}...")
+            if is_iteration:
+                logger.info(f"Claude generated ITERATION script (prev: {previous_score}): {script.get('hook', '')[:40]}...")
+            else:
+                logger.info(f"Claude generated script: {script.get('hook', '')[:40]}...")
             return script
 
         except Exception as e:

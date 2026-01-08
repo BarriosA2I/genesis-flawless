@@ -258,15 +258,48 @@ class QualityGate:
         )
 
     def _generate_story_feedback(self, score: float, metadata: Optional[Dict]) -> str:
-        """Generate specific feedback for story iteration."""
-        feedback = [
-            "Story quality is good but needs refinement.",
-            "Focus on strengthening the emotional hook.",
-            "Ensure the CTA is compelling and clear.",
-            "Consider tightening the narrative arc."
-        ]
-        if metadata and metadata.get('weak_category') == 'hook_strength':
-            feedback.append("PRIORITY: Rewrite opening hook for stronger impact.")
+        """Generate specific, actionable feedback for story iteration based on score."""
+        feedback = []
+
+        # Score-tiered actionable feedback
+        if score < 60:
+            feedback.append(
+                "MAJOR REWORK NEEDED: Script lacks compelling narrative. "
+                "PRIORITY FIXES: (1) Stronger emotional hook that stops the scroll, "
+                "(2) Clear problem-solution arc with tension, "
+                "(3) Memorable, urgent call-to-action."
+            )
+        elif score < 70:
+            feedback.append(
+                "SIGNIFICANT IMPROVEMENTS NEEDED: Script is functional but not engaging. "
+                "IMPROVE: (1) Opening hook must create immediate curiosity, "
+                "(2) Benefits need emotional resonance not just features, "
+                "(3) CTA should create urgency and FOMO."
+            )
+        elif score < 80:
+            feedback.append(
+                "REFINEMENT NEEDED: Script is good but not great. "
+                "POLISH: (1) Tighten hook for immediate impact - first 3 words matter, "
+                "(2) Strengthen story flow with better transitions, "
+                "(3) Add more specific/concrete benefits with numbers."
+            )
+        else:  # 80-84
+            feedback.append(
+                "MINOR POLISH NEEDED: Script is strong but missing 'wow' factor. "
+                "FINE-TUNE: (1) Make hook unforgettable and quotable, "
+                "(2) Add emotional peak moment that resonates, "
+                "(3) Ensure CTA creates immediate action desire."
+            )
+
+        # Add metadata-specific feedback if available
+        if metadata:
+            if metadata.get('weak_category') == 'hook_strength':
+                feedback.append("CRITICAL: Hook is weak - rewrite opening to be provocative and scroll-stopping.")
+            if metadata.get('weak_category') == 'emotional_impact':
+                feedback.append("CRITICAL: Lacks emotional connection - add human stories or relatable pain points.")
+            if metadata.get('weak_category') == 'cta_clarity':
+                feedback.append("CRITICAL: CTA is unclear - make the next step obvious and irresistible.")
+
         return " ".join(feedback)
 
     def _generate_prompts_feedback(self, score: float, metadata: Optional[Dict]) -> str:
@@ -296,18 +329,41 @@ class QualityGate:
         metadata: Optional[Dict]
     ) -> str:
         """Generate feedback for full pipeline iteration."""
-        feedback = [
-            "Significant quality improvement needed.",
-            "Review brief alignment and target audience.",
-            "Consider alternative creative direction.",
-            "Focus on coherence and brand consistency."
-        ]
+        feedback = []
+
+        # Score-based comprehensive feedback
+        if score < 40:
+            feedback.append(
+                "COMPLETE RESTART REQUIRED: Output is far below acceptable quality. "
+                "START FRESH: (1) Re-analyze the brief for core message, "
+                "(2) Identify ONE powerful emotional angle, "
+                "(3) Build script around a single memorable moment."
+            )
+        elif score < 50:
+            feedback.append(
+                "MAJOR OVERHAUL NEEDED: Fundamental issues with the creative approach. "
+                "RETHINK: (1) Is the hook genuinely attention-grabbing? "
+                "(2) Does the story flow logically? "
+                "(3) Is the CTA clear and compelling?"
+            )
+        else:
+            feedback.append(
+                "FULL ITERATION NEEDED: Multiple elements need improvement. "
+                "FOCUS ON: (1) Stronger opening that hooks in 2 seconds, "
+                "(2) Clearer value proposition, "
+                "(3) More emotional storytelling, "
+                "(4) Irresistible call-to-action."
+            )
 
         # Learn from history if available
         if qa_history and len(qa_history) >= 2:
             scores = [h.get('auteur_score', 0) for h in qa_history]
             if scores[-1] <= scores[-2]:
-                feedback.append("Previous iteration didn't improve. Try a different approach.")
+                feedback.append(
+                    "WARNING: Previous iteration did NOT improve score. "
+                    "Try a COMPLETELY DIFFERENT creative approach - "
+                    "different hook style, different emotional angle, different structure."
+                )
 
         return " ".join(feedback)
 
