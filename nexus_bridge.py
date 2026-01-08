@@ -106,6 +106,22 @@ except ImportError:
     VideoStatus = None
     logger.warning("VideoGeneratorAgent not available")
 
+# Import Intake Qualifier Agent (Agent 1)
+try:
+    from agents.intake_qualifier_agent import (
+        IntakeQualifierAgent, create_intake_qualifier,
+        QualificationRequest, QualificationResult, QualificationStatus,
+        basic_brief_validation
+    )
+except ImportError:
+    IntakeQualifierAgent = None
+    create_intake_qualifier = None
+    QualificationRequest = None
+    QualificationResult = None
+    QualificationStatus = None
+    basic_brief_validation = None
+    logger.warning("IntakeQualifierAgent not available")
+
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
@@ -453,6 +469,17 @@ class NexusBridge:
         else:
             logger.warning("VideoGeneratorAgent not available")
 
+        # Intake Qualifier Agent (Agent 1)
+        self.intake_agent = None
+        if create_intake_qualifier:
+            try:
+                self.intake_agent = create_intake_qualifier()
+                logger.info("IntakeQualifierAgent initialized")
+            except Exception as e:
+                logger.warning(f"IntakeQualifierAgent init failed: {e}")
+        else:
+            logger.warning("IntakeQualifierAgent not available")
+
     async def start_production(
         self,
         session_id: str,
@@ -472,15 +499,40 @@ class NexusBridge:
 
         try:
             # =====================================================
-            # PHASE 0: INTAKE (Already completed - brief approved)
+            # PHASE 0: INTAKE (Brief Qualification)
             # =====================================================
             yield self._update_state(
                 session_id, ProductionPhase.INTAKE,
-                ProductionStatus.COMPLETED, 100,
-                "Brief approved - Starting production..."
+                ProductionStatus.IN_PROGRESS, 5,
+                "Qualifying brief..."
             )
 
-            await asyncio.sleep(0.5)  # Brief pause for UX
+            # REAL AGENT: Qualify brief using IntakeQualifierAgent
+            qualification = await self._qualify_brief(
+                brief=approved_brief,
+                business_name=business_name,
+                industry=industry
+            )
+
+            qual_score = qualification.get("score", 0)
+            qual_status = qualification.get("status", "unknown")
+
+            # Handle qualification results
+            if qual_status == "rejected":
+                missing = qualification.get("missing_fields", [])
+                raise ValueError(f"Brief rejected (score: {qual_score}/100). Missing: {', '.join(missing[:3])}")
+
+            if qual_status == "needs_info":
+                warnings = qualification.get("suggestions", [])
+                logger.warning(f"Brief qualified with warnings: {warnings}")
+
+            yield self._update_state(
+                session_id, ProductionPhase.INTAKE,
+                ProductionStatus.COMPLETED, 10,
+                f"Brief qualified: {qual_score}/100"
+            )
+
+            await asyncio.sleep(0.3)  # Brief pause for UX
 
             # =====================================================
             # PHASE 1: INTELLIGENCE (TRINITY + Commercial Refs)
@@ -1065,6 +1117,76 @@ Return ONLY valid JSON array, no markdown."""
                     "music_base_volume": 0.4
                 },
                 "cost": 0.0,
+                "error": str(e),
+                "source": "error"
+            }
+
+    async def _qualify_brief(
+        self,
+        brief: Dict[str, Any],
+        business_name: str,
+        industry: str
+    ) -> Dict[str, Any]:
+        """
+        Qualify incoming brief using IntakeQualifierAgent (Agent 1).
+
+        Validates brief has enough information to start production.
+        First gate in the 9-phase pipeline.
+
+        Args:
+            brief: The brief to qualify
+            business_name: Business name
+            industry: Industry/vertical
+
+        Returns:
+            Dict with status (qualified/needs_info/rejected), score, missing_fields
+        """
+        if not self.intake_agent:
+            # Fallback to basic validation
+            if basic_brief_validation:
+                logger.info("Using basic brief validation (no agent)")
+                return basic_brief_validation(brief, business_name, industry)
+            else:
+                # Super basic fallback
+                logger.warning("No validation available - auto-qualifying")
+                return {
+                    "status": "qualified",
+                    "score": 70,
+                    "missing_fields": [],
+                    "suggestions": [],
+                    "source": "fallback"
+                }
+
+        try:
+            logger.info("Qualifying brief with IntakeQualifierAgent...")
+
+            result = await self.intake_agent.qualify_dict(
+                brief=brief,
+                business_name=business_name,
+                industry=industry,
+                strict=False
+            )
+
+            logger.info(f"Brief qualification: {result.get('status')} ({result.get('score')}/100)")
+
+            return {
+                "status": result.get("status", "needs_info"),
+                "score": result.get("score", 50),
+                "missing_fields": result.get("missing_fields", []),
+                "suggestions": result.get("suggestions", []),
+                "extracted_data": result.get("extracted_data", {}),
+                "warnings": result.get("warnings", []),
+                "source": "intake_qualifier"
+            }
+
+        except Exception as e:
+            logger.error(f"Brief qualification failed: {e}")
+            # Don't block production on qualification errors
+            return {
+                "status": "needs_info",
+                "score": 50,
+                "missing_fields": [],
+                "suggestions": [],
                 "error": str(e),
                 "source": "error"
             }
