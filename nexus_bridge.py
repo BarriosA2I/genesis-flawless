@@ -91,6 +91,21 @@ except ImportError:
     QAIssue = None
     logger.warning("QAValidatorAgent not available")
 
+# Import Video Generator Agent (Agent 4)
+try:
+    from agents.video_generator_agent import (
+        VideoGeneratorAgent, create_video_generator,
+        VideoRequest, VideoResult, VideoModel, GenerationStatus as VideoStatus
+    )
+except ImportError:
+    VideoGeneratorAgent = None
+    create_video_generator = None
+    VideoRequest = None
+    VideoResult = None
+    VideoModel = None
+    VideoStatus = None
+    logger.warning("VideoGeneratorAgent not available")
+
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
@@ -427,6 +442,17 @@ class NexusBridge:
         else:
             logger.warning("QAValidatorAgent not available")
 
+        # Video Generator Agent (Agent 4)
+        self.video_agent = None
+        if create_video_generator:
+            try:
+                self.video_agent = create_video_generator()
+                logger.info(f"VideoGeneratorAgent initialized (configured: {self.video_agent.is_configured})")
+            except Exception as e:
+                logger.warning(f"VideoGeneratorAgent init failed: {e}")
+        else:
+            logger.warning("VideoGeneratorAgent not available")
+
     async def start_production(
         self,
         session_id: str,
@@ -532,27 +558,29 @@ class NexusBridge:
             )
 
             # =====================================================
-            # PHASE 4: VIDEO (Generation - Longest Phase)
+            # PHASE 4: VIDEO (AI Video Generation - Longest Phase)
             # =====================================================
             yield self._update_state(
                 session_id, ProductionPhase.VIDEO,
                 ProductionStatus.IN_PROGRESS, 45,
-                "Generating video scenes... (2-3 minutes)"
+                f"Generating {len(prompts)} AI video scenes... (1-3 minutes)"
             )
 
-            # Simulate video generation progress
-            for progress in [50, 55, 60, 65, 70]:
-                await asyncio.sleep(1)
-                yield self._update_state(
-                    session_id, ProductionPhase.VIDEO,
-                    ProductionStatus.IN_PROGRESS, progress,
-                    f"Rendering scene {progress - 44}..."
-                )
+            # REAL AGENT: Generate video clips using Sora 2 / Veo 3.1
+            video_generation = await self._generate_video_clips(
+                prompts=prompts,
+                style=script.get("style", "cinematic")
+            )
+
+            # Stream progress based on results
+            clips_generated = len([r for r in video_generation.get("results", []) if r.get("video_path") or r.get("video_url")])
+            total_clips = len(prompts)
+            video_cost = video_generation.get("total_cost", 0.0)
 
             yield self._update_state(
                 session_id, ProductionPhase.VIDEO,
                 ProductionStatus.COMPLETED, 75,
-                "All video scenes generated"
+                f"Generated {clips_generated}/{total_clips} scenes | ${video_cost:.2f}"
             )
 
             # =====================================================
@@ -612,7 +640,8 @@ class NexusBridge:
                 prompts=prompts,
                 voiceover_result=voiceover_result,
                 music_result=music_result,
-                script=script
+                script=script,
+                video_clips=video_generation.get("clip_paths", [])
             )
 
             yield self._update_state(
@@ -643,7 +672,8 @@ class NexusBridge:
             total_time = (time.time() - start_time)
             assembly_cost = assembly_result.get("cost", 0.0)
             voiceover_cost = voiceover_result.get("cost_usd", 0.15)
-            total_cost = 2.00 + assembly_cost + voiceover_cost  # Base + assembly + voice
+            video_gen_cost = video_cost  # From video generation phase
+            total_cost = 2.00 + assembly_cost + voiceover_cost + video_gen_cost  # Base + assembly + voice + video
 
             # Track completion
             if PRODUCTION_COMPLETED:
@@ -1039,6 +1069,91 @@ Return ONLY valid JSON array, no markdown."""
                 "source": "error"
             }
 
+    async def _generate_video_clips(
+        self,
+        prompts: List[Dict[str, Any]],
+        style: str = "cinematic"
+    ) -> Dict[str, Any]:
+        """
+        Generate AI video clips using VideoGeneratorAgent (Agent 4).
+
+        Uses Sora 2 / Veo 3.1 via laozhang.ai for real AI video generation.
+        Falls back to placeholder clips if API unavailable.
+
+        Args:
+            prompts: Video prompts from Agent 3
+            style: Visual style (cinematic, professional, etc.)
+
+        Returns:
+            Dict with results list, total_cost, clip_paths
+        """
+        if not self.video_agent:
+            logger.warning("VideoGeneratorAgent not available - using placeholders")
+            # Fall back to placeholder generation
+            return {
+                "results": [],
+                "clip_paths": [],
+                "total_cost": 0.0,
+                "source": "no_agent"
+            }
+
+        try:
+            logger.info(f"Generating {len(prompts)} video clips with AI...")
+
+            # Use batch generation with limited concurrency
+            results = await self.video_agent.generate_batch(
+                prompts=prompts,
+                duration_per_scene=5.0,  # 5 seconds per scene
+                style=style,
+                max_concurrent=3  # Limit concurrent to avoid rate limits
+            )
+
+            # Extract clip paths and calculate total cost
+            clip_paths = []
+            total_cost = 0.0
+            results_data = []
+
+            for result in results:
+                result_dict = {
+                    "scene_number": result.scene_number,
+                    "status": result.status.value if hasattr(result.status, 'value') else str(result.status),
+                    "cost_usd": result.cost_usd,
+                    "model_used": result.model_used,
+                    "source": result.source,
+                    "generation_time": result.generation_time_seconds
+                }
+
+                if result.video_path:
+                    clip_paths.append(result.video_path)
+                    result_dict["video_path"] = result.video_path
+                elif result.video_url:
+                    result_dict["video_url"] = result.video_url
+
+                if result.error:
+                    result_dict["error"] = result.error
+
+                total_cost += result.cost_usd
+                results_data.append(result_dict)
+
+            logger.info(f"Video generation complete: {len(clip_paths)} clips, ${total_cost:.2f}")
+
+            return {
+                "results": results_data,
+                "clip_paths": clip_paths,
+                "total_cost": total_cost,
+                "source": "video_generator"
+            }
+
+        except Exception as e:
+            logger.error(f"Video generation failed: {e}")
+            return {
+                "results": [],
+                "clip_paths": [],
+                "total_cost": 0.0,
+                "error": str(e),
+                "source": "error"
+            }
+
     async def _run_assembly(
         self,
         session_id: str,
@@ -1046,12 +1161,13 @@ Return ONLY valid JSON array, no markdown."""
         prompts: List[Dict[str, Any]],
         voiceover_result: Dict[str, Any],
         music_result: Dict[str, Any],
-        script: Dict[str, Any]
+        script: Dict[str, Any],
+        video_clips: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Run FFmpeg video assembly (Agent 7: VORTEX Assembly).
 
-        This assembles placeholder videos with voiceover and music until Phase 4 (Runway) is integrated.
+        Assembles AI-generated video clips (or placeholders) with voiceover and music.
 
         Args:
             session_id: Production session ID
@@ -1123,10 +1239,17 @@ Return ONLY valid JSON array, no markdown."""
                             logger.error(f"Failed to download voiceover: {e}")
 
                 # =========================================================
-                # Step 2: Get placeholder video clips
+                # Step 2: Get video clips (AI-generated or placeholders)
                 # =========================================================
-                # Until Runway ML (Phase 4) is integrated, use placeholder clips
-                clip_paths = await self._get_placeholder_clips(prompts, temp_path)
+                # Use pre-generated AI clips if available, otherwise generate placeholders
+                if video_clips and len(video_clips) > 0:
+                    # Use pre-generated clips from Phase 4
+                    clip_paths = [Path(p) for p in video_clips if Path(p).exists()]
+                    logger.info(f"Using {len(clip_paths)} pre-generated AI video clips")
+                else:
+                    # Fall back to placeholder generation
+                    logger.info("No pre-generated clips - generating placeholders")
+                    clip_paths = await self._get_placeholder_clips(prompts, temp_path)
 
                 if not clip_paths:
                     logger.warning("No video clips available - returning mock URLs")
