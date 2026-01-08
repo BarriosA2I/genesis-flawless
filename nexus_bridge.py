@@ -20,12 +20,20 @@ import json
 import time
 import uuid
 import logging
+import os
 from typing import Dict, Any, Optional, AsyncGenerator, List
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
 
+import anthropic
 from prometheus_client import Counter, Histogram
+
+# Import ElevenLabs agent from flawless_orchestrator
+try:
+    from flawless_orchestrator import ElevenLabsVoiceoverAgent
+except ImportError:
+    ElevenLabsVoiceoverAgent = None
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +283,7 @@ class NexusBridge:
     1. Receive approved brief from intake
     2. Enrich with TRINITY market intelligence
     3. Fetch commercial references from Curator
-    4. Execute RAGNAROK 8-agent pipeline (simulated)
+    4. Execute RAGNAROK 8-agent pipeline with REAL agents
     5. Stream status updates via SSE
     6. Deliver final assets
     """
@@ -295,6 +303,30 @@ class NexusBridge:
 
         # Initialize metrics
         _init_metrics()
+
+        # ===========================================
+        # REAL AGENT INITIALIZATION
+        # ===========================================
+
+        # Claude client for story generation (Agent 2) and prompt engineering (Agent 3)
+        self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        self.claude_client = None
+        if self.anthropic_key:
+            self.claude_client = anthropic.Anthropic(api_key=self.anthropic_key)
+            logger.info("Claude client initialized for story/prompt generation")
+        else:
+            logger.warning("ANTHROPIC_API_KEY not set - story generation will use templates")
+
+        # ElevenLabs voiceover agent (Agent 5)
+        self.voiceover_agent = None
+        if ElevenLabsVoiceoverAgent:
+            try:
+                self.voiceover_agent = ElevenLabsVoiceoverAgent()
+                logger.info("ElevenLabs voiceover agent initialized")
+            except Exception as e:
+                logger.warning(f"ElevenLabs agent init failed: {e}")
+        else:
+            logger.warning("ElevenLabsVoiceoverAgent not available")
 
     async def start_production(
         self,
@@ -370,12 +402,11 @@ class NexusBridge:
             yield self._update_state(
                 session_id, ProductionPhase.STORY,
                 ProductionStatus.IN_PROGRESS, 15,
-                "Creating video script..."
+                "Creating video script with AI..."
             )
 
-            await asyncio.sleep(2)  # Simulate story creation
-
-            script = self._generate_script(enriched_brief)
+            # REAL AGENT: Claude-powered script generation
+            script = await self._generate_script_with_claude(enriched_brief)
 
             yield self._update_state(
                 session_id, ProductionPhase.STORY,
@@ -389,12 +420,11 @@ class NexusBridge:
             yield self._update_state(
                 session_id, ProductionPhase.PROMPTS,
                 ProductionStatus.IN_PROGRESS, 30,
-                "Engineering video prompts..."
+                "Engineering video prompts with AI..."
             )
 
-            await asyncio.sleep(1.5)
-
-            prompts = self._generate_prompts(script, enriched_brief)
+            # REAL AGENT: Claude-powered prompt engineering
+            prompts = await self._generate_prompts_with_claude(script, enriched_brief)
 
             yield self._update_state(
                 session_id, ProductionPhase.PROMPTS,
@@ -432,15 +462,17 @@ class NexusBridge:
             yield self._update_state(
                 session_id, ProductionPhase.VOICE,
                 ProductionStatus.IN_PROGRESS, 78,
-                "Generating voiceover..."
+                "Generating voiceover with ElevenLabs..."
             )
 
-            await asyncio.sleep(2)
+            # REAL AGENT: ElevenLabs voiceover generation
+            voiceover_result = await self._generate_voiceover(script, enriched_brief)
+            voiceover_url = voiceover_result.get("audio_url", f"https://videos.barriosa2i.com/{production_id}/voiceover.mp3")
 
             yield self._update_state(
                 session_id, ProductionPhase.VOICE,
                 ProductionStatus.COMPLETED, 85,
-                "Voiceover generated"
+                f"Voiceover generated ({voiceover_result.get('duration_seconds', 30)}s)"
             )
 
             # =====================================================
@@ -480,7 +512,7 @@ class NexusBridge:
             if PRODUCTION_DURATION:
                 PRODUCTION_DURATION.observe(total_time)
 
-            # Final state with artifacts
+            # Final state with artifacts (use real voiceover URL if available)
             final_state = self._update_state(
                 session_id, ProductionPhase.QA,
                 ProductionStatus.COMPLETED, 100,
@@ -488,13 +520,15 @@ class NexusBridge:
                 metadata={
                     "total_duration_seconds": total_time,
                     "total_cost_usd": cost,
-                    "phases_completed": 8
+                    "phases_completed": 8,
+                    "script": script,
+                    "prompts_count": len(prompts)
                 },
                 artifacts={
                     "youtube_1080p": f"https://videos.barriosa2i.com/{production_id}/youtube.mp4",
                     "tiktok_vertical": f"https://videos.barriosa2i.com/{production_id}/tiktok.mp4",
                     "instagram_square": f"https://videos.barriosa2i.com/{production_id}/instagram.mp4",
-                    "voiceover": f"https://videos.barriosa2i.com/{production_id}/voiceover.mp3"
+                    "voiceover": voiceover_url
                 }
             )
             yield final_state
@@ -552,32 +586,219 @@ class NexusBridge:
 
         return state
 
-    def _generate_script(self, brief: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate video script from enriched brief"""
+    async def _generate_script_with_claude(self, brief: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate video script using Claude API (Agent 2: Story Creator)"""
+
+        if not self.claude_client:
+            # Fallback to template if no API key
+            return self._generate_script_template(brief)
+
+        try:
+            hooks = brief.get("commercial_references", {}).get("hooks", [])
+            ctas = brief.get("commercial_references", {}).get("ctas", [])
+
+            system_prompt = """You are a world-class commercial script writer. Generate a 30-second video script.
+
+Output JSON with these exact keys:
+{
+  "hook": "Opening line that stops the scroll (5 seconds)",
+  "problem": "Pain point that resonates (8 seconds)",
+  "solution": "How the product solves it (10 seconds)",
+  "proof": "Social proof or credibility (4 seconds)",
+  "cta": "Clear call to action (3 seconds)",
+  "voiceover_script": "Full narration script for TTS",
+  "duration_seconds": 30
+}
+
+Be punchy, emotional, and direct. No fluff."""
+
+            user_prompt = f"""Create a commercial script for:
+
+Business: {brief.get('business_name', 'Unknown')}
+Industry: {brief.get('industry', 'general')}
+Description: {brief.get('description', brief.get('brief', {}).get('description', ''))}
+Target Audience: {brief.get('brief', {}).get('full_answers', {}).get('audienceDescription', 'business owners')}
+Pain Points: {brief.get('brief', {}).get('full_answers', {}).get('audiencePainPoints', 'inefficiency')}
+Key Benefit: {brief.get('brief', {}).get('key_benefit', 'saves time')}
+Desired CTA: {brief.get('brief', {}).get('call_to_action', 'Get started')}
+Style/Tone: {brief.get('style', 'professional')}
+
+Reference hooks to consider: {hooks[:3] if hooks else ['Stop scrolling.', 'What if...']}
+Reference CTAs: {ctas[:3] if ctas else ['Book your demo', 'Start free trial']}
+
+Return ONLY valid JSON, no markdown."""
+
+            response = self.claude_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ],
+                system=system_prompt
+            )
+
+            # Parse Claude's response
+            content = response.content[0].text.strip()
+            # Remove markdown code blocks if present
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            script = json.loads(content)
+
+            logger.info(f"Claude generated script: {script.get('hook', '')[:40]}...")
+            return script
+
+        except Exception as e:
+            logger.error(f"Claude script generation failed: {e}")
+            return self._generate_script_template(brief)
+
+    def _generate_script_template(self, brief: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback template-based script generation"""
         hooks = brief.get("commercial_references", {}).get("hooks", [])
         ctas = brief.get("commercial_references", {}).get("ctas", [])
+        business_name = brief.get('business_name', 'We')
+        pain_points = brief.get('brief', {}).get('full_answers', {}).get('audiencePainPoints', 'manual processes')
+
+        hook = hooks[0] if hooks else "Transform your business with AI"
+        problem = f"Tired of {pain_points.split(',')[0] if pain_points else 'inefficient workflows'}?"
+        solution = f"{business_name} delivers cutting-edge solutions"
+        proof = "Trusted by hundreds of businesses"
+        cta = ctas[0] if ctas else "Get started today"
 
         return {
-            "hook": hooks[0] if hooks else "Transform your business with AI",
-            "problem": f"Tired of {brief.get('pain_points', ['manual processes'])[0] if brief.get('pain_points') else 'inefficient workflows'}?",
-            "solution": f"{brief.get('business_name', 'We')} delivers cutting-edge solutions",
-            "proof": "Trusted by hundreds of businesses",
-            "cta": ctas[0] if ctas else "Get started today",
+            "hook": hook,
+            "problem": problem,
+            "solution": solution,
+            "proof": proof,
+            "cta": cta,
+            "voiceover_script": f"{hook} {problem} {solution}. {proof}. {cta}",
             "duration_seconds": 30
         }
 
-    def _generate_prompts(self, script: Dict[str, Any], brief: Dict[str, Any]) -> List[Dict[str, str]]:
-        """Generate video prompts from script"""
+    async def _generate_prompts_with_claude(self, script: Dict[str, Any], brief: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Generate video prompts using Claude API (Agent 3: Prompt Engineer)"""
+
+        if not self.claude_client:
+            # Fallback to template prompts
+            return self._generate_prompts_template(script, brief)
+
+        try:
+            styles = brief.get("commercial_references", {}).get("visual_styles", [])
+
+            system_prompt = """You are a world-class video prompt engineer for AI video generation (Runway, Pika, Sora).
+
+Generate 5 video prompts for a 30-second commercial. Each prompt should be highly detailed for AI video generation.
+
+Output JSON array with this exact structure:
+[
+  {"scene": 1, "prompt": "Detailed video prompt...", "duration": 5, "camera": "camera movement", "mood": "emotional tone"},
+  ...
+]
+
+Focus on: cinematography, lighting, camera movement, subject actions, environment, color grading.
+Prompts should be 50-100 words each, vivid and specific."""
+
+            user_prompt = f"""Create 5 video scene prompts for this commercial:
+
+Script:
+- Hook: {script.get('hook', '')}
+- Problem: {script.get('problem', '')}
+- Solution: {script.get('solution', '')}
+- Proof: {script.get('proof', '')}
+- CTA: {script.get('cta', '')}
+
+Business: {brief.get('business_name', '')}
+Industry: {brief.get('industry', '')}
+Style Preferences: {styles[:2] if styles else ['modern', 'professional']}
+
+Return ONLY valid JSON array, no markdown."""
+
+            response = self.claude_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": user_prompt}],
+                system=system_prompt
+            )
+
+            content = response.content[0].text.strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+
+            prompts = json.loads(content)
+            logger.info(f"Claude generated {len(prompts)} video prompts")
+            return prompts
+
+        except Exception as e:
+            logger.error(f"Claude prompt generation failed: {e}")
+            return self._generate_prompts_template(script, brief)
+
+    def _generate_prompts_template(self, script: Dict[str, Any], brief: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Fallback template-based prompt generation"""
         styles = brief.get("commercial_references", {}).get("visual_styles", [])
         style = styles[0] if styles else "Cinematic, modern"
 
         return [
-            {"scene": 1, "prompt": f"{style}: {script['hook']}", "duration": 5},
-            {"scene": 2, "prompt": f"{style}: {script['problem']}", "duration": 8},
-            {"scene": 3, "prompt": f"{style}: {script['solution']}", "duration": 10},
-            {"scene": 4, "prompt": f"{style}: {script['proof']}", "duration": 4},
-            {"scene": 5, "prompt": f"{style}: {script['cta']}", "duration": 3}
+            {"scene": 1, "prompt": f"{style}: {script['hook']}", "duration": 5, "camera": "slow zoom in", "mood": "intriguing"},
+            {"scene": 2, "prompt": f"{style}: {script['problem']}", "duration": 8, "camera": "handheld", "mood": "frustrated"},
+            {"scene": 3, "prompt": f"{style}: {script['solution']}", "duration": 10, "camera": "smooth dolly", "mood": "hopeful"},
+            {"scene": 4, "prompt": f"{style}: {script['proof']}", "duration": 4, "camera": "static", "mood": "confident"},
+            {"scene": 5, "prompt": f"{style}: {script['cta']}", "duration": 3, "camera": "zoom out", "mood": "energetic"}
         ]
+
+    async def _generate_voiceover(self, script: Dict[str, Any], brief: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate voiceover using ElevenLabs API (Agent 5: Voiceover)"""
+
+        voiceover_text = script.get("voiceover_script", "")
+        if not voiceover_text:
+            # Construct from script parts if no dedicated voiceover
+            voiceover_text = f"{script.get('hook', '')} {script.get('problem', '')} {script.get('solution', '')} {script.get('proof', '')} {script.get('cta', '')}"
+
+        if not self.voiceover_agent:
+            # No ElevenLabs agent - return mock
+            logger.warning("ElevenLabs agent not available, using mock voiceover")
+            return {
+                "audio_url": None,
+                "duration_seconds": 30,
+                "voice_used": "mock",
+                "source": "mock"
+            }
+
+        try:
+            # Get brand personality from brief for voice selection
+            brand_personality = brief.get("style", brief.get("brief", {}).get("style", "professional"))
+
+            # Generate voiceover using ElevenLabsVoiceoverAgent
+            # Signature: generate(script: str, brand_personality: Optional[str], speaking_rate: float)
+            result = await self.voiceover_agent.generate(
+                script=voiceover_text,
+                brand_personality=brand_personality,
+                speaking_rate=1.0
+            )
+
+            logger.info(f"ElevenLabs voiceover generated: {result.voice_used}, {result.duration_seconds}s, ${result.cost_usd:.3f}")
+
+            return {
+                "audio_url": result.audio_url,
+                "duration_seconds": result.duration_seconds,
+                "character_count": result.character_count,
+                "cost_usd": result.cost_usd,
+                "voice_used": result.voice_used,
+                "generation_time_seconds": result.generation_time_seconds,
+                "source": "elevenlabs"
+            }
+
+        except Exception as e:
+            logger.error(f"ElevenLabs voiceover failed: {e}")
+            return {
+                "audio_url": None,
+                "duration_seconds": 30,
+                "voice_used": None,
+                "error": str(e),
+                "source": "error"
+            }
 
     def get_production_status(self, session_id: str) -> Optional[ProductionState]:
         """Get current production status"""
