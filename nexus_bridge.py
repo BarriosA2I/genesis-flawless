@@ -123,6 +123,25 @@ except ImportError:
     basic_brief_validation = None
     logger.warning("IntakeQualifierAgent not available")
 
+# Import TRINITY Suite (Agents 9-14)
+try:
+    from agents.trinity_suite import (
+        TrinityOrchestrator, create_trinity_orchestrator,
+        TrinityResult, MarketData, CompetitorInsight,
+        ViralPrediction, PlatformRecommendation, AudienceProfile, TrendData
+    )
+except ImportError:
+    TrinityOrchestrator = None
+    create_trinity_orchestrator = None
+    TrinityResult = None
+    MarketData = None
+    CompetitorInsight = None
+    ViralPrediction = None
+    PlatformRecommendation = None
+    AudienceProfile = None
+    TrendData = None
+    logger.warning("TRINITY Suite not available")
+
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
@@ -231,43 +250,95 @@ class ProductionResult:
 
 
 # =============================================================================
-# TRINITY CONNECTOR
+# TRINITY CONNECTOR (Enhanced with 6-Agent Suite)
 # =============================================================================
 
 class TrinityConnector:
     """
     Connects to TRINITY intelligence agents for market research.
-    Uses internal GENESIS endpoints.
+    Uses the 6-agent TRINITY Suite (Agents 9-14) for comprehensive intelligence.
     """
+
+    def __init__(self):
+        self.orchestrator = None
+        if create_trinity_orchestrator:
+            try:
+                self.orchestrator = create_trinity_orchestrator()
+                logger.info("[TRINITY] 6-agent orchestrator initialized")
+            except Exception as e:
+                logger.warning(f"[TRINITY] Orchestrator init failed: {e}")
 
     async def research(self, brief: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Run TRINITY research on the brief.
+        Run TRINITY research on the brief using 6-agent suite.
         Returns enriched intelligence data.
         """
-        import httpx
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # Use internal GENESIS TRINITY endpoint
-                response = await client.post(
-                    "http://localhost:8000/api/trinity/analyze",
-                    json={
-                        "business_name": brief.get("business_name", ""),
-                        "industry": brief.get("industry", "general"),
-                        "goals": brief.get("goals", []),
-                        "website_url": brief.get("website_url", "")
-                    }
+        if self.orchestrator:
+            try:
+                # Use real TRINITY Suite with 6 agents
+                result = await self.orchestrator.analyze(
+                    business_name=brief.get("business_name", ""),
+                    industry=brief.get("industry", "general"),
+                    brief=brief,
+                    platforms=brief.get("platforms", ["youtube", "tiktok", "instagram"])
                 )
 
-                if response.status_code == 200:
-                    return response.json()
-                else:
-                    logger.warning(f"TRINITY returned {response.status_code}")
-                    return self._mock_intelligence(brief)
+                # Convert TrinityResult to dict format
+                return {
+                    "trends": [
+                        {"topic": t.topic, "momentum": t.momentum}
+                        for t in result.trending_topics
+                    ],
+                    "market_analysis": {
+                        "industry": result.market_analysis.industry,
+                        "trend": result.market_analysis.market_trend,
+                        "competition_level": result.market_analysis.competition_level,
+                        "drivers": result.market_analysis.key_drivers,
+                        "barriers": result.market_analysis.barriers,
+                        "growth_rate": result.market_analysis.growth_rate
+                    },
+                    "competitor_intel": [
+                        {
+                            "name": c.name,
+                            "positioning": c.positioning,
+                            "strengths": c.strengths,
+                            "weaknesses": c.weaknesses
+                        }
+                        for c in result.competitors
+                    ],
+                    "audience": {
+                        "primary_demographic": result.audience_profile.primary_demographic,
+                        "pain_points": result.audience_profile.pain_points,
+                        "motivations": result.audience_profile.motivations,
+                        "objections": result.audience_profile.objections,
+                        "buying_triggers": result.audience_profile.buying_triggers
+                    },
+                    "viral_prediction": {
+                        "hook_effectiveness": result.viral_prediction.hook_effectiveness,
+                        "engagement_potential": result.viral_prediction.engagement_potential,
+                        "recommended_hooks": result.viral_prediction.recommended_hooks,
+                        "viral_factors": result.viral_prediction.viral_factors
+                    },
+                    "platform_recommendations": {
+                        platform: {
+                            "optimal_length": rec.optimal_length,
+                            "best_times": rec.best_posting_times,
+                            "format_tips": rec.format_tips
+                        }
+                        for platform, rec in result.platform_recommendations.items()
+                    },
+                    "hooks": result.recommended_hooks,
+                    "total_insights": result.total_insights,
+                    "confidence": result.confidence_score,
+                    "processing_time_ms": result.processing_time_ms,
+                    "source": "trinity_suite"
+                }
 
-        except Exception as e:
-            logger.warning(f"TRINITY unavailable: {e}, using mock")
+            except Exception as e:
+                logger.error(f"[TRINITY] Analysis failed: {e}")
+                return self._mock_intelligence(brief)
+        else:
+            logger.warning("[TRINITY] Orchestrator not available, using mock")
             return self._mock_intelligence(brief)
 
     def _mock_intelligence(self, brief: Dict[str, Any]) -> Dict[str, Any]:
@@ -278,12 +349,29 @@ class TrinityConnector:
                 {"topic": f"{brief.get('industry', 'tech')} innovation", "momentum": 0.72}
             ],
             "market_analysis": {
-                "market_size": "Growing",
+                "industry": brief.get("industry", "general"),
+                "trend": "growing",
                 "competition_level": "moderate",
-                "opportunity_score": 0.78
+                "drivers": ["digital transformation", "efficiency demands"],
+                "barriers": ["market saturation", "talent shortage"]
             },
             "competitor_intel": [],
-            "confidence": 0.65,
+            "audience": {
+                "primary_demographic": "25-45 professionals",
+                "pain_points": ["time constraints", "trust issues"],
+                "motivations": ["efficiency", "results"]
+            },
+            "viral_prediction": {
+                "hook_effectiveness": 0.6,
+                "engagement_potential": 0.55,
+                "recommended_hooks": [
+                    "Problem-agitation-solution",
+                    "Social proof lead"
+                ]
+            },
+            "platform_recommendations": {},
+            "hooks": ["Problem-agitation-solution", "Social proof lead"],
+            "confidence": 0.5,
             "source": "mock"
         }
 
