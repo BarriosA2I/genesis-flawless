@@ -185,6 +185,24 @@ except ImportError:
     ComplianceStatus = None
     logger.warning("Enhancement Agents (15-23) not available")
 
+# Import Ralph System for iterative agent refinement (RAGNAROK v8.0)
+try:
+    from ralph import (
+        get_ralph_wrapper, quality_gate, GateDecision,
+        RalphLoopController, RalphConfig, is_ralph_enabled
+    )
+    RALPH_AVAILABLE = True
+    logger.info("Ralph System initialized for iterative refinement")
+except ImportError:
+    get_ralph_wrapper = None
+    quality_gate = None
+    GateDecision = None
+    RalphLoopController = None
+    RalphConfig = None
+    is_ralph_enabled = None
+    RALPH_AVAILABLE = False
+    logger.warning("Ralph System not available - single-pass mode only")
+
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
@@ -642,11 +660,26 @@ class NexusBridge:
         """
         Main entry point: Start video production from approved brief.
         Yields status updates for SSE streaming.
+
+        RAGNAROK v8.0: Integrates Ralph System for iterative refinement.
+        Quality Gate evaluates AUTEUR scores and may trigger re-iteration
+        of specific phases until quality threshold (85/100) is met.
         """
         production_id = f"prod_{session_id}_{uuid.uuid4().hex[:8]}"
         start_time = time.time()
         industry = approved_brief.get("industry", "general")
         business_name = approved_brief.get("business_name", "Unknown Business")
+
+        # Ralph System: Initialize pipeline iteration tracking
+        self._current_pipeline_iteration = 1
+        self._qa_history = []
+        self._ralph_enabled = RALPH_AVAILABLE and approved_brief.get("enable_ralph", True)
+
+        if self._ralph_enabled:
+            logger.info(
+                f"Ralph System enabled for production {production_id}",
+                extra={'max_iterations': 3, 'quality_threshold': 85}
+            )
 
         # Track start
         if PRODUCTION_STARTED:
@@ -894,6 +927,69 @@ class NexusBridge:
                 logger.warning(f"QA validation had issues: {qa_result}")
 
             # =====================================================
+            # RALPH QUALITY GATE - Pipeline Iteration Decision
+            # =====================================================
+            if RALPH_AVAILABLE and quality_gate:
+                # Track pipeline iteration (initialized earlier in start_production)
+                pipeline_iteration = getattr(self, '_current_pipeline_iteration', 1)
+
+                gate_result = quality_gate.evaluate(
+                    auteur_score=creative_qa.get('overall_score', 0),
+                    technical_qa={
+                        'status': 'PASSED' if qa_result.get('overall_passed') else 'FAILED',
+                        'overall_score': qa_result.get('technical_score', 100),
+                        'issues': qa_result.get('issues', [])
+                    },
+                    pipeline_iteration=pipeline_iteration,
+                    qa_history=getattr(self, '_qa_history', []),
+                    metadata={
+                        'session_id': session_id,
+                        'production_id': production_id
+                    }
+                )
+
+                # Store QA history for learning
+                if not hasattr(self, '_qa_history'):
+                    self._qa_history = []
+                self._qa_history.append({
+                    'iteration': pipeline_iteration,
+                    'auteur_score': creative_qa.get('overall_score', 0),
+                    'technical_passed': qa_result.get('overall_passed'),
+                    'timestamp': datetime.utcnow().isoformat()
+                })
+
+                logger.info(
+                    f"Quality Gate decision: {gate_result.decision.value}",
+                    extra={
+                        'auteur_score': gate_result.auteur_score,
+                        'pipeline_iteration': pipeline_iteration,
+                        'phases_to_rerun': gate_result.phases_to_rerun,
+                        'reason': gate_result.reason
+                    }
+                )
+
+                yield self._update_state(
+                    session_id, ProductionPhase.QA,
+                    ProductionStatus.IN_PROGRESS, 96,
+                    f"Quality Gate: {gate_result.decision.value} (AUTEUR: {gate_result.auteur_score:.0f}/100)"
+                )
+
+                # Handle iteration decisions (for future iteration support)
+                if gate_result.decision == GateDecision.FAIL:
+                    raise ValueError(
+                        f"Quality threshold not achievable after {pipeline_iteration} iterations. "
+                        f"Best AUTEUR score: {gate_result.auteur_score:.0f}/100"
+                    )
+
+                # Store gate result in QA result for downstream use
+                qa_result['quality_gate'] = {
+                    'decision': gate_result.decision.value,
+                    'reason': gate_result.reason,
+                    'feedback': gate_result.feedback,
+                    'iteration': pipeline_iteration
+                }
+
+            # =====================================================
             # PHASE 9: ENHANCEMENT (Agents 15-23)
             # =====================================================
             yield self._update_state(
@@ -937,10 +1033,13 @@ class NexusBridge:
 
             # Final state with artifacts
             qa_status = "passed" if qa_result.get("overall_passed") else "failed"
+            auteur_score = creative_qa.get('overall_score', 0)
+            gate_decision = qa_result.get('quality_gate', {}).get('decision', 'N/A')
+
             final_state = self._update_state(
                 session_id, ProductionPhase.QA,
                 ProductionStatus.COMPLETED, 100,
-                f"Production complete! {total_time:.1f}s | ${total_cost:.2f} | QA: {qa_status}",
+                f"Production complete! {total_time:.1f}s | ${total_cost:.2f} | AUTEUR: {auteur_score:.0f}/100 | Gate: {gate_decision}",
                 metadata={
                     "total_duration_seconds": total_time,
                     "total_cost_usd": total_cost,
@@ -950,7 +1049,13 @@ class NexusBridge:
                     "assembly_render_time": assembly_result.get("render_time", 0),
                     "qa_result": qa_result,
                     "enhancement": enhancement_result,
-                    "agents_used": enhancement_result.get("agents_used", [])
+                    "agents_used": enhancement_result.get("agents_used", []),
+                    # Ralph System metrics (RAGNAROK v8.0)
+                    "ralph_enabled": self._ralph_enabled,
+                    "pipeline_iterations": self._current_pipeline_iteration,
+                    "auteur_score": auteur_score,
+                    "quality_gate": qa_result.get('quality_gate', {}),
+                    "qa_history": self._qa_history
                 },
                 artifacts={
                     **video_urls,
