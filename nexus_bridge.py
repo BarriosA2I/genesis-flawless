@@ -61,6 +61,21 @@ except ImportError:
     get_video_storage = None
     logger.warning("R2VideoStorage not available")
 
+# Import Music Selection Agent (Agent 6)
+try:
+    from agents.music_selector_agent import (
+        MusicSelectionAgent, create_music_selector,
+        MusicRequest, MusicResponse, MusicTrack, DuckingConfig
+    )
+except ImportError:
+    MusicSelectionAgent = None
+    create_music_selector = None
+    MusicRequest = None
+    MusicResponse = None
+    MusicTrack = None
+    DuckingConfig = None
+    logger.warning("MusicSelectionAgent not available")
+
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
@@ -110,15 +125,16 @@ def _init_metrics():
 # =============================================================================
 
 class ProductionPhase(Enum):
-    """8 phases matching RAGNAROK agents"""
+    """9 phases matching RAGNAROK agents"""
     INTAKE = "intake"                    # Agent 0: NEXUS
     INTELLIGENCE = "intelligence"        # Agent 1: Business Intel + TRINITY
     STORY = "story"                      # Agent 2: Story Creator
     PROMPTS = "prompts"                  # Agent 3: Prompt Engineer
     VIDEO = "video"                      # Agent 4: Video Generator
     VOICE = "voice"                      # Agent 5: Voiceover
-    ASSEMBLY = "assembly"                # Agent 6: Video Assembly
-    QA = "qa"                            # Agent 7: FFprobe QA
+    MUSIC = "music"                      # Agent 6: Music Selector
+    ASSEMBLY = "assembly"                # Agent 7: Video Assembly
+    QA = "qa"                            # Agent 8: QA
 
 
 class ProductionStatus(Enum):
@@ -374,6 +390,17 @@ class NexusBridge:
         else:
             logger.warning("R2VideoStorage not available")
 
+        # Music Selection Agent (Agent 6)
+        self.music_agent = None
+        if create_music_selector:
+            try:
+                self.music_agent = create_music_selector()
+                logger.info("MusicSelectionAgent initialized")
+            except Exception as e:
+                logger.warning(f"MusicSelectionAgent init failed: {e}")
+        else:
+            logger.warning("MusicSelectionAgent not available")
+
     async def start_production(
         self,
         session_id: str,
@@ -517,12 +544,34 @@ class NexusBridge:
 
             yield self._update_state(
                 session_id, ProductionPhase.VOICE,
-                ProductionStatus.COMPLETED, 85,
+                ProductionStatus.COMPLETED, 80,
                 f"Voiceover generated ({voiceover_result.get('duration_seconds', 30)}s)"
             )
 
             # =====================================================
-            # PHASE 6: ASSEMBLY (FFmpeg + R2 Upload)
+            # PHASE 6: MUSIC (Background Music Selection)
+            # =====================================================
+            yield self._update_state(
+                session_id, ProductionPhase.MUSIC,
+                ProductionStatus.IN_PROGRESS, 82,
+                "Selecting background music..."
+            )
+
+            # REAL AGENT: Music selection based on industry/mood
+            music_result = await self._select_music(
+                industry=industry,
+                mood=script.get("style", "professional"),
+                duration=voiceover_result.get("duration_seconds", 30) + 5
+            )
+
+            yield self._update_state(
+                session_id, ProductionPhase.MUSIC,
+                ProductionStatus.COMPLETED, 85,
+                f"Music selected: {music_result.get('track_title', 'background track')}"
+            )
+
+            # =====================================================
+            # PHASE 7: ASSEMBLY (FFmpeg + R2 Upload)
             # =====================================================
             yield self._update_state(
                 session_id, ProductionPhase.ASSEMBLY,
@@ -536,6 +585,7 @@ class NexusBridge:
                 production_id=production_id,
                 prompts=prompts,
                 voiceover_result=voiceover_result,
+                music_result=music_result,
                 script=script
             )
 
@@ -862,24 +912,117 @@ Return ONLY valid JSON array, no markdown."""
                 "source": "error"
             }
 
+    async def _select_music(
+        self,
+        industry: str,
+        mood: str,
+        duration: float
+    ) -> Dict[str, Any]:
+        """
+        Select background music using MusicSelectionAgent (Agent 6).
+
+        Args:
+            industry: Target industry for mood matching
+            mood: Desired mood/style
+            duration: Required minimum duration in seconds
+
+        Returns:
+            Dict with track_url, track_title, ducking_config, cost
+        """
+        if not self.music_agent:
+            logger.warning("MusicSelectionAgent not available - using mock music")
+            return {
+                "track_url": None,
+                "track_title": "No background music",
+                "ducking_config": {
+                    "threshold": 0.1,
+                    "ratio": 4,
+                    "attack": 200,
+                    "release": 500,
+                    "music_base_volume": 0.4
+                },
+                "cost": 0.0,
+                "source": "mock"
+            }
+
+        try:
+            # Build music request
+            if MusicRequest:
+                request = MusicRequest(
+                    industry=industry,
+                    mood=mood,
+                    duration=duration
+                )
+                response = await self.music_agent.select_music(request)
+            else:
+                # Fallback dict-based call
+                response = await self.music_agent.select_music({
+                    "industry": industry,
+                    "mood": mood,
+                    "duration": duration
+                })
+
+            # Extract track info
+            primary_track = getattr(response, 'primary_track', None) or response.get('primary_track', {})
+            ducking = getattr(response, 'ducking_config', None) or response.get('ducking_config', {})
+
+            track_url = getattr(primary_track, 'url', None) or primary_track.get('url')
+            track_title = getattr(primary_track, 'title', None) or primary_track.get('title', 'Background Music')
+
+            logger.info(f"Music selected: {track_title} (source: {getattr(response, 'source', 'unknown')})")
+
+            return {
+                "track_url": track_url,
+                "track_title": track_title,
+                "ducking_config": {
+                    "threshold": getattr(ducking, 'threshold', None) or ducking.get('threshold', 0.1),
+                    "ratio": getattr(ducking, 'ratio', None) or ducking.get('ratio', 4),
+                    "attack": getattr(ducking, 'attack', None) or ducking.get('attack', 200),
+                    "release": getattr(ducking, 'release', None) or ducking.get('release', 500),
+                    "music_base_volume": getattr(ducking, 'music_base_volume', None) or ducking.get('music_base_volume', 0.4)
+                },
+                "cost": getattr(response, 'cost', 0.0) or response.get('cost', 0.0),
+                "confidence": getattr(response, 'confidence', 0.0) or response.get('confidence', 0.0),
+                "source": getattr(response, 'source', 'local') or response.get('source', 'local')
+            }
+
+        except Exception as e:
+            logger.error(f"Music selection failed: {e}")
+            return {
+                "track_url": None,
+                "track_title": "No background music",
+                "ducking_config": {
+                    "threshold": 0.1,
+                    "ratio": 4,
+                    "attack": 200,
+                    "release": 500,
+                    "music_base_volume": 0.4
+                },
+                "cost": 0.0,
+                "error": str(e),
+                "source": "error"
+            }
+
     async def _run_assembly(
         self,
         session_id: str,
         production_id: str,
         prompts: List[Dict[str, Any]],
         voiceover_result: Dict[str, Any],
+        music_result: Dict[str, Any],
         script: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Run FFmpeg video assembly (Agent 7: VORTEX Assembly).
 
-        This assembles placeholder videos with voiceover until Phase 4 (Runway) is integrated.
+        This assembles placeholder videos with voiceover and music until Phase 4 (Runway) is integrated.
 
         Args:
             session_id: Production session ID
             production_id: Unique production ID for R2 storage
             prompts: Video prompts from Agent 3
             voiceover_result: Voiceover result from Agent 5
+            music_result: Music selection result from Agent 6
             script: Script from Agent 2
 
         Returns:
@@ -980,7 +1123,7 @@ Return ONLY valid JSON array, no markdown."""
                             "scene_number": i + 1
                         })
 
-                # Build audio input
+                # Build voiceover audio input
                 audio_input = None
                 if voiceover_path and AudioInput:
                     audio_input = AudioInput(
@@ -995,6 +1138,27 @@ Return ONLY valid JSON array, no markdown."""
                         "volume": 1.0
                     }
 
+                # Build music audio input (if available)
+                music_input = None
+                music_url = music_result.get("track_url") if music_result else None
+                ducking_config = music_result.get("ducking_config", {}) if music_result else {}
+
+                if music_url:
+                    music_volume = ducking_config.get("music_base_volume", 0.4)
+                    if AudioInput:
+                        music_input = AudioInput(
+                            path=music_url,  # Will be downloaded or is local path
+                            audio_type="music",
+                            volume=music_volume
+                        )
+                    else:
+                        music_input = {
+                            "path": music_url,
+                            "audio_type": "music",
+                            "volume": music_volume
+                        }
+                    logger.info(f"Music track: {music_result.get('track_title', 'unknown')} @ volume {music_volume}")
+
                 # Determine formats to render
                 formats_to_render = [
                     VideoFormat.YOUTUBE_1080P if VideoFormat else "youtube_1080p",
@@ -1005,14 +1169,15 @@ Return ONLY valid JSON array, no markdown."""
                 # =========================================================
                 # Step 4: Run FFmpeg assembly
                 # =========================================================
-                logger.info(f"Starting FFmpeg assembly: {len(video_clips)} clips, voiceover: {voiceover_path is not None}")
+                has_music = music_input is not None
+                logger.info(f"Starting FFmpeg assembly: {len(video_clips)} clips, voiceover: {voiceover_path is not None}, music: {has_music}")
 
                 if AssemblyRequest:
                     request = AssemblyRequest(
                         production_id=production_id,
                         clips=video_clips,
                         voiceover=audio_input,
-                        music=None,  # No music for now
+                        music=music_input,
                         formats=formats_to_render,
                         output_dir=str(temp_path / "output")
                     )
@@ -1023,6 +1188,7 @@ Return ONLY valid JSON array, no markdown."""
                         "production_id": production_id,
                         "clips": video_clips,
                         "voiceover": audio_input,
+                        "music": music_input,
                         "formats": ["youtube_1080p", "tiktok", "instagram_feed"],
                         "output_dir": str(temp_path / "output")
                     })
