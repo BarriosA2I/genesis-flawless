@@ -2056,9 +2056,17 @@ Return ONLY valid JSON array, no markdown."""
         Returns:
             Dict with overall_score, recommendations, issues
         """
-        # If no AUTEUR or no video, fall back to script-based scoring with Claude
-        if not self.auteur or not video_url:
-            reason = "auteur_unavailable" if not self.auteur else "no_video_url"
+        # Detect if video is a mock/placeholder (not a real generated video)
+        is_mock_video = (
+            not video_url or
+            "barriosa2i.com" in str(video_url) or  # Placeholder URLs
+            "placeholder" in str(video_url).lower() or
+            "mock" in str(video_url).lower()
+        )
+
+        # If no AUTEUR or mock video, fall back to script-based scoring with Claude
+        if not self.auteur or is_mock_video:
+            reason = "auteur_unavailable" if not self.auteur else "mock_video"
             logger.info(f"[AUTEUR] Falling back to script-based scoring (reason: {reason})")
             return await self._score_script_with_claude(script, brand_guidelines)
 
