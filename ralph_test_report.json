@@ -1,0 +1,338 @@
+{
+  "endpoint": "https://barrios-genesis-flawless.onrender.com",
+  "test_mode": "standard",
+  "result": "WARNING",
+  "session_id": "a1742795-cb88-4ce9-ae9a-b64ac690c3cc",
+  "iterations": [
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:04.010201"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:04.312149"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence",
+        "story"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:10.429673"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence",
+        "story",
+        "prompts"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:27.372244"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence",
+        "story",
+        "prompts",
+        "video"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:27.461449"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence",
+        "story",
+        "prompts",
+        "video",
+        "voice"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:28.837743"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence",
+        "story",
+        "prompts",
+        "video",
+        "voice",
+        "music"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:28.837778"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence",
+        "story",
+        "prompts",
+        "video",
+        "voice",
+        "music",
+        "assembly"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:28.881780"
+    },
+    {
+      "iteration_number": 1,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "intake",
+        "intelligence",
+        "story",
+        "prompts",
+        "video",
+        "voice",
+        "music",
+        "assembly",
+        "qa"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:28.942941"
+    },
+    {
+      "iteration_number": 2,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:34.628653"
+    },
+    {
+      "iteration_number": 2,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:52.849227"
+    },
+    {
+      "iteration_number": 2,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:52.894624"
+    },
+    {
+      "iteration_number": 2,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video",
+        "voice"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:54.250795"
+    },
+    {
+      "iteration_number": 2,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video",
+        "voice",
+        "assembly"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:54.297656"
+    },
+    {
+      "iteration_number": 2,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video",
+        "voice",
+        "assembly"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:08:54.305762"
+    },
+    {
+      "iteration_number": 3,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:09:00.745520"
+    },
+    {
+      "iteration_number": 3,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:09:17.434874"
+    },
+    {
+      "iteration_number": 3,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:09:17.494516"
+    },
+    {
+      "iteration_number": 3,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video",
+        "voice"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:09:19.045539"
+    },
+    {
+      "iteration_number": 3,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video",
+        "voice",
+        "assembly"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:09:19.090499"
+    },
+    {
+      "iteration_number": 3,
+      "auteur_score": 0.0,
+      "gate_decision": "unknown",
+      "phases_run": [
+        "qa",
+        "story",
+        "prompts",
+        "video",
+        "voice",
+        "assembly"
+      ],
+      "feedback": "",
+      "duration_ms": 0,
+      "timestamp": "2026-01-08T06:09:19.340183"
+    }
+  ],
+  "total_iterations": 3,
+  "final_auteur_score": 78.0,
+  "final_gate_decision": "pass",
+  "score_progression": [
+    78.0
+  ],
+  "score_improvement": 0.0,
+  "total_duration_ms": 75393,
+  "errors": [],
+  "ralph_enabled": true,
+  "phases_detected": [
+    "intake",
+    "intelligence",
+    "story",
+    "prompts",
+    "video",
+    "voice",
+    "music",
+    "assembly",
+    "qa"
+  ],
+  "iteration_detected": true,
+  "timestamp": "2026-01-08T06:08:03.311310"
+}
