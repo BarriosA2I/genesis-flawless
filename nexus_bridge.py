@@ -672,7 +672,10 @@ class NexusBridge:
 
         # Ralph System: Initialize pipeline iteration tracking
         self._current_pipeline_iteration = 1
+        self._max_pipeline_iterations = 3
         self._qa_history = []
+        self._phases_to_rerun = []
+        self._iteration_feedback = ""
         self._ralph_enabled = RALPH_AVAILABLE and approved_brief.get("enable_ralph", True)
 
         if self._ralph_enabled:
@@ -762,232 +765,307 @@ class NexusBridge:
             )
 
             # =====================================================
-            # PHASE 2: STORY (Script Creation)
+            # ITERATION LOOP: PHASE 2-8 (may repeat based on QA)
+            # Ralph System iterates until AUTEUR score >= 85 or max 3 iterations
             # =====================================================
-            yield self._update_state(
-                session_id, ProductionPhase.STORY,
-                ProductionStatus.IN_PROGRESS, 15,
-                "Creating video script with AI..."
-            )
+            while self._current_pipeline_iteration <= self._max_pipeline_iterations:
+                # Determine which phases to run this iteration
+                is_first_iteration = self._current_pipeline_iteration == 1
+                run_story = is_first_iteration or 'story' in self._phases_to_rerun
+                run_prompts = is_first_iteration or 'prompts' in self._phases_to_rerun
+                run_video = is_first_iteration or 'video' in self._phases_to_rerun
+                run_voice = is_first_iteration or 'voice' in self._phases_to_rerun
+                run_music = is_first_iteration or 'music' in self._phases_to_rerun
+                run_assembly = is_first_iteration or 'assembly' in self._phases_to_rerun
 
-            # REAL AGENT: Claude-powered script generation
-            script = await self._generate_script_with_claude(enriched_brief)
+                # Log iteration start for subsequent iterations
+                if self._current_pipeline_iteration > 1:
+                    yield self._update_state(
+                        session_id, ProductionPhase.QA,
+                        ProductionStatus.IN_PROGRESS, 10,
+                        f"Iteration {self._current_pipeline_iteration}/3: Re-running {', '.join(self._phases_to_rerun)}"
+                    )
+                    logger.info(
+                        f"Starting iteration {self._current_pipeline_iteration}",
+                        extra={'phases_to_rerun': self._phases_to_rerun, 'feedback': self._iteration_feedback}
+                    )
 
-            yield self._update_state(
-                session_id, ProductionPhase.STORY,
-                ProductionStatus.COMPLETED, 25,
-                f"Script created: {script['hook'][:40]}..."
-            )
+                # =====================================================
+                # PHASE 2: STORY (Script Creation)
+                # =====================================================
+                if run_story:
+                    yield self._update_state(
+                        session_id, ProductionPhase.STORY,
+                        ProductionStatus.IN_PROGRESS, 15,
+                        "Creating video script with AI..."
+                    )
 
-            # =====================================================
-            # PHASE 3: PROMPTS (Video Prompt Engineering)
-            # =====================================================
-            yield self._update_state(
-                session_id, ProductionPhase.PROMPTS,
-                ProductionStatus.IN_PROGRESS, 30,
-                "Engineering video prompts with AI..."
-            )
+                    # Pass iteration feedback to improve script if iterating
+                    story_context = enriched_brief.copy()
+                    if self._iteration_feedback:
+                        story_context['improvement_directive'] = self._iteration_feedback
+                        story_context['previous_score'] = self._qa_history[-1]['auteur_score'] if self._qa_history else None
 
-            # REAL AGENT: Claude-powered prompt engineering
-            prompts = await self._generate_prompts_with_claude(script, enriched_brief)
+                    # REAL AGENT: Claude-powered script generation
+                    script = await self._generate_script_with_claude(story_context)
 
-            yield self._update_state(
-                session_id, ProductionPhase.PROMPTS,
-                ProductionStatus.COMPLETED, 40,
-                f"Generated {len(prompts)} scene prompts"
-            )
+                    yield self._update_state(
+                        session_id, ProductionPhase.STORY,
+                        ProductionStatus.COMPLETED, 25,
+                        f"Script created: {script['hook'][:40]}..."
+                    )
 
-            # =====================================================
-            # PHASE 4: VIDEO (AI Video Generation - Longest Phase)
-            # =====================================================
-            yield self._update_state(
-                session_id, ProductionPhase.VIDEO,
-                ProductionStatus.IN_PROGRESS, 45,
-                f"Generating {len(prompts)} AI video scenes... (1-3 minutes)"
-            )
+                # =====================================================
+                # PHASE 3: PROMPTS (Video Prompt Engineering)
+                # =====================================================
+                if run_prompts:
+                    yield self._update_state(
+                        session_id, ProductionPhase.PROMPTS,
+                        ProductionStatus.IN_PROGRESS, 30,
+                        "Engineering video prompts with AI..."
+                    )
 
-            # REAL AGENT: Generate video clips using Sora 2 / Veo 3.1
-            video_generation = await self._generate_video_clips(
-                prompts=prompts,
-                style=script.get("style", "cinematic")
-            )
+                    # REAL AGENT: Claude-powered prompt engineering
+                    prompts = await self._generate_prompts_with_claude(script, enriched_brief)
 
-            # Stream progress based on results
-            clips_generated = len([r for r in video_generation.get("results", []) if r.get("video_path") or r.get("video_url")])
-            total_clips = len(prompts)
-            video_cost = video_generation.get("total_cost", 0.0)
+                    yield self._update_state(
+                        session_id, ProductionPhase.PROMPTS,
+                        ProductionStatus.COMPLETED, 40,
+                        f"Generated {len(prompts)} scene prompts"
+                    )
 
-            yield self._update_state(
-                session_id, ProductionPhase.VIDEO,
-                ProductionStatus.COMPLETED, 75,
-                f"Generated {clips_generated}/{total_clips} scenes | ${video_cost:.2f}"
-            )
+                # =====================================================
+                # PHASE 4: VIDEO (AI Video Generation - Longest Phase)
+                # =====================================================
+                if run_video:
+                    yield self._update_state(
+                        session_id, ProductionPhase.VIDEO,
+                        ProductionStatus.IN_PROGRESS, 45,
+                        f"Generating {len(prompts)} AI video scenes... (1-3 minutes)"
+                    )
 
-            # =====================================================
-            # PHASE 5: VOICE (Voiceover Generation)
-            # =====================================================
-            yield self._update_state(
-                session_id, ProductionPhase.VOICE,
-                ProductionStatus.IN_PROGRESS, 78,
-                "Generating voiceover with ElevenLabs..."
-            )
+                    # REAL AGENT: Generate video clips using Sora 2 / Veo 3.1
+                    video_generation = await self._generate_video_clips(
+                        prompts=prompts,
+                        style=script.get("style", "cinematic")
+                    )
 
-            # REAL AGENT: ElevenLabs voiceover generation
-            voiceover_result = await self._generate_voiceover(script, enriched_brief)
-            voiceover_url = voiceover_result.get("audio_url", f"https://videos.barriosa2i.com/{production_id}/voiceover.mp3")
+                    # Stream progress based on results
+                    clips_generated = len([r for r in video_generation.get("results", []) if r.get("video_path") or r.get("video_url")])
+                    total_clips = len(prompts)
+                    video_cost = video_generation.get("total_cost", 0.0)
 
-            yield self._update_state(
-                session_id, ProductionPhase.VOICE,
-                ProductionStatus.COMPLETED, 80,
-                f"Voiceover generated ({voiceover_result.get('duration_seconds', 30)}s)"
-            )
+                    yield self._update_state(
+                        session_id, ProductionPhase.VIDEO,
+                        ProductionStatus.COMPLETED, 75,
+                        f"Generated {clips_generated}/{total_clips} scenes | ${video_cost:.2f}"
+                    )
 
-            # =====================================================
-            # PHASE 6: MUSIC (Background Music Selection)
-            # =====================================================
-            yield self._update_state(
-                session_id, ProductionPhase.MUSIC,
-                ProductionStatus.IN_PROGRESS, 82,
-                "Selecting background music..."
-            )
+                # =====================================================
+                # PHASE 5: VOICE (Voiceover Generation)
+                # =====================================================
+                if run_voice:
+                    yield self._update_state(
+                        session_id, ProductionPhase.VOICE,
+                        ProductionStatus.IN_PROGRESS, 78,
+                        "Generating voiceover with ElevenLabs..."
+                    )
 
-            # REAL AGENT: Music selection based on industry/mood
-            music_result = await self._select_music(
-                industry=industry,
-                mood=script.get("style", "professional"),
-                duration=voiceover_result.get("duration_seconds", 30) + 5
-            )
+                    # REAL AGENT: ElevenLabs voiceover generation
+                    voiceover_result = await self._generate_voiceover(script, enriched_brief)
+                    voiceover_url = voiceover_result.get("audio_url", f"https://videos.barriosa2i.com/{production_id}/voiceover.mp3")
 
-            yield self._update_state(
-                session_id, ProductionPhase.MUSIC,
-                ProductionStatus.COMPLETED, 85,
-                f"Music selected: {music_result.get('track_title', 'background track')}"
-            )
+                    yield self._update_state(
+                        session_id, ProductionPhase.VOICE,
+                        ProductionStatus.COMPLETED, 80,
+                        f"Voiceover generated ({voiceover_result.get('duration_seconds', 30)}s)"
+                    )
 
-            # =====================================================
-            # PHASE 7: ASSEMBLY (FFmpeg + R2 Upload)
-            # =====================================================
-            yield self._update_state(
-                session_id, ProductionPhase.ASSEMBLY,
-                ProductionStatus.IN_PROGRESS, 88,
-                "Assembling video with FFmpeg..."
-            )
+                # =====================================================
+                # PHASE 6: MUSIC (Background Music Selection)
+                # =====================================================
+                if run_music:
+                    yield self._update_state(
+                        session_id, ProductionPhase.MUSIC,
+                        ProductionStatus.IN_PROGRESS, 82,
+                        "Selecting background music..."
+                    )
 
-            # Run real FFmpeg assembly if agent is available
-            assembly_result = await self._run_assembly(
-                session_id=session_id,
-                production_id=production_id,
-                prompts=prompts,
-                voiceover_result=voiceover_result,
-                music_result=music_result,
-                script=script,
-                video_clips=video_generation.get("clip_paths", [])
-            )
+                    # REAL AGENT: Music selection based on industry/mood
+                    music_result = await self._select_music(
+                        industry=industry,
+                        mood=script.get("style", "professional"),
+                        duration=voiceover_result.get("duration_seconds", 30) + 5
+                    )
 
-            yield self._update_state(
-                session_id, ProductionPhase.ASSEMBLY,
-                ProductionStatus.COMPLETED, 95,
-                f"Assembled {len(assembly_result.get('video_urls', {}))} format variants"
-            )
+                    yield self._update_state(
+                        session_id, ProductionPhase.MUSIC,
+                        ProductionStatus.COMPLETED, 85,
+                        f"Music selected: {music_result.get('track_title', 'background track')}"
+                    )
 
-            # =====================================================
-            # PHASE 8: QA (Quality Assurance)
-            # =====================================================
-            yield self._update_state(
-                session_id, ProductionPhase.QA,
-                ProductionStatus.IN_PROGRESS, 92,
-                "Running quality checks..."
-            )
+                # =====================================================
+                # PHASE 7: ASSEMBLY (FFmpeg + R2 Upload)
+                # =====================================================
+                if run_assembly:
+                    yield self._update_state(
+                        session_id, ProductionPhase.ASSEMBLY,
+                        ProductionStatus.IN_PROGRESS, 88,
+                        "Assembling video with FFmpeg..."
+                    )
 
-            # PHASE 8.5: Creative QA with THE AUTEUR (Agent 7.5)
-            creative_qa = await self._run_creative_qa(
-                video_url=assembly_result.get("video_urls", {}).get("youtube_1080p"),
-                script=script,
-                brand_guidelines=approved_brief.get("brand_guidelines", {})
-            )
+                    # Run real FFmpeg assembly if agent is available
+                    assembly_result = await self._run_assembly(
+                        session_id=session_id,
+                        production_id=production_id,
+                        prompts=prompts,
+                        voiceover_result=voiceover_result,
+                        music_result=music_result,
+                        script=script,
+                        video_clips=video_generation.get("clip_paths", [])
+                    )
 
-            yield self._update_state(
-                session_id, ProductionPhase.QA,
-                ProductionStatus.IN_PROGRESS, 95,
-                f"Creative QA: {creative_qa.get('overall_score', 0):.0f}/100"
-            )
+                    yield self._update_state(
+                        session_id, ProductionPhase.ASSEMBLY,
+                        ProductionStatus.COMPLETED, 95,
+                        f"Assembled {len(assembly_result.get('video_urls', {}))} format variants"
+                    )
 
-            # REAL AGENT: Technical QA validation of assembled videos
-            expected_duration = script.get("duration_seconds", 30)
-            qa_result = await self._validate_output(assembly_result, expected_duration)
-
-            # Merge creative QA into results
-            qa_result["creative_qa"] = creative_qa
-            qa_result["creative_score"] = creative_qa.get("overall_score", 0)
-
-            # Log QA results
-            if qa_result.get("overall_passed"):
-                logger.info(f"QA validation passed: {qa_result.get('source', 'unknown')}, creative: {creative_qa.get('overall_score', 0)}/100")
-            else:
-                logger.warning(f"QA validation had issues: {qa_result}")
-
-            # =====================================================
-            # RALPH QUALITY GATE - Pipeline Iteration Decision
-            # =====================================================
-            if RALPH_AVAILABLE and quality_gate:
-                # Track pipeline iteration (initialized earlier in start_production)
-                pipeline_iteration = getattr(self, '_current_pipeline_iteration', 1)
-
-                gate_result = quality_gate.evaluate(
-                    auteur_score=creative_qa.get('overall_score', 0),
-                    technical_qa={
-                        'status': 'PASSED' if qa_result.get('overall_passed') else 'FAILED',
-                        'overall_score': qa_result.get('technical_score', 100),
-                        'issues': qa_result.get('issues', [])
-                    },
-                    pipeline_iteration=pipeline_iteration,
-                    qa_history=getattr(self, '_qa_history', []),
-                    metadata={
-                        'session_id': session_id,
-                        'production_id': production_id
-                    }
+                # =====================================================
+                # PHASE 8: QA (Quality Assurance) - Always runs
+                # =====================================================
+                yield self._update_state(
+                    session_id, ProductionPhase.QA,
+                    ProductionStatus.IN_PROGRESS, 92,
+                    "Running quality checks..."
                 )
 
-                # Store QA history for learning
-                if not hasattr(self, '_qa_history'):
-                    self._qa_history = []
-                self._qa_history.append({
-                    'iteration': pipeline_iteration,
-                    'auteur_score': creative_qa.get('overall_score', 0),
-                    'technical_passed': qa_result.get('overall_passed'),
-                    'timestamp': datetime.utcnow().isoformat()
-                })
-
-                logger.info(
-                    f"Quality Gate decision: {gate_result.decision.value}",
-                    extra={
-                        'auteur_score': gate_result.auteur_score,
-                        'pipeline_iteration': pipeline_iteration,
-                        'phases_to_rerun': gate_result.phases_to_rerun,
-                        'reason': gate_result.reason
-                    }
+                # PHASE 8.5: Creative QA with THE AUTEUR (Agent 7.5)
+                creative_qa = await self._run_creative_qa(
+                    video_url=assembly_result.get("video_urls", {}).get("youtube_1080p"),
+                    script=script,
+                    brand_guidelines=approved_brief.get("brand_guidelines", {})
                 )
 
                 yield self._update_state(
                     session_id, ProductionPhase.QA,
-                    ProductionStatus.IN_PROGRESS, 96,
-                    f"Quality Gate: {gate_result.decision.value} (AUTEUR: {gate_result.auteur_score:.0f}/100)"
+                    ProductionStatus.IN_PROGRESS, 95,
+                    f"Creative QA: {creative_qa.get('overall_score', 0):.0f}/100"
                 )
 
-                # Handle iteration decisions (for future iteration support)
-                if gate_result.decision == GateDecision.FAIL:
-                    raise ValueError(
-                        f"Quality threshold not achievable after {pipeline_iteration} iterations. "
-                        f"Best AUTEUR score: {gate_result.auteur_score:.0f}/100"
+                # REAL AGENT: Technical QA validation of assembled videos
+                expected_duration = script.get("duration_seconds", 30)
+                qa_result = await self._validate_output(assembly_result, expected_duration)
+
+                # Merge creative QA into results
+                qa_result["creative_qa"] = creative_qa
+                qa_result["creative_score"] = creative_qa.get("overall_score", 0)
+
+                # Log QA results
+                if qa_result.get("overall_passed"):
+                    logger.info(f"QA validation passed: {qa_result.get('source', 'unknown')}, creative: {creative_qa.get('overall_score', 0)}/100")
+                else:
+                    logger.warning(f"QA validation had issues: {qa_result}")
+
+                # =====================================================
+                # RALPH QUALITY GATE - Pipeline Iteration Decision
+                # =====================================================
+                if RALPH_AVAILABLE and quality_gate:
+                    # Track pipeline iteration
+                    pipeline_iteration = self._current_pipeline_iteration
+
+                    gate_result = quality_gate.evaluate(
+                        auteur_score=creative_qa.get('overall_score', 0),
+                        technical_qa={
+                            'status': 'PASSED' if qa_result.get('overall_passed') else 'FAILED',
+                            'overall_score': qa_result.get('technical_score', 100),
+                            'issues': qa_result.get('issues', [])
+                        },
+                        pipeline_iteration=pipeline_iteration,
+                        qa_history=self._qa_history,
+                        metadata={
+                            'session_id': session_id,
+                            'production_id': production_id
+                        }
                     )
 
-                # Store gate result in QA result for downstream use
-                qa_result['quality_gate'] = {
-                    'decision': gate_result.decision.value,
-                    'reason': gate_result.reason,
-                    'feedback': gate_result.feedback,
-                    'iteration': pipeline_iteration
-                }
+                    # Store QA history for learning
+                    self._qa_history.append({
+                        'iteration': pipeline_iteration,
+                        'auteur_score': creative_qa.get('overall_score', 0),
+                        'technical_passed': qa_result.get('overall_passed'),
+                        'timestamp': datetime.utcnow().isoformat()
+                    })
+
+                    logger.info(
+                        f"Quality Gate decision: {gate_result.decision.value}",
+                        extra={
+                            'auteur_score': gate_result.auteur_score,
+                            'pipeline_iteration': pipeline_iteration,
+                            'phases_to_rerun': gate_result.phases_to_rerun,
+                            'reason': gate_result.reason
+                        }
+                    )
+
+                    yield self._update_state(
+                        session_id, ProductionPhase.QA,
+                        ProductionStatus.IN_PROGRESS, 96,
+                        f"Quality Gate: {gate_result.decision.value} (AUTEUR: {gate_result.auteur_score:.0f}/100)"
+                    )
+
+                    # Handle iteration decisions - ACTUALLY ITERATE NOW!
+                    if gate_result.should_fail():
+                        raise ValueError(
+                            f"Quality threshold not achievable after {pipeline_iteration} iterations. "
+                            f"Best AUTEUR score: {gate_result.auteur_score:.0f}/100"
+                        )
+
+                    if gate_result.should_pass():
+                        logger.info(f"Quality threshold met on iteration {pipeline_iteration}!")
+                        # Store gate result and break to Enhancement
+                        qa_result['quality_gate'] = {
+                            'decision': gate_result.decision.value,
+                            'reason': gate_result.reason,
+                            'feedback': gate_result.feedback,
+                            'iteration': pipeline_iteration
+                        }
+                        break  # Exit while loop, proceed to Enhancement
+
+                    if gate_result.should_iterate():
+                        # Store feedback and prepare for next iteration
+                        self._iteration_feedback = gate_result.feedback
+                        self._phases_to_rerun = gate_result.phases_to_rerun
+                        self._current_pipeline_iteration += 1
+
+                        yield self._update_state(
+                            session_id, ProductionPhase.QA,
+                            ProductionStatus.IN_PROGRESS, 97,
+                            f"Quality Gate: {gate_result.decision.value}. "
+                            f"Starting iteration {self._current_pipeline_iteration}/{self._max_pipeline_iterations}..."
+                        )
+                        continue  # Loop back to re-run phases
+
+                    # Default: store result and break (shouldn't normally reach here)
+                    qa_result['quality_gate'] = {
+                        'decision': gate_result.decision.value,
+                        'reason': gate_result.reason,
+                        'feedback': gate_result.feedback,
+                        'iteration': pipeline_iteration
+                    }
+                    break
+
+                else:
+                    # Ralph not available - single pass, break out of loop
+                    qa_result['quality_gate'] = {
+                        'decision': 'pass',
+                        'reason': 'Ralph System not available - single pass mode',
+                        'feedback': '',
+                        'iteration': 1
+                    }
+                    break
+
+            # END OF ITERATION LOOP
+            # =====================================================
 
             # =====================================================
             # PHASE 9: ENHANCEMENT (Agents 15-23)

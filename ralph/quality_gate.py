@@ -41,6 +41,23 @@ class GateResult:
     technical_passed: bool
     iteration_number: int
 
+    def should_iterate(self) -> bool:
+        """Check if iteration is needed."""
+        return self.decision in [
+            GateDecision.ITERATE_STORY,
+            GateDecision.ITERATE_PROMPTS,
+            GateDecision.ITERATE_VIDEO,
+            GateDecision.ITERATE_FULL
+        ]
+
+    def should_pass(self) -> bool:
+        """Check if quality threshold met."""
+        return self.decision == GateDecision.PASS
+
+    def should_fail(self) -> bool:
+        """Check if max iterations exceeded."""
+        return self.decision == GateDecision.FAIL
+
 
 class QualityGate:
     """
