@@ -50,3 +50,7 @@ qdrant-client>=1.7.0
 # LangGraph Orchestration (for video brief intake)
 langgraph>=0.0.20
 langchain-core>=0.1.0
+
+# Agent 7: Video Assembly + R2 Storage
+boto3>=1.34.0
+botocore>=1.34.0

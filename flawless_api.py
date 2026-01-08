@@ -236,6 +236,24 @@ async def lifespan(app: FastAPI):
     initialize_vortex(redis_client)
     logger.info("✅ VORTEX v2.1 video assembly initialized")
 
+    # Check FFmpeg availability for Agent 7 (Video Assembly)
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            ffmpeg_version = result.stdout.decode().split('\n')[0]
+            logger.info(f"✅ FFmpeg available: {ffmpeg_version[:50]}")
+        else:
+            logger.warning("⚠️ FFmpeg not available - video assembly will use mock output")
+    except FileNotFoundError:
+        logger.warning("⚠️ FFmpeg not found in PATH - video assembly will use mock output")
+    except Exception as e:
+        logger.warning(f"⚠️ FFmpeg check failed: {e}")
+
     # Initialize Legendary Coordinator (Agents 7.5-15)
     global legendary_coordinator
     try:
