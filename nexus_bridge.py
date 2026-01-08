@@ -2056,25 +2056,11 @@ Return ONLY valid JSON array, no markdown."""
         Returns:
             Dict with overall_score, recommendations, issues
         """
-        if not self.auteur:
-            logger.warning("[AUTEUR] Not available - skipping creative QA")
-            return {
-                "overall_score": 78,
-                "status": "skipped",
-                "reason": "auteur_unavailable",
-                "recommendation": "approve",
-                "source": "mock"
-            }
-
-        if not video_url:
-            logger.warning("[AUTEUR] No video URL provided - skipping creative QA")
-            return {
-                "overall_score": 75,
-                "status": "skipped",
-                "reason": "no_video_url",
-                "recommendation": "approve",
-                "source": "mock"
-            }
+        # If no AUTEUR or no video, fall back to script-based scoring with Claude
+        if not self.auteur or not video_url:
+            reason = "auteur_unavailable" if not self.auteur else "no_video_url"
+            logger.info(f"[AUTEUR] Falling back to script-based scoring (reason: {reason})")
+            return await self._score_script_with_claude(script, brand_guidelines)
 
         try:
             logger.info(f"[AUTEUR] Running creative QA on {video_url}")
@@ -2132,6 +2118,142 @@ Return ONLY valid JSON array, no markdown."""
                 "status": "error",
                 "error": str(e),
                 "recommendation": "approve",
+                "source": "error"
+            }
+
+    async def _score_script_with_claude(
+        self,
+        script: Dict[str, Any],
+        brand_guidelines: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Score script quality using Claude when video QA not available.
+
+        Evaluates:
+        - Hook strength (attention-grabbing opening)
+        - Emotional impact (resonance with target audience)
+        - Story flow (narrative coherence)
+        - CTA clarity (clear call to action)
+        - Brand alignment (tone and messaging)
+
+        Returns score 0-100 that varies based on actual script quality.
+        """
+        if not self.claude_client:
+            # No Claude = return random score to avoid stuck iterations
+            import random
+            score = random.randint(70, 90)
+            logger.warning(f"[SCRIPT-QA] No Claude client - returning random score: {score}")
+            return {
+                "overall_score": score,
+                "status": "fallback",
+                "source": "random",
+                "recommendation": "approve" if score >= 85 else "revise"
+            }
+
+        try:
+            # Extract script components
+            hook = script.get("hook", "")
+            problem = script.get("problem", "")
+            solution = script.get("solution", "")
+            proof = script.get("proof", "")
+            cta = script.get("cta", "")
+            voiceover = script.get("voiceover_script", "")
+
+            script_text = f"""
+HOOK: {hook}
+PROBLEM: {problem}
+SOLUTION: {solution}
+PROOF: {proof}
+CTA: {cta}
+VOICEOVER: {voiceover}
+"""
+
+            system_prompt = """You are an expert creative director evaluating commercial scripts.
+Score the script on a 0-100 scale based on these criteria:
+
+1. HOOK STRENGTH (0-25): Does the opening grab attention immediately?
+   - 20-25: Unforgettable, stops the scroll
+   - 15-19: Good but could be stronger
+   - 10-14: Generic, seen before
+   - 0-9: Weak, forgettable
+
+2. EMOTIONAL IMPACT (0-25): Does it create emotional connection?
+   - 20-25: Strong emotional resonance, relatable pain
+   - 15-19: Some emotional appeal
+   - 10-14: Functional but dry
+   - 0-9: No emotional connection
+
+3. STORY FLOW (0-25): Is there a clear narrative arc?
+   - 20-25: Perfect problem→solution→benefit flow
+   - 15-19: Good structure, minor gaps
+   - 10-14: Disjointed or rushed
+   - 0-9: Confusing, no clear story
+
+4. CTA CLARITY (0-25): Is the call-to-action compelling?
+   - 20-25: Clear, urgent, irresistible
+   - 15-19: Clear but lacks urgency
+   - 10-14: Vague or weak
+   - 0-9: Missing or confusing
+
+Return ONLY a JSON object with:
+{
+  "overall_score": <sum of all scores, 0-100>,
+  "hook_score": <0-25>,
+  "emotion_score": <0-25>,
+  "story_score": <0-25>,
+  "cta_score": <0-25>,
+  "weak_category": "<lowest scoring category: hook_strength|emotional_impact|story_flow|cta_clarity>",
+  "top_issue": "<one sentence describing the biggest issue>",
+  "recommendation": "<approve if >=85, revise if 70-84, reject if <70>"
+}"""
+
+            user_prompt = f"""Rate this commercial script:
+
+{script_text}
+
+Be STRICT but FAIR. A score of 85+ means genuinely excellent work.
+Return ONLY valid JSON."""
+
+            response = self.claude_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=500,
+                messages=[{"role": "user", "content": user_prompt}],
+                system=system_prompt
+            )
+
+            # Parse response
+            content = response.content[0].text.strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+
+            result = json.loads(content)
+            score = result.get("overall_score", 75)
+
+            logger.info(f"[SCRIPT-QA] Claude scored script: {score}/100 (weak: {result.get('weak_category', 'unknown')})")
+
+            return {
+                "overall_score": score,
+                "hook_score": result.get("hook_score", 0),
+                "emotion_score": result.get("emotion_score", 0),
+                "story_score": result.get("story_score", 0),
+                "cta_score": result.get("cta_score", 0),
+                "weak_category": result.get("weak_category", "unknown"),
+                "top_issue": result.get("top_issue", ""),
+                "recommendation": result.get("recommendation", "revise"),
+                "status": "completed",
+                "source": "claude_script_qa"
+            }
+
+        except Exception as e:
+            logger.error(f"[SCRIPT-QA] Failed: {e}")
+            # Return moderate score on error to allow iteration
+            return {
+                "overall_score": 76,
+                "status": "error",
+                "error": str(e),
+                "recommendation": "revise",
                 "source": "error"
             }
 
