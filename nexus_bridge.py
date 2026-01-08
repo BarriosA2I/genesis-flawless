@@ -646,6 +646,7 @@ class NexusBridge:
         production_id = f"prod_{session_id}_{uuid.uuid4().hex[:8]}"
         start_time = time.time()
         industry = approved_brief.get("industry", "general")
+        business_name = approved_brief.get("business_name", "Unknown Business")
 
         # Track start
         if PRODUCTION_STARTED:
