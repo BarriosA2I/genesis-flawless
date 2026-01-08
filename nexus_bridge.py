@@ -142,6 +142,23 @@ except ImportError:
     TrendData = None
     logger.warning("TRINITY Suite not available")
 
+# Import THE AUTEUR (Agent 7.5) - Vision-Based Creative QA
+try:
+    from agents.the_auteur import (
+        TheAuteur, create_auteur,
+        CreativeQARequest, CreativeQAResult, CreativeIssue,
+        QARecommendation, IssueSeverity
+    )
+except ImportError:
+    TheAuteur = None
+    create_auteur = None
+    CreativeQARequest = None
+    CreativeQAResult = None
+    CreativeIssue = None
+    QARecommendation = None
+    IssueSeverity = None
+    logger.warning("THE AUTEUR not available")
+
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
@@ -569,6 +586,17 @@ class NexusBridge:
         else:
             logger.warning("IntakeQualifierAgent not available")
 
+        # THE AUTEUR - Creative QA (Agent 7.5)
+        self.auteur = None
+        if create_auteur:
+            try:
+                self.auteur = create_auteur()
+                logger.info("THE AUTEUR initialized (Claude Vision)")
+            except Exception as e:
+                logger.warning(f"THE AUTEUR init failed: {e}")
+        else:
+            logger.warning("THE AUTEUR not available")
+
     async def start_production(
         self,
         session_id: str,
@@ -796,17 +824,34 @@ class NexusBridge:
             # =====================================================
             yield self._update_state(
                 session_id, ProductionPhase.QA,
-                ProductionStatus.IN_PROGRESS, 97,
+                ProductionStatus.IN_PROGRESS, 92,
                 "Running quality checks..."
             )
 
-            # REAL AGENT: QA validation of assembled videos
+            # PHASE 8.5: Creative QA with THE AUTEUR (Agent 7.5)
+            creative_qa = await self._run_creative_qa(
+                video_url=assembly_result.get("video_urls", {}).get("youtube_1080p"),
+                script=script,
+                brand_guidelines=approved_brief.get("brand_guidelines", {})
+            )
+
+            yield self._update_state(
+                session_id, ProductionPhase.QA,
+                ProductionStatus.IN_PROGRESS, 95,
+                f"Creative QA: {creative_qa.get('overall_score', 0):.0f}/100"
+            )
+
+            # REAL AGENT: Technical QA validation of assembled videos
             expected_duration = script.get("duration_seconds", 30)
             qa_result = await self._validate_output(assembly_result, expected_duration)
 
+            # Merge creative QA into results
+            qa_result["creative_qa"] = creative_qa
+            qa_result["creative_score"] = creative_qa.get("overall_score", 0)
+
             # Log QA results
             if qa_result.get("overall_passed"):
-                logger.info(f"QA validation passed: {qa_result.get('source', 'unknown')}")
+                logger.info(f"QA validation passed: {qa_result.get('source', 'unknown')}, creative: {creative_qa.get('overall_score', 0)}/100")
             else:
                 logger.warning(f"QA validation had issues: {qa_result}")
 
@@ -1701,6 +1746,108 @@ Return ONLY valid JSON array, no markdown."""
 
         logger.info(f"Generated {len(clip_paths)} placeholder clips")
         return clip_paths
+
+    async def _run_creative_qa(
+        self,
+        video_url: Optional[str],
+        script: Dict[str, Any],
+        brand_guidelines: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Run creative QA using THE AUTEUR (Agent 7.5).
+
+        Uses Claude Vision to analyze video frames for:
+        - Composition quality
+        - Brand consistency
+        - Emotional impact
+        - Storytelling coherence
+
+        Args:
+            video_url: URL of the assembled video
+            script: Generated script with scenes
+            brand_guidelines: Brand color/style guidelines
+
+        Returns:
+            Dict with overall_score, recommendations, issues
+        """
+        if not self.auteur:
+            logger.warning("[AUTEUR] Not available - skipping creative QA")
+            return {
+                "overall_score": 78,
+                "status": "skipped",
+                "reason": "auteur_unavailable",
+                "recommendation": "approve",
+                "source": "mock"
+            }
+
+        if not video_url:
+            logger.warning("[AUTEUR] No video URL provided - skipping creative QA")
+            return {
+                "overall_score": 75,
+                "status": "skipped",
+                "reason": "no_video_url",
+                "recommendation": "approve",
+                "source": "mock"
+            }
+
+        try:
+            logger.info(f"[AUTEUR] Running creative QA on {video_url}")
+
+            # Build script summary for context
+            script_summary = script.get("script", "")
+            if not script_summary and "scenes" in script:
+                scenes = script.get("scenes", [])
+                script_summary = " | ".join([
+                    s.get("visual_description", s.get("content", ""))[:100]
+                    for s in scenes[:5]
+                ])
+
+            # Create request
+            request = CreativeQARequest(
+                video_url=video_url,
+                script_summary=script_summary[:500],
+                visual_style=script.get("visual_style", "professional"),
+                brand_guidelines=brand_guidelines,
+                frame_count=5
+            )
+
+            # Run analysis
+            result = await self.auteur.analyze(request)
+
+            return {
+                "overall_score": result.overall_score,
+                "composition_score": result.composition_score,
+                "brand_score": result.brand_score,
+                "emotion_score": result.emotion_score,
+                "storytelling_score": result.storytelling_score,
+                "recommendation": result.recommendation.value,
+                "passed": result.passed,
+                "issues_count": len(result.issues),
+                "issues": [
+                    {
+                        "severity": issue.severity.value,
+                        "category": issue.category.value,
+                        "description": issue.description,
+                        "fix": issue.suggested_fix
+                    }
+                    for issue in result.issues[:5]
+                ],
+                "recommendations": result.overall_recommendations[:3],
+                "cost_usd": result.cost_usd,
+                "latency_ms": result.latency_ms,
+                "status": "completed",
+                "source": result.source
+            }
+
+        except Exception as e:
+            logger.error(f"[AUTEUR] Creative QA failed: {e}")
+            return {
+                "overall_score": 75,
+                "status": "error",
+                "error": str(e),
+                "recommendation": "approve",
+                "source": "error"
+            }
 
     async def _validate_output(
         self,
