@@ -346,21 +346,37 @@ class VideoGeneratorAgent:
         return await self._generate_placeholder(request, start_time)
 
     async def _submit_generation(self, request: VideoRequest, model: VideoModel) -> Optional[str]:
-        """Submit generation request to laozhang.ai."""
-        url = "https://api.laozhang.ai/v1/videos/generate"
+        """Submit generation request to laozhang.ai using OpenAI-compatible chat completions."""
+        url = "https://api.laozhang.ai/v1/chat/completions"
+
+        # Map model enum to laozhang.ai model names
+        model_name = "sora-2" if model == VideoModel.SORA_2 else "veo-3.1"
+
+        # Build video generation prompt with all parameters
+        video_prompt = (
+            f"Generate a {int(request.duration)} second video. "
+            f"Aspect ratio: {request.aspect_ratio}. "
+            f"Resolution: {request.resolution}. "
+            f"Style: {request.style}. "
+            f"Description: {request.prompt}"
+        )
+
         payload = {
-            "model": model.value,
-            "prompt": request.prompt,
-            "duration": int(request.duration),
-            "aspect_ratio": request.aspect_ratio,
-            "resolution": request.resolution,
+            "model": model_name,
+            "stream": False,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": video_prompt
+                }
+            ]
         }
 
         # VERBOSE: Log submission details
         debug_print(f"Submitting to {url}")
-        debug_print(f"Payload: model={model.value}, duration={request.duration}, prompt={request.prompt[:50]}...")
+        debug_print(f"Payload: model={model_name}, prompt={video_prompt[:100]}...")
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             try:
                 response = await client.post(
                     url,
@@ -383,11 +399,41 @@ class VideoGeneratorAgent:
                 response.raise_for_status()
                 data = response.json()
 
-                # VERBOSE: Log extracted task ID
-                task_id = data.get("generation_id") or data.get("id") or data.get("task_id")
-                debug_print(f"Extracted task_id: {task_id}")
+                # VERBOSE: Log response structure
                 debug_print(f"Full response keys: {list(data.keys())}")
 
+                # OpenAI chat completions format: extract from choices[0].message.content
+                if "choices" in data and len(data["choices"]) > 0:
+                    content = data["choices"][0].get("message", {}).get("content", "")
+                    debug_print(f"Chat completion content: {content[:200]}")
+
+                    # Content might be a direct video URL or contain task_id/generation_id
+                    # Check if it looks like a URL
+                    if content.startswith("http"):
+                        debug_print(f"Direct video URL received: {content}")
+                        return content  # Direct URL - no polling needed
+
+                    # Try to parse as JSON (might contain video_url or task_id)
+                    try:
+                        content_data = json.loads(content)
+                        video_url = content_data.get("video_url") or content_data.get("url")
+                        if video_url:
+                            debug_print(f"Video URL from JSON content: {video_url}")
+                            return video_url
+                        task_id = content_data.get("task_id") or content_data.get("generation_id") or content_data.get("id")
+                        if task_id:
+                            debug_print(f"Task ID from JSON content: {task_id}")
+                            return f"task:{task_id}"  # Prefix to indicate polling needed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                    # Return raw content as potential task ID
+                    debug_print(f"Returning raw content as task_id: {content[:100]}")
+                    return content
+
+                # Fallback: try legacy response format
+                task_id = data.get("generation_id") or data.get("id") or data.get("task_id")
+                debug_print(f"Fallback task_id from response: {task_id}")
                 return task_id
 
             except Exception as e:
@@ -395,18 +441,30 @@ class VideoGeneratorAgent:
                 raise
 
     async def _poll_completion(self, generation_id: str) -> Optional[str]:
-        """Poll for generation completion."""
+        """Poll for generation completion or return direct URL."""
         if not generation_id:
             debug_print("No generation_id provided to poll")
             return None
 
+        # Check if this is already a direct video URL (no polling needed)
+        if generation_id.startswith("http"):
+            debug_print(f"Direct video URL - no polling needed: {generation_id}")
+            return generation_id
+
+        # Check if this is a task ID that needs polling
+        actual_id = generation_id
+        if generation_id.startswith("task:"):
+            actual_id = generation_id[5:]  # Remove "task:" prefix
+            debug_print(f"Task ID detected, will poll: {actual_id}")
+
         poll_count = 0
         max_polls = self.max_poll_time // self.poll_interval
-        url = f"https://api.laozhang.ai/v1/videos/status/{generation_id}"
+        # Use chat completions endpoint for status check as well
+        url = f"https://api.laozhang.ai/v1/chat/completions/status/{actual_id}"
         start_time = time.time()
 
         # VERBOSE: Log poll start
-        debug_print(f"Starting poll for generation_id={generation_id}")
+        debug_print(f"Starting poll for task_id={actual_id}")
         debug_print(f"Poll URL: {url}")
         debug_print(f"Timeout: {self.max_poll_time}s, Interval: {self.poll_interval}s, Max polls: {max_polls}")
 
