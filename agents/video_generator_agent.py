@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -36,6 +37,12 @@ import httpx
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("genesis.video_generator")
+
+
+def debug_print(msg: str):
+    """Print debug message that definitely reaches Render logs."""
+    print(f"[VIDEO-DEBUG] {msg}", flush=True)
+    sys.stdout.flush()
 
 
 # =============================================================================
@@ -343,8 +350,8 @@ class VideoGeneratorAgent:
         }
 
         # VERBOSE: Log submission details
-        logger.info(f"[VIDEO-DEBUG] Submitting to {url}")
-        logger.info(f"[VIDEO-DEBUG] Payload: model={model.value}, duration={request.duration}, prompt={request.prompt[:50]}...")
+        debug_print(f"Submitting to {url}")
+        debug_print(f"Payload: model={model.value}, duration={request.duration}, prompt={request.prompt[:50]}...")
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
@@ -360,8 +367,8 @@ class VideoGeneratorAgent:
                 # VERBOSE: Log raw response
                 status_code = response.status_code
                 text = response.text
-                logger.info(f"[VIDEO-DEBUG] Submit response: status={status_code}")
-                logger.info(f"[VIDEO-DEBUG] Submit body: {text[:500]}")
+                debug_print(f"Submit response: status={status_code}")
+                debug_print(f"Submit body: {text[:500]}")
 
                 if status_code == 429:
                     raise Exception("Rate limited - too many requests")
@@ -371,19 +378,19 @@ class VideoGeneratorAgent:
 
                 # VERBOSE: Log extracted task ID
                 task_id = data.get("generation_id") or data.get("id") or data.get("task_id")
-                logger.info(f"[VIDEO-DEBUG] Extracted task_id: {task_id}")
-                logger.info(f"[VIDEO-DEBUG] Full response keys: {list(data.keys())}")
+                debug_print(f"Extracted task_id: {task_id}")
+                debug_print(f"Full response keys: {list(data.keys())}")
 
                 return task_id
 
             except Exception as e:
-                logger.error(f"[VIDEO-DEBUG] Submit exception: {type(e).__name__}: {e}")
+                debug_print(f"Submit exception: {type(e).__name__}: {e}")
                 raise
 
     async def _poll_completion(self, generation_id: str) -> Optional[str]:
         """Poll for generation completion."""
         if not generation_id:
-            logger.warning("[VIDEO-DEBUG] No generation_id provided to poll")
+            debug_print("No generation_id provided to poll")
             return None
 
         poll_count = 0
@@ -392,9 +399,9 @@ class VideoGeneratorAgent:
         start_time = time.time()
 
         # VERBOSE: Log poll start
-        logger.info(f"[VIDEO-DEBUG] Starting poll for generation_id={generation_id}")
-        logger.info(f"[VIDEO-DEBUG] Poll URL: {url}")
-        logger.info(f"[VIDEO-DEBUG] Timeout: {self.max_poll_time}s, Interval: {self.poll_interval}s, Max polls: {max_polls}")
+        debug_print(f"Starting poll for generation_id={generation_id}")
+        debug_print(f"Poll URL: {url}")
+        debug_print(f"Timeout: {self.max_poll_time}s, Interval: {self.poll_interval}s, Max polls: {max_polls}")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             while poll_count < max_polls:
@@ -411,17 +418,17 @@ class VideoGeneratorAgent:
                     # VERBOSE: Log every poll response
                     status_code = response.status_code
                     text = response.text
-                    logger.info(f"[VIDEO-DEBUG] Poll #{poll_count} ({elapsed:.1f}s): status={status_code}")
-                    logger.info(f"[VIDEO-DEBUG] Poll body: {text[:500]}")
+                    debug_print(f"Poll #{poll_count} ({elapsed:.1f}s): status={status_code}")
+                    debug_print(f"Poll body: {text[:500]}")
 
                     if status_code != 200:
-                        logger.warning(f"[VIDEO-DEBUG] Poll returned {status_code}, continuing...")
+                        debug_print(f"Poll returned {status_code}, continuing...")
                         continue
 
                     data = response.json()
 
                     # VERBOSE: Log parsed data structure
-                    logger.info(f"[VIDEO-DEBUG] Parsed keys: {list(data.keys())}")
+                    debug_print(f"Parsed keys: {list(data.keys())}")
 
                     # Check multiple possible status field names
                     gen_status = (
@@ -431,7 +438,7 @@ class VideoGeneratorAgent:
                         ""
                     ).lower()
 
-                    logger.info(f"[VIDEO-DEBUG] Generation status: '{gen_status}'")
+                    debug_print(f"Generation status: '{gen_status}'")
 
                     # Check for completion (multiple possible values)
                     if gen_status in ["completed", "succeeded", "success", "done", "finished"]:
@@ -441,26 +448,26 @@ class VideoGeneratorAgent:
                             data.get("output_url") or
                             data.get("result", {}).get("url") if isinstance(data.get("result"), dict) else None
                         )
-                        logger.info(f"[VIDEO-DEBUG] COMPLETED! video_url={video_url}")
+                        debug_print(f"COMPLETED! video_url={video_url}")
                         return video_url
 
                     # Check for failure
                     if gen_status in ["failed", "error", "cancelled", "timeout"]:
                         error = data.get("error") or data.get("message") or "Unknown error"
-                        logger.error(f"[VIDEO-DEBUG] FAILED: {error}")
+                        debug_print(f"FAILED: {error}")
                         raise Exception(f"Generation failed: {error}")
 
                     # Still processing
                     progress = data.get("progress") or data.get("percent") or "unknown"
-                    logger.info(f"[VIDEO-DEBUG] Still processing... progress={progress}")
+                    debug_print(f"Still processing... progress={progress}")
 
                 except httpx.TimeoutException:
-                    logger.warning(f"[VIDEO-DEBUG] Poll #{poll_count} timed out, retrying...")
+                    debug_print(f"Poll #{poll_count} timed out, retrying...")
                 except httpx.HTTPError as e:
-                    logger.warning(f"[VIDEO-DEBUG] Poll #{poll_count} HTTP error: {e}")
+                    debug_print(f"Poll #{poll_count} HTTP error: {e}")
 
         # Timeout reached
-        logger.error(f"[VIDEO-DEBUG] TIMEOUT after {self.max_poll_time}s ({poll_count} polls)")
+        debug_print(f"TIMEOUT after {self.max_poll_time}s ({poll_count} polls)")
         return None
 
     async def _generate_placeholder(self, request: VideoRequest, start_time: float) -> VideoResult:
@@ -563,13 +570,13 @@ class VideoGeneratorAgent:
             List of VideoResult for each scene
         """
         # VERBOSE: Log batch start
-        logger.info(f"[VIDEO-DEBUG] ========== BATCH START ==========")
-        logger.info(f"[VIDEO-DEBUG] Generating {len(prompts)} videos with style={style}")
-        logger.info(f"[VIDEO-DEBUG] API configured: {self.is_configured}")
-        logger.info(f"[VIDEO-DEBUG] API key present: {bool(self.api_key)}")
-        logger.info(f"[VIDEO-DEBUG] API key prefix: {self.api_key[:10]}..." if self.api_key else "[VIDEO-DEBUG] API key: None")
-        logger.info(f"[VIDEO-DEBUG] Circuit state: {self.circuit.state.value}")
-        logger.info(f"[VIDEO-DEBUG] Max concurrent: {max_concurrent}")
+        debug_print("========== BATCH START ==========")
+        debug_print(f"Generating {len(prompts)} videos with style={style}")
+        debug_print(f"API configured: {self.is_configured}")
+        debug_print(f"API key present: {bool(self.api_key)}")
+        debug_print(f"API key prefix: {self.api_key[:10]}..." if self.api_key else "API key: None")
+        debug_print(f"Circuit state: {self.circuit.state.value}")
+        debug_print(f"Max concurrent: {max_concurrent}")
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -607,10 +614,10 @@ class VideoGeneratorAgent:
         # VERBOSE: Log batch summary
         success_count = sum(1 for r in final_results if r.status == GenerationStatus.COMPLETED)
         total_cost = sum(r.cost_usd for r in final_results)
-        logger.info(f"[VIDEO-DEBUG] ========== BATCH COMPLETE ==========")
-        logger.info(f"[VIDEO-DEBUG] Results: {success_count}/{len(prompts)} successful")
-        logger.info(f"[VIDEO-DEBUG] Total cost: ${total_cost:.2f}")
-        logger.info(f"[VIDEO-DEBUG] Sources: {[r.source for r in final_results]}")
+        debug_print("========== BATCH COMPLETE ==========")
+        debug_print(f"Results: {success_count}/{len(prompts)} successful")
+        debug_print(f"Total cost: ${total_cost:.2f}")
+        debug_print(f"Sources: {[r.source for r in final_results]}")
 
         return final_results
 
