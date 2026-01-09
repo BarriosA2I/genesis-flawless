@@ -347,7 +347,7 @@ class VideoGeneratorAgent:
 
     async def _submit_generation(self, request: VideoRequest, model: VideoModel) -> Optional[str]:
         """Submit generation request to laozhang.ai."""
-        url = "https://api.laozhang.ai/v1/video/generate"
+        url = "https://api.laozhang.ai/v1/videos/generate"
         payload = {
             "model": model.value,
             "prompt": request.prompt,
@@ -402,7 +402,7 @@ class VideoGeneratorAgent:
 
         poll_count = 0
         max_polls = self.max_poll_time // self.poll_interval
-        url = f"https://api.laozhang.ai/v1/video/status/{generation_id}"
+        url = f"https://api.laozhang.ai/v1/videos/status/{generation_id}"
         start_time = time.time()
 
         # VERBOSE: Log poll start
