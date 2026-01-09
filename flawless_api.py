@@ -382,6 +382,10 @@ app.include_router(vortex_router)
 # Include Chat routes (migrated from creative-director-api)
 app.include_router(chat_router)
 
+# Include Commercial Review routes (publish workflow)
+from commercial_review_routes import router as review_router
+app.include_router(review_router)
+
 
 # =============================================================================
 # HEALTH & METRICS
