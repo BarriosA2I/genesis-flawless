@@ -117,8 +117,8 @@ class CircuitBreaker:
     name: str
     state: CircuitState = CircuitState.CLOSED
     failure_count: int = 0
-    failure_threshold: int = 3
-    timeout_seconds: int = 60
+    failure_threshold: int = 5  # More tolerant of intermittent failures
+    timeout_seconds: int = 30  # Recover faster from open state
     last_failure_time: Optional[float] = None
     half_open_successes: int = 0
     half_open_required: int = 2
@@ -535,11 +535,11 @@ class VideoGeneratorAgent:
             resolution = "1920x1080"
 
         try:
+            # Plain color video - no drawtext (fonts not available in Docker)
             cmd = [
                 "ffmpeg", "-y",
                 "-f", "lavfi",
                 "-i", f"color=c={color}:s={resolution}:d={int(request.duration)}:r=30",
-                "-vf", f"drawtext=text='Scene {request.scene_number}':fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2",
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-pix_fmt", "yuv420p",
@@ -612,6 +612,10 @@ class VideoGeneratorAgent:
 
         async def generate_with_limit(prompt: Dict[str, Any], scene_num: int) -> VideoResult:
             async with semaphore:
+                # Add delay between requests to avoid rate limiting (except first scene)
+                if scene_num > 1:
+                    debug_print(f"Adding 2s delay before scene {scene_num} to avoid rate limiting")
+                    await asyncio.sleep(2.0)
                 request = VideoRequest(
                     prompt=prompt.get("prompt", prompt.get("scene_description", "")),
                     duration=prompt.get("duration", duration_per_scene),
