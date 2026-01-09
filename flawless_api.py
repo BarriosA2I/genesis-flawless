@@ -420,20 +420,28 @@ async def debug_agents():
 
     kie_key = os.getenv("KIE_API_KEY")
 
-    return {
-        "video_agent": {
-            "available": orchestrator.video_agent is not None if orchestrator else False,
-            "configured": orchestrator.video_agent.is_configured if orchestrator and orchestrator.video_agent else False,
-            "kie_api_key_present": bool(kie_key),
-            "kie_api_key_prefix": kie_key[:10] + "..." if kie_key else None
-        },
-        "auteur": {
-            "available": orchestrator.auteur is not None if orchestrator else False
-        },
-        "intake": {
-            "available": orchestrator.intake_agent is not None if orchestrator else False
+    try:
+        video_available = bool(orchestrator and orchestrator.video_agent)
+        video_configured = False
+        if video_available:
+            video_configured = getattr(orchestrator.video_agent, 'is_configured', False)
+
+        return {
+            "video_agent": {
+                "available": video_available,
+                "configured": video_configured,
+                "kie_api_key_present": bool(kie_key),
+                "kie_api_key_prefix": (kie_key[:10] + "...") if kie_key and len(kie_key) >= 10 else kie_key
+            },
+            "auteur": {
+                "available": bool(orchestrator and orchestrator.auteur)
+            },
+            "intake": {
+                "available": bool(orchestrator and orchestrator.intake_agent)
+            }
         }
-    }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/metrics", tags=["Observability"])
