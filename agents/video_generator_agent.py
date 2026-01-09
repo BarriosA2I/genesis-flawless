@@ -1,21 +1,21 @@
 """
 GENESIS Video Generator Agent (Agent 4)
 ===============================================================================
-AI video generation using Sora 2 and Veo 3.1 via laozhang.ai aggregator.
+AI video generation using KIE.ai VEO 3.1 API.
 
 Features:
-- Intelligent routing (Sora 2 for cinematic, Veo 3.1 for cost-effective)
+- KIE.ai VEO 3.1 video generation
 - Circuit breaker pattern for fault tolerance
 - Async polling for generation status
 - Graceful fallback to placeholders
 - Cost tracking per scene
 
 Cost:
-- Sora 2: ~$3.00/video (cinematic, complex scenes)
-- Veo 3.1: ~$0.15/video (simple, fast generation)
+- VEO 3.1 Fast: $0.40/8s (720p)
+- VEO 3.1 Quality: $2.00/8s (1080p)
 
 Author: Barrios A2I
-Version: 1.0.0 (GENESIS Standalone)
+Version: 2.0.0 (KIE.ai Integration)
 ===============================================================================
 """
 
@@ -50,9 +50,9 @@ def debug_print(msg: str):
 # =============================================================================
 
 class VideoModel(str, Enum):
-    """Supported video generation models"""
-    SORA_2 = "sora-2.0"
-    VEO_3_1 = "veo-3.1"
+    """Supported video generation models via KIE.ai"""
+    VEO_FAST = "veo3_fast"      # $0.40/8s, 720p
+    VEO_QUALITY = "veo3"        # $2.00/8s, 1080p
 
 
 class GenerationStatus(str, Enum):
@@ -95,7 +95,7 @@ class VideoResult(BaseModel):
     generation_time_seconds: float = 0.0
     scene_number: int = 1
     error: Optional[str] = None
-    source: str = "laozhang"  # laozhang, placeholder, error
+    source: str = "kie"  # kie, placeholder, error
 
 
 class GenerationStats(BaseModel):
@@ -179,44 +179,56 @@ class CircuitBreaker:
 
 class VideoGeneratorAgent:
     """
-    Agent 4: Video Generator with intelligent model routing.
+    Agent 4: Video Generator using KIE.ai VEO 3.1 API.
 
-    Uses laozhang.ai aggregator for cost-effective video generation
+    Uses KIE.ai for professional video generation
     with automatic fallback to placeholders.
+
+    Pricing:
+    - VEO 3.1 Fast: $0.40 per 8 seconds (720p)
+    - VEO 3.1 Quality: $2.00 per 8 seconds (1080p)
+
+    Environment: KIE_API_KEY
     """
 
-    # Model costs via laozhang.ai
+    # KIE.ai API endpoints
+    BASE_URL = "https://api.kie.ai/api/v1"
+    GENERATE_ENDPOINT = f"{BASE_URL}/veo/generate"
+    STATUS_ENDPOINT = f"{BASE_URL}/veo/record-info"
+
+    # Model costs via KIE.ai
     COSTS = {
-        VideoModel.SORA_2: 3.00,
-        VideoModel.VEO_3_1: 0.15,
+        VideoModel.VEO_FAST: 0.40,
+        VideoModel.VEO_QUALITY: 2.00,
     }
 
-    # Routing keywords
-    SORA_KEYWORDS = [
+    # Routing keywords - Quality tier for complex scenes
+    QUALITY_KEYWORDS = [
         "cinematic", "dramatic", "emotional", "people", "human", "character",
         "tracking shot", "dolly", "zoom", "pan", "realistic", "professional",
-        "complex", "motion", "action", "narrative", "story"
+        "complex", "motion", "action", "narrative", "story", "1080p", "hd"
     ]
 
-    VEO_KEYWORDS = [
+    # Fast tier for simpler scenes
+    FAST_KEYWORDS = [
         "product", "logo", "text", "graphics", "simple", "static",
-        "animation", "2d", "icon", "minimal", "clean", "modern"
+        "animation", "2d", "icon", "minimal", "clean", "modern", "quick"
     ]
 
     def __init__(
         self,
-        laozhang_api_key: Optional[str] = None,
+        kie_api_key: Optional[str] = None,
         max_retries: int = 3,
-        poll_interval: int = 5,
-        max_poll_time: int = 300
+        poll_interval: int = 10,
+        max_poll_time: int = 600
     ):
-        self.api_key = laozhang_api_key or os.getenv("LAOZHANG_API_KEY")
+        self.api_key = kie_api_key or os.getenv("KIE_API_KEY")
         self.max_retries = max_retries
         self.poll_interval = poll_interval
         self.max_poll_time = max_poll_time
 
         # Circuit breaker - reset on startup to give fresh code a chance after deploy
-        self.circuit = CircuitBreaker(name="laozhang")
+        self.circuit = CircuitBreaker(name="kie")
         self.circuit.reset()
 
         # Statistics
@@ -226,57 +238,56 @@ class VideoGeneratorAgent:
         self.is_configured = bool(self.api_key)
 
         if self.is_configured:
-            logger.info("[VideoGenerator] Initialized with laozhang.ai API")
+            logger.info("[VideoGenerator] Initialized with KIE.ai API")
         else:
-            logger.warning("[VideoGenerator] No API key - will use placeholders only")
+            logger.warning("[VideoGenerator] No KIE_API_KEY - will use placeholders only")
 
     def _determine_model(self, request: VideoRequest) -> VideoModel:
         """
-        Intelligently route to Sora 2 or Veo 3.1 based on prompt content.
+        Intelligently route to VEO Fast or VEO Quality based on prompt content.
 
-        Sora 2: Better for cinematic, complex, human subjects
-        Veo 3.1: Better for simple scenes, cost-effective
+        VEO Quality ($2.00): Better for cinematic, complex, 1080p scenes
+        VEO Fast ($0.40): Better for simple scenes, cost-effective 720p
         """
-        if request.model == "sora2":
-            return VideoModel.SORA_2
-        elif request.model == "veo3.1":
-            return VideoModel.VEO_3_1
+        if request.model == "quality" or request.model == "veo3":
+            return VideoModel.VEO_QUALITY
+        elif request.model == "fast" or request.model == "veo3_fast":
+            return VideoModel.VEO_FAST
 
         # Auto routing
         prompt_lower = request.prompt.lower()
 
-        sora_score = sum(1 for kw in self.SORA_KEYWORDS if kw in prompt_lower)
-        veo_score = sum(1 for kw in self.VEO_KEYWORDS if kw in prompt_lower)
+        quality_score = sum(1 for kw in self.QUALITY_KEYWORDS if kw in prompt_lower)
+        fast_score = sum(1 for kw in self.FAST_KEYWORDS if kw in prompt_lower)
 
-        # Long duration favors Sora 2
+        # Long duration favors Quality tier
         if request.duration >= 10:
-            sora_score += 1
+            quality_score += 1
 
-        # 4K resolution favors Sora 2
-        if request.resolution == "4k":
-            sora_score += 2
+        # 1080p/4K resolution favors Quality tier
+        if request.resolution in ["1080p", "4k"]:
+            quality_score += 2
 
-        # Cinematic style favors Sora 2
+        # Cinematic style favors Quality tier
         if "cinematic" in request.style.lower():
-            sora_score += 2
+            quality_score += 2
 
-        if sora_score > veo_score + 1:
-            logger.info(f"Routing to Sora 2 (score: {sora_score} vs {veo_score})")
-            return VideoModel.SORA_2
+        if quality_score > fast_score + 1:
+            logger.info(f"Routing to VEO Quality (score: {quality_score} vs {fast_score})")
+            return VideoModel.VEO_QUALITY
         else:
-            logger.info(f"Routing to Veo 3.1 (score: {veo_score} vs {sora_score})")
-            return VideoModel.VEO_3_1
+            logger.info(f"Routing to VEO Fast (score: {fast_score} vs {quality_score})")
+            return VideoModel.VEO_FAST
 
     async def generate(self, request: VideoRequest) -> VideoResult:
         """
         Generate video for a single scene.
 
         Flow:
-        1. Determine optimal model
-        2. Submit to laozhang.ai
+        1. Determine optimal model (VEO Fast or Quality)
+        2. Submit to KIE.ai VEO 3.1 API
         3. Poll for completion
-        4. Download video
-        5. Return result or fallback to placeholder
+        4. Return result or fallback to placeholder
         """
         start_time = time.time()
         self.stats.total_requests += 1
@@ -339,7 +350,7 @@ class VideoGeneratorAgent:
                     cost_usd=cost,
                     generation_time_seconds=generation_time,
                     scene_number=request.scene_number,
-                    source="laozhang"
+                    source="kie"
                 )
 
             except Exception as e:
@@ -355,40 +366,31 @@ class VideoGeneratorAgent:
         return await self._generate_placeholder(request, start_time)
 
     async def _submit_generation(self, request: VideoRequest, model: VideoModel) -> Optional[str]:
-        """Submit generation request to laozhang.ai using OpenAI-compatible chat completions."""
-        url = "https://api.laozhang.ai/v1/chat/completions"
-
-        # Map model enum to laozhang.ai model names
-        model_name = "sora-2" if model == VideoModel.SORA_2 else "veo-3.1"
-
-        # Build video generation prompt with all parameters
-        video_prompt = (
-            f"Generate a {int(request.duration)} second video. "
-            f"Aspect ratio: {request.aspect_ratio}. "
-            f"Resolution: {request.resolution}. "
-            f"Style: {request.style}. "
-            f"Description: {request.prompt}"
-        )
+        """Submit generation request to KIE.ai VEO 3.1 API."""
+        # Map aspect ratio to KIE.ai format
+        aspect_map = {
+            "16:9": "16:9",
+            "9:16": "9:16",
+            "1:1": "1:1",
+        }
+        aspect_ratio = aspect_map.get(request.aspect_ratio, "16:9")
 
         payload = {
-            "model": model_name,
-            "stream": False,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": video_prompt
-                }
-            ]
+            "prompt": request.prompt,
+            "aspectRatio": aspect_ratio,
+            "model": model.value,  # veo3_fast or veo3
+            "generationType": "TEXT_2_VIDEO"
         }
 
         # VERBOSE: Log submission details
-        debug_print(f"Submitting to {url}")
-        debug_print(f"Payload: model={model_name}, prompt={video_prompt[:100]}...")
+        debug_print(f"Submitting to KIE.ai: {self.GENERATE_ENDPOINT}")
+        debug_print(f"Payload: model={model.value}, aspectRatio={aspect_ratio}")
+        debug_print(f"Prompt: {request.prompt[:100]}...")
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             try:
                 response = await client.post(
-                    url,
+                    self.GENERATE_ENDPOINT,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json"
@@ -399,82 +401,47 @@ class VideoGeneratorAgent:
                 # VERBOSE: Log raw response
                 status_code = response.status_code
                 text = response.text
-                debug_print(f"Submit response: status={status_code}")
-                debug_print(f"Submit body: {text[:500]}")
+                debug_print(f"KIE submit response: status={status_code}")
+                debug_print(f"KIE body: {text[:500]}")
 
                 if status_code == 429:
-                    raise Exception("Rate limited - too many requests")
+                    raise Exception("KIE.ai rate limited - too many requests")
 
-                response.raise_for_status()
+                if status_code != 200:
+                    raise Exception(f"KIE.ai generation failed: {status_code} - {text}")
+
                 data = response.json()
 
-                # VERBOSE: Log response structure
-                debug_print(f"Full response keys: {list(data.keys())}")
+                # Check KIE.ai response format
+                if data.get("code") != 200:
+                    error_msg = data.get("msg", "Unknown error")
+                    raise Exception(f"KIE.ai error: {error_msg}")
 
-                # OpenAI chat completions format: extract from choices[0].message.content
-                if "choices" in data and len(data["choices"]) > 0:
-                    content = data["choices"][0].get("message", {}).get("content", "")
-                    debug_print(f"Chat completion content: {content[:200]}")
+                # Extract task ID from response
+                task_id = data.get("data", {}).get("taskId")
+                if not task_id:
+                    raise Exception(f"No taskId in KIE.ai response: {data}")
 
-                    # Content might be a direct video URL or contain task_id/generation_id
-                    # Check if it looks like a URL
-                    if content.startswith("http"):
-                        debug_print(f"Direct video URL received: {content}")
-                        return content  # Direct URL - no polling needed
-
-                    # Try to parse as JSON (might contain video_url or task_id)
-                    try:
-                        content_data = json.loads(content)
-                        video_url = content_data.get("video_url") or content_data.get("url")
-                        if video_url:
-                            debug_print(f"Video URL from JSON content: {video_url}")
-                            return video_url
-                        task_id = content_data.get("task_id") or content_data.get("generation_id") or content_data.get("id")
-                        if task_id:
-                            debug_print(f"Task ID from JSON content: {task_id}")
-                            return f"task:{task_id}"  # Prefix to indicate polling needed
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-                    # Return raw content as potential task ID
-                    debug_print(f"Returning raw content as task_id: {content[:100]}")
-                    return content
-
-                # Fallback: try legacy response format
-                task_id = data.get("generation_id") or data.get("id") or data.get("task_id")
-                debug_print(f"Fallback task_id from response: {task_id}")
+                debug_print(f"KIE task started: {task_id}")
                 return task_id
 
             except Exception as e:
-                debug_print(f"Submit exception: {type(e).__name__}: {e}")
+                debug_print(f"KIE submit exception: {type(e).__name__}: {e}")
                 raise
 
-    async def _poll_completion(self, generation_id: str) -> Optional[str]:
-        """Poll for generation completion or return direct URL."""
-        if not generation_id:
-            debug_print("No generation_id provided to poll")
+    async def _poll_completion(self, task_id: str) -> Optional[str]:
+        """Poll KIE.ai for task completion and return video URL."""
+        if not task_id:
+            debug_print("No task_id provided to poll")
             return None
-
-        # Check if this is already a direct video URL (no polling needed)
-        if generation_id.startswith("http"):
-            debug_print(f"Direct video URL - no polling needed: {generation_id}")
-            return generation_id
-
-        # Check if this is a task ID that needs polling
-        actual_id = generation_id
-        if generation_id.startswith("task:"):
-            actual_id = generation_id[5:]  # Remove "task:" prefix
-            debug_print(f"Task ID detected, will poll: {actual_id}")
 
         poll_count = 0
         max_polls = self.max_poll_time // self.poll_interval
-        # Use chat completions endpoint for status check as well
-        url = f"https://api.laozhang.ai/v1/chat/completions/status/{actual_id}"
         start_time = time.time()
 
         # VERBOSE: Log poll start
-        debug_print(f"Starting poll for task_id={actual_id}")
-        debug_print(f"Poll URL: {url}")
+        debug_print(f"Starting KIE poll for task_id={task_id}")
+        debug_print(f"Poll URL: {self.STATUS_ENDPOINT}")
         debug_print(f"Timeout: {self.max_poll_time}s, Interval: {self.poll_interval}s, Max polls: {max_polls}")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -485,63 +452,52 @@ class VideoGeneratorAgent:
 
                 try:
                     response = await client.get(
-                        url,
-                        headers={"Authorization": f"Bearer {self.api_key}"}
+                        self.STATUS_ENDPOINT,
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        params={"taskId": task_id}
                     )
 
                     # VERBOSE: Log every poll response
                     status_code = response.status_code
                     text = response.text
-                    debug_print(f"Poll #{poll_count} ({elapsed:.1f}s): status={status_code}")
-                    debug_print(f"Poll body: {text[:500]}")
+                    debug_print(f"KIE Poll #{poll_count} ({elapsed:.1f}s): status={status_code}")
+                    debug_print(f"KIE body: {text[:500]}")
 
                     if status_code != 200:
-                        debug_print(f"Poll returned {status_code}, continuing...")
+                        debug_print(f"KIE Poll returned {status_code}, continuing...")
                         continue
 
                     data = response.json()
+                    task_data = data.get("data", {})
+                    success_flag = task_data.get("successFlag")
 
-                    # VERBOSE: Log parsed data structure
-                    debug_print(f"Parsed keys: {list(data.keys())}")
+                    debug_print(f"KIE successFlag: {success_flag}")
 
-                    # Check multiple possible status field names
-                    gen_status = (
-                        data.get("status") or
-                        data.get("state") or
-                        data.get("generation_status") or
-                        ""
-                    ).lower()
+                    # Check completion status via successFlag
+                    if success_flag == 1:  # Completed successfully
+                        response_data = task_data.get("response", {})
+                        urls = response_data.get("resultUrls", [])
+                        if urls:
+                            video_url = urls[0]
+                            debug_print(f"KIE COMPLETED! video_url={video_url}")
+                            return video_url
+                        raise Exception("No resultUrls in completed KIE response")
 
-                    debug_print(f"Generation status: '{gen_status}'")
+                    elif success_flag == -1:  # Failed
+                        error = task_data.get("errorMessage", "Unknown error")
+                        debug_print(f"KIE FAILED: {error}")
+                        raise Exception(f"KIE.ai generation failed: {error}")
 
-                    # Check for completion (multiple possible values)
-                    if gen_status in ["completed", "succeeded", "success", "done", "finished"]:
-                        video_url = (
-                            data.get("video_url") or
-                            data.get("url") or
-                            data.get("output_url") or
-                            data.get("result", {}).get("url") if isinstance(data.get("result"), dict) else None
-                        )
-                        debug_print(f"COMPLETED! video_url={video_url}")
-                        return video_url
-
-                    # Check for failure
-                    if gen_status in ["failed", "error", "cancelled", "timeout"]:
-                        error = data.get("error") or data.get("message") or "Unknown error"
-                        debug_print(f"FAILED: {error}")
-                        raise Exception(f"Generation failed: {error}")
-
-                    # Still processing
-                    progress = data.get("progress") or data.get("percent") or "unknown"
-                    debug_print(f"Still processing... progress={progress}")
+                    # successFlag == 0 means still processing
+                    debug_print(f"KIE still processing... attempt {poll_count}/{max_polls}")
 
                 except httpx.TimeoutException:
-                    debug_print(f"Poll #{poll_count} timed out, retrying...")
+                    debug_print(f"KIE Poll #{poll_count} timed out, retrying...")
                 except httpx.HTTPError as e:
-                    debug_print(f"Poll #{poll_count} HTTP error: {e}")
+                    debug_print(f"KIE Poll #{poll_count} HTTP error: {e}")
 
         # Timeout reached
-        debug_print(f"TIMEOUT after {self.max_poll_time}s ({poll_count} polls)")
+        debug_print(f"KIE TIMEOUT after {self.max_poll_time}s ({poll_count} polls)")
         return None
 
     async def _generate_placeholder(self, request: VideoRequest, start_time: float) -> VideoResult:
@@ -715,8 +671,8 @@ class VideoGeneratorAgent:
 def create_video_generator(
     api_key: Optional[str] = None
 ) -> VideoGeneratorAgent:
-    """Create VideoGeneratorAgent instance."""
-    return VideoGeneratorAgent(laozhang_api_key=api_key)
+    """Create VideoGeneratorAgent instance with KIE.ai API."""
+    return VideoGeneratorAgent(kie_api_key=api_key)
 
 
 # =============================================================================
