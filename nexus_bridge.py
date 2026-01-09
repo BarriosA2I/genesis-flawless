@@ -1629,7 +1629,15 @@ Return ONLY valid JSON array, no markdown."""
         Returns:
             Dict with results list, total_cost, clip_paths
         """
+        # NEXUS DEBUG: Trace video generation entry
+        print(f"[NEXUS-DEBUG] _generate_video_clips called with {len(prompts)} prompts", flush=True)
+        print(f"[NEXUS-DEBUG] video_agent exists: {bool(self.video_agent)}", flush=True)
+        if self.video_agent:
+            print(f"[NEXUS-DEBUG] video_agent.is_configured: {self.video_agent.is_configured}", flush=True)
+            print(f"[NEXUS-DEBUG] video_agent.api_key set: {bool(self.video_agent.api_key)}", flush=True)
+
         if not self.video_agent:
+            print("[NEXUS-DEBUG] No video_agent - returning early", flush=True)
             logger.warning("VideoGeneratorAgent not available - using placeholders")
             # Fall back to placeholder generation
             return {
@@ -1640,6 +1648,7 @@ Return ONLY valid JSON array, no markdown."""
             }
 
         try:
+            print(f"[NEXUS-DEBUG] Calling generate_batch...", flush=True)
             logger.info(f"Generating {len(prompts)} video clips with AI...")
 
             # Use batch generation with limited concurrency
@@ -1649,6 +1658,11 @@ Return ONLY valid JSON array, no markdown."""
                 style=style,
                 max_concurrent=3  # Limit concurrent to avoid rate limits
             )
+
+            # NEXUS DEBUG: Log batch results
+            print(f"[NEXUS-DEBUG] generate_batch returned {len(results)} results", flush=True)
+            for i, r in enumerate(results):
+                print(f"[NEXUS-DEBUG] Result {i+1}: status={r.status}, source={r.source}, path={r.video_path}, url={r.video_url}, error={r.error}", flush=True)
 
             # Extract clip paths and calculate total cost
             clip_paths = []
