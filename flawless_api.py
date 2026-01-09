@@ -83,6 +83,9 @@ from nexus_bridge import (
     create_nexus_bridge
 )
 
+# Import NEXUS Brain concierge router (Landing Page AI)
+from nexus_router import router as nexus_brain_router
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -368,6 +371,7 @@ app.add_middleware(
     allow_origins=[
         "https://barrios-landing.vercel.app",
         "https://barriosa2i.com",
+        "https://www.barriosa2i.com",
         "http://localhost:3000",
         "http://localhost:5173"
     ],
@@ -385,6 +389,9 @@ app.include_router(chat_router)
 # Include Commercial Review routes (publish workflow)
 from commercial_review_routes import router as review_router
 app.include_router(review_router)
+
+# Include NEXUS Brain concierge routes (Landing Page AI)
+app.include_router(nexus_brain_router)
 
 
 # =============================================================================
