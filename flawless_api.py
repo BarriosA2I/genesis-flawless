@@ -421,24 +421,29 @@ async def debug_agents():
     kie_key = os.getenv("KIE_API_KEY")
 
     try:
-        video_available = bool(orchestrator and orchestrator.video_agent)
+        # nexus_bridge is the production pipeline (used by /api/production/start)
+        video_available = bool(nexus_bridge and nexus_bridge.video_agent)
         video_configured = False
+        video_api_key_set = False
         if video_available:
-            video_configured = getattr(orchestrator.video_agent, 'is_configured', False)
+            video_configured = getattr(nexus_bridge.video_agent, 'is_configured', False)
+            video_api_key_set = bool(getattr(nexus_bridge.video_agent, 'api_key', None))
 
         return {
             "video_agent": {
                 "available": video_available,
                 "configured": video_configured,
-                "kie_api_key_present": bool(kie_key),
-                "kie_api_key_prefix": (kie_key[:10] + "...") if kie_key and len(kie_key) >= 10 else kie_key
+                "api_key_loaded": video_api_key_set,
+                "env_kie_api_key_present": bool(kie_key),
+                "env_kie_api_key_prefix": (kie_key[:10] + "...") if kie_key and len(kie_key) >= 10 else kie_key
             },
             "auteur": {
-                "available": bool(orchestrator and orchestrator.auteur)
+                "available": bool(nexus_bridge and nexus_bridge.auteur)
             },
             "intake": {
-                "available": bool(orchestrator and orchestrator.intake_agent)
-            }
+                "available": bool(nexus_bridge and nexus_bridge.intake_agent)
+            },
+            "nexus_bridge_initialized": bool(nexus_bridge)
         }
     except Exception as e:
         return {"error": str(e)}
