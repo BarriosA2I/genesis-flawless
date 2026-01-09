@@ -333,65 +333,134 @@ class VideoGeneratorAgent:
 
     async def _submit_generation(self, request: VideoRequest, model: VideoModel) -> Optional[str]:
         """Submit generation request to laozhang.ai."""
+        url = "https://api.laozhang.ai/v1/video/generate"
+        payload = {
+            "model": model.value,
+            "prompt": request.prompt,
+            "duration": int(request.duration),
+            "aspect_ratio": request.aspect_ratio,
+            "resolution": request.resolution,
+        }
+
+        # VERBOSE: Log submission details
+        logger.info(f"[VIDEO-DEBUG] Submitting to {url}")
+        logger.info(f"[VIDEO-DEBUG] Payload: model={model.value}, duration={request.duration}, prompt={request.prompt[:50]}...")
+
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                "https://api.laozhang.ai/v1/video/generate",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": model.value,
-                    "prompt": request.prompt,
-                    "duration": int(request.duration),
-                    "aspect_ratio": request.aspect_ratio,
-                    "resolution": request.resolution,
-                }
-            )
+            try:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload
+                )
 
-            if response.status_code == 429:
-                raise Exception("Rate limited - too many requests")
+                # VERBOSE: Log raw response
+                status_code = response.status_code
+                text = response.text
+                logger.info(f"[VIDEO-DEBUG] Submit response: status={status_code}")
+                logger.info(f"[VIDEO-DEBUG] Submit body: {text[:500]}")
 
-            response.raise_for_status()
-            data = response.json()
+                if status_code == 429:
+                    raise Exception("Rate limited - too many requests")
 
-            return data.get("generation_id") or data.get("id")
+                response.raise_for_status()
+                data = response.json()
+
+                # VERBOSE: Log extracted task ID
+                task_id = data.get("generation_id") or data.get("id") or data.get("task_id")
+                logger.info(f"[VIDEO-DEBUG] Extracted task_id: {task_id}")
+                logger.info(f"[VIDEO-DEBUG] Full response keys: {list(data.keys())}")
+
+                return task_id
+
+            except Exception as e:
+                logger.error(f"[VIDEO-DEBUG] Submit exception: {type(e).__name__}: {e}")
+                raise
 
     async def _poll_completion(self, generation_id: str) -> Optional[str]:
         """Poll for generation completion."""
+        if not generation_id:
+            logger.warning("[VIDEO-DEBUG] No generation_id provided to poll")
+            return None
+
         poll_count = 0
         max_polls = self.max_poll_time // self.poll_interval
+        url = f"https://api.laozhang.ai/v1/video/status/{generation_id}"
+        start_time = time.time()
+
+        # VERBOSE: Log poll start
+        logger.info(f"[VIDEO-DEBUG] Starting poll for generation_id={generation_id}")
+        logger.info(f"[VIDEO-DEBUG] Poll URL: {url}")
+        logger.info(f"[VIDEO-DEBUG] Timeout: {self.max_poll_time}s, Interval: {self.poll_interval}s, Max polls: {max_polls}")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             while poll_count < max_polls:
                 await asyncio.sleep(self.poll_interval)
                 poll_count += 1
+                elapsed = time.time() - start_time
 
                 try:
                     response = await client.get(
-                        f"https://api.laozhang.ai/v1/video/status/{generation_id}",
+                        url,
                         headers={"Authorization": f"Bearer {self.api_key}"}
                     )
 
-                    if response.status_code != 200:
-                        logger.warning(f"Poll failed with status {response.status_code}")
+                    # VERBOSE: Log every poll response
+                    status_code = response.status_code
+                    text = response.text
+                    logger.info(f"[VIDEO-DEBUG] Poll #{poll_count} ({elapsed:.1f}s): status={status_code}")
+                    logger.info(f"[VIDEO-DEBUG] Poll body: {text[:500]}")
+
+                    if status_code != 200:
+                        logger.warning(f"[VIDEO-DEBUG] Poll returned {status_code}, continuing...")
                         continue
 
                     data = response.json()
-                    status = data.get("status", "").lower()
 
-                    if status == "completed":
-                        return data.get("video_url")
-                    elif status == "failed":
-                        error = data.get("error", "Unknown error")
+                    # VERBOSE: Log parsed data structure
+                    logger.info(f"[VIDEO-DEBUG] Parsed keys: {list(data.keys())}")
+
+                    # Check multiple possible status field names
+                    gen_status = (
+                        data.get("status") or
+                        data.get("state") or
+                        data.get("generation_status") or
+                        ""
+                    ).lower()
+
+                    logger.info(f"[VIDEO-DEBUG] Generation status: '{gen_status}'")
+
+                    # Check for completion (multiple possible values)
+                    if gen_status in ["completed", "succeeded", "success", "done", "finished"]:
+                        video_url = (
+                            data.get("video_url") or
+                            data.get("url") or
+                            data.get("output_url") or
+                            data.get("result", {}).get("url") if isinstance(data.get("result"), dict) else None
+                        )
+                        logger.info(f"[VIDEO-DEBUG] COMPLETED! video_url={video_url}")
+                        return video_url
+
+                    # Check for failure
+                    if gen_status in ["failed", "error", "cancelled", "timeout"]:
+                        error = data.get("error") or data.get("message") or "Unknown error"
+                        logger.error(f"[VIDEO-DEBUG] FAILED: {error}")
                         raise Exception(f"Generation failed: {error}")
 
                     # Still processing
-                    logger.debug(f"Poll {poll_count}/{max_polls}: {status}")
+                    progress = data.get("progress") or data.get("percent") or "unknown"
+                    logger.info(f"[VIDEO-DEBUG] Still processing... progress={progress}")
 
+                except httpx.TimeoutException:
+                    logger.warning(f"[VIDEO-DEBUG] Poll #{poll_count} timed out, retrying...")
                 except httpx.HTTPError as e:
-                    logger.warning(f"Poll HTTP error: {e}")
+                    logger.warning(f"[VIDEO-DEBUG] Poll #{poll_count} HTTP error: {e}")
 
+        # Timeout reached
+        logger.error(f"[VIDEO-DEBUG] TIMEOUT after {self.max_poll_time}s ({poll_count} polls)")
         return None
 
     async def _generate_placeholder(self, request: VideoRequest, start_time: float) -> VideoResult:
@@ -493,6 +562,15 @@ class VideoGeneratorAgent:
         Returns:
             List of VideoResult for each scene
         """
+        # VERBOSE: Log batch start
+        logger.info(f"[VIDEO-DEBUG] ========== BATCH START ==========")
+        logger.info(f"[VIDEO-DEBUG] Generating {len(prompts)} videos with style={style}")
+        logger.info(f"[VIDEO-DEBUG] API configured: {self.is_configured}")
+        logger.info(f"[VIDEO-DEBUG] API key present: {bool(self.api_key)}")
+        logger.info(f"[VIDEO-DEBUG] API key prefix: {self.api_key[:10]}..." if self.api_key else "[VIDEO-DEBUG] API key: None")
+        logger.info(f"[VIDEO-DEBUG] Circuit state: {self.circuit.state.value}")
+        logger.info(f"[VIDEO-DEBUG] Max concurrent: {max_concurrent}")
+
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def generate_with_limit(prompt: Dict[str, Any], scene_num: int) -> VideoResult:
@@ -525,6 +603,14 @@ class VideoGeneratorAgent:
                 ))
             else:
                 final_results.append(result)
+
+        # VERBOSE: Log batch summary
+        success_count = sum(1 for r in final_results if r.status == GenerationStatus.COMPLETED)
+        total_cost = sum(r.cost_usd for r in final_results)
+        logger.info(f"[VIDEO-DEBUG] ========== BATCH COMPLETE ==========")
+        logger.info(f"[VIDEO-DEBUG] Results: {success_count}/{len(prompts)} successful")
+        logger.info(f"[VIDEO-DEBUG] Total cost: ${total_cost:.2f}")
+        logger.info(f"[VIDEO-DEBUG] Sources: {[r.source for r in final_results]}")
 
         return final_results
 
