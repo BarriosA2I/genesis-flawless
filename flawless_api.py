@@ -413,6 +413,29 @@ async def health_check():
     )
 
 
+@app.get("/api/debug/agents", tags=["Debug"])
+async def debug_agents():
+    """Debug endpoint to check agent configuration status."""
+    import os
+
+    kie_key = os.getenv("KIE_API_KEY")
+
+    return {
+        "video_agent": {
+            "available": orchestrator.video_agent is not None if orchestrator else False,
+            "configured": orchestrator.video_agent.is_configured if orchestrator and orchestrator.video_agent else False,
+            "kie_api_key_present": bool(kie_key),
+            "kie_api_key_prefix": kie_key[:10] + "..." if kie_key else None
+        },
+        "auteur": {
+            "available": orchestrator.auteur is not None if orchestrator else False
+        },
+        "intake": {
+            "available": orchestrator.intake_agent is not None if orchestrator else False
+        }
+    }
+
+
 @app.get("/metrics", tags=["Observability"])
 async def prometheus_metrics():
     """Prometheus metrics endpoint"""
