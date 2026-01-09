@@ -272,16 +272,23 @@ class VideoGeneratorAgent:
         start_time = time.time()
         self.stats.total_requests += 1
 
+        # DEBUG: Trace generate() entry
+        debug_print(f"generate() called for scene {request.scene_number}")
+        debug_print(f"  is_configured: {self.is_configured}")
+        debug_print(f"  circuit.state: {self.circuit.state.value}")
+        debug_print(f"  circuit.can_attempt(): {self.circuit.can_attempt()}")
+
         # Check if API is configured
         if not self.is_configured:
-            logger.warning("No API key - generating placeholder")
+            debug_print("  -> BYPASS: Not configured, using placeholder")
             return await self._generate_placeholder(request, start_time)
 
         # Check circuit breaker
         if not self.circuit.can_attempt():
-            logger.warning("Circuit breaker open - generating placeholder")
+            debug_print("  -> BYPASS: Circuit breaker blocking, using placeholder")
             return await self._generate_placeholder(request, start_time)
 
+        debug_print("  -> PROCEED: Attempting API call")
         # Determine model
         model = self._determine_model(request)
         cost = self.COSTS[model]
