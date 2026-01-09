@@ -164,6 +164,14 @@ class CircuitBreaker:
             logger.error(f"Circuit breaker {self.name} opening after {self.failure_count} failures")
             self.state = CircuitState.OPEN
 
+    def reset(self):
+        """Reset circuit breaker to closed state (used after code deploy)."""
+        debug_print(f"Circuit breaker {self.name} reset to CLOSED")
+        self.state = CircuitState.CLOSED
+        self.failure_count = 0
+        self.half_open_successes = 0
+        self.last_failure_time = None
+
 
 # =============================================================================
 # VIDEO GENERATOR AGENT
@@ -207,8 +215,9 @@ class VideoGeneratorAgent:
         self.poll_interval = poll_interval
         self.max_poll_time = max_poll_time
 
-        # Circuit breaker
+        # Circuit breaker - reset on startup to give fresh code a chance after deploy
         self.circuit = CircuitBreaker(name="laozhang")
+        self.circuit.reset()
 
         # Statistics
         self.stats = GenerationStats()
