@@ -1503,6 +1503,66 @@ async def get_production_phases():
 
 
 # =============================================================================
+# VOICE PREVIEW (ElevenLabs)
+# =============================================================================
+
+class VoicePreviewRequest(BaseModel):
+    """Request model for voice preview"""
+    voice_id: str = Field(..., description="ElevenLabs voice ID")
+    text: str = Field(default="Hello, I'll be the voice of your commercial.", description="Text to speak")
+
+@app.post("/api/voice/preview", tags=["Voice"])
+async def voice_preview(request: VoicePreviewRequest):
+    """
+    Generate ElevenLabs voice preview.
+    Returns audio/mpeg stream.
+    """
+    import httpx
+
+    elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
+    if not elevenlabs_api_key:
+        raise HTTPException(status_code=500, detail="ElevenLabs API key not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{request.voice_id}",
+                headers={
+                    "xi-api-key": elevenlabs_api_key,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "text": request.text,
+                    "model_id": "eleven_monolingual_v1",
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75
+                    }
+                }
+            )
+
+            if response.status_code != 200:
+                logger.error(f"ElevenLabs API error: {response.status_code} - {response.text}")
+                raise HTTPException(status_code=response.status_code, detail="ElevenLabs API error")
+
+            # Return audio stream
+            return Response(
+                content=response.content,
+                media_type="audio/mpeg",
+                headers={
+                    "Content-Disposition": f"inline; filename=preview_{request.voice_id}.mp3"
+                }
+            )
+
+    except httpx.TimeoutException:
+        logger.error("ElevenLabs API timeout")
+        raise HTTPException(status_code=504, detail="Voice generation timeout")
+    except Exception as e:
+        logger.error(f"Voice preview error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # ROOT & DOCS
 # =============================================================================
 
