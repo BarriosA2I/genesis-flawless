@@ -1782,7 +1782,116 @@ class CreativeDirectorOrchestrator:
         )
 
         return explicit_escalation or sentiment_escalation
-    
+
+    def _extract_from_user_message(self, user_message: str) -> dict:
+        """
+        Fallback extraction: Parse user message directly using regex patterns.
+        Used when Claude doesn't return structured extracted_data.
+
+        Args:
+            user_message: The user's raw message
+
+        Returns:
+            Dictionary with extracted fields
+        """
+        import re
+
+        extracted = {}
+        message_lower = user_message.lower()
+
+        # Business name patterns
+        business_patterns = [
+            r"(?:i run|i own|my company is|we are|i'm from|i'm|called|named)\s+([A-Z][A-Za-z0-9\s]+?)(?:\s*[,.]|\s+and|\s+we|\s+selling|$)",
+            r"^([A-Z][A-Za-z0-9]+)\s*[-–]\s*",  # "TechStart - we sell..."
+            r"(?:at|for)\s+([A-Z][A-Za-z0-9\s]+?)(?:\s*[,.]|\s+and|$)",
+        ]
+        for pattern in business_patterns:
+            match = re.search(pattern, user_message, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip()
+                # Filter out common words that aren't company names
+                if len(name) > 2 and len(name) < 50 and name.lower() not in ["we", "and", "the"]:
+                    extracted["business_name"] = name
+                    break
+
+        # Product/offering patterns
+        product_patterns = [
+            r"(?:we sell|we make|we offer|we provide|selling|offering|provide)\s+(.+?)(?:\s+to\s+|\s+for\s+|\s*[,.]|$)",
+            r"(?:saas|software|tools?|platform|app|service|product)s?\s+(?:for|that)\s+(.+?)(?:\s*[,.]|$)",
+        ]
+        for pattern in product_patterns:
+            match = re.search(pattern, user_message, re.IGNORECASE)
+            if match:
+                product = match.group(1).strip()
+                if len(product) > 3:
+                    extracted["primary_offering"] = product[:100]
+                    break
+
+        # Also check for product keywords
+        if "primary_offering" not in extracted:
+            product_keywords = ["saas", "software", "tools", "platform", "app", "automation", "service", "solution"]
+            for keyword in product_keywords:
+                if keyword in message_lower:
+                    # Find context around keyword (3 words before and after)
+                    match = re.search(rf"(\w+\s+)?(\w+\s+)?{keyword}(\s+\w+)?(\s+\w+)?", message_lower)
+                    if match:
+                        extracted["primary_offering"] = match.group(0).strip()
+                        break
+
+        # Audience/demographic patterns
+        audience_patterns = [
+            r"(?:to|for|targeting|target)\s+(.+?)(?:\s*[,.]|\s+and\s+|\s+cta|\s+sign|$)",
+            r"(?:customers?|clients?|audience)\s+(?:are|is)\s+(.+?)(?:\s*[,.]|$)",
+        ]
+        for pattern in audience_patterns:
+            match = re.search(pattern, user_message, re.IGNORECASE)
+            if match:
+                audience = match.group(1).strip()
+                # Avoid extracting CTAs as audience
+                if len(audience) > 3 and "sign" not in audience.lower() and "buy" not in audience.lower():
+                    extracted["target_demographic"] = audience[:100]
+                    break
+
+        # CTA patterns
+        cta_patterns = [
+            r"(?:cta|call to action)(?:\s+is)?\s*[:\-]?\s*(.+?)(?:\s*[,.]|$)",
+            r"(sign up|buy now|learn more|get started|book|register|subscribe|download|try free|free trial)",
+        ]
+        for pattern in cta_patterns:
+            match = re.search(pattern, user_message, re.IGNORECASE)
+            if match:
+                if match.groups():
+                    extracted["call_to_action"] = match.group(1).strip()[:50]
+                else:
+                    extracted["call_to_action"] = match.group(0).strip()[:50]
+                break
+
+        # Tone patterns
+        tone_keywords = {
+            "professional": ["professional", "corporate", "business", "formal"],
+            "friendly": ["friendly", "warm", "approachable", "casual"],
+            "energetic": ["energetic", "exciting", "dynamic", "bold"],
+            "playful": ["playful", "fun", "quirky", "humorous"],
+            "luxury": ["luxury", "premium", "elegant", "sophisticated"],
+        }
+        for tone, keywords in tone_keywords.items():
+            if any(kw in message_lower for kw in keywords):
+                extracted["tone"] = tone
+                break
+
+        # Numbered list extraction (fast-track format)
+        # Pattern: "1. TechStart 2. SaaS tools 3. Founders 4. Sign up"
+        numbered_match = re.findall(r'(\d+)[.)]\s*([^0-9]+?)(?=\d+[.)]|$)', user_message)
+        if len(numbered_match) >= 3:
+            field_order = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
+            for i, (num, value) in enumerate(numbered_match):
+                if i < len(field_order):
+                    value = value.strip().rstrip(',.')
+                    if value and len(value) > 1:
+                        extracted[field_order[i]] = value
+
+        return extracted
+
     def _pre_extract(self, message: str, state: VideoBriefState):
         """Pre-extract structured data using regex patterns"""
         # Email
@@ -2120,7 +2229,28 @@ Current brief state:
                 # =================================================================
                 # PHASE 2 FIX: Use new methods for session state update & progress
                 # =================================================================
-                extracted = parsed.get("extracted_data", {})
+                extracted = parsed.get("extracted_data") or {}
+
+                # FALLBACK EXTRACTION: If Claude didn't return structured data, parse user message directly
+                if not extracted or (isinstance(extracted, dict) and not any(extracted.values())):
+                    fallback_extracted = self._extract_from_user_message(user_message)
+                    if fallback_extracted:
+                        extracted = fallback_extracted
+                        logger.info(f"[Extraction Fallback] Parsed user message directly: {list(fallback_extracted.keys())} -> {fallback_extracted}")
+                else:
+                    logger.debug(f"[Extraction] Claude returned: {extracted}")
+
+                # SECONDARY EXTRACTION: Check if Claude mentioned data in prose response
+                # This catches cases where Claude says "So you run TechStart..." but didn't use JSON
+                if extracted and isinstance(extracted, dict):
+                    response_text = parsed.get("response", "")
+
+                    # Extract business name from prose if missing
+                    if not extracted.get("business_name"):
+                        business_match = re.search(r"(?:you run|your company|called|you're|you are)\s+([A-Z][A-Za-z0-9]+)", response_text)
+                        if business_match:
+                            extracted["business_name"] = business_match.group(1)
+                            logger.info(f"[Secondary Extraction] Found business name in prose: {business_match.group(1)}")
 
                 # Update session state from extracted data using new method
                 brief_session = self._update_session_state_from_extraction(
