@@ -1300,6 +1300,90 @@ def enforce_single_question(text: str) -> str:
     return text
 
 
+def extract_response_from_json(raw_response: str) -> dict:
+    """
+    Extract structured response from Claude's JSON output.
+
+    Handles multiple formats:
+    - Direct JSON object
+    - JSON in markdown code blocks
+    - JSON mixed with prose text
+    - Malformed/partial JSON
+
+    Returns:
+        dict with at least 'response' and 'extracted_data' keys
+    """
+    if not raw_response or not raw_response.strip():
+        return {"response": "I'm here to help. What would you like to know?", "extracted_data": {}}
+
+    raw_response = raw_response.strip()
+
+    try:
+        # Strategy 1: Try direct JSON parse (best case)
+        if raw_response.startswith('{'):
+            data = json.loads(raw_response)
+            if isinstance(data, dict) and "response" in data:
+                return data
+
+        # Strategy 2: Extract JSON from markdown code block
+        code_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', raw_response)
+        if code_block_match:
+            data = json.loads(code_block_match.group(1))
+            if isinstance(data, dict) and "response" in data:
+                return data
+
+        # Strategy 3: Find JSON object with "response" key anywhere in text
+        # Use greedy matching to get the full object
+        json_match = re.search(r'(\{[^{}]*"response"\s*:\s*"[^"]*"[^{}]*\})', raw_response)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1))
+                if isinstance(data, dict) and "response" in data:
+                    return data
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 4: Find nested JSON (handles more complex structures)
+        # Match opening brace, content with "response", closing brace
+        nested_match = re.search(r'\{\s*"response"[\s\S]*?"is_complete"\s*:\s*(?:true|false)[\s\S]*?\}', raw_response, re.IGNORECASE)
+        if nested_match:
+            try:
+                # Try to balance braces
+                json_str = nested_match.group(0)
+                data = json.loads(json_str)
+                if isinstance(data, dict) and "response" in data:
+                    return data
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 5: Extract just the response string value
+        response_match = re.search(r'"response"\s*:\s*"((?:[^"\\]|\\.)*)\"', raw_response)
+        if response_match:
+            response_text = response_match.group(1)
+            # Unescape the string
+            response_text = response_text.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
+            return {"response": response_text, "extracted_data": {}}
+
+        # Fallback: Return raw text (cleaned of JSON artifacts)
+        clean_response = re.sub(r'```json[\s\S]*?```', '', raw_response).strip()
+        clean_response = re.sub(r'\{[^{}]*\}', '', clean_response).strip()
+
+        if clean_response:
+            return {"response": clean_response, "extracted_data": {}}
+
+        return {"response": raw_response[:500], "extracted_data": {}}
+
+    except json.JSONDecodeError as e:
+        logger.warning(f"[JSON_EXTRACT] Parse failed: {e}")
+        # Clean up partial JSON from response
+        clean_response = re.sub(r'\s*\{[^}]*$', '', raw_response).strip()
+        clean_response = re.sub(r'```json[\s\S]*', '', clean_response).strip()
+        return {"response": clean_response or raw_response[:500], "extracted_data": {}}
+    except Exception as e:
+        logger.error(f"[JSON_EXTRACT] Unexpected error: {e}")
+        return {"response": raw_response[:500], "extracted_data": {}}
+
+
 # =============================================================================
 # CREATIVE DIRECTOR ORCHESTRATOR
 # =============================================================================
@@ -1776,29 +1860,14 @@ Current brief state:
 
             original_text = result_text  # Keep original for fallback
 
-            # ROBUST JSON EXTRACTION: Find JSON block anywhere in response
-            # This handles cases where Claude adds text before/after the JSON
-            json_match = re.search(r'```json\s*(\{[\s\S]*?\})\s*```', result_text)
-            if json_match:
-                result_text = json_match.group(1)
-            else:
-                # Try to find bare JSON object with expected keys
-                json_match = re.search(r'\{\s*"response"[\s\S]*?"is_complete"\s*:\s*(true|false)[\s\S]*?\}', result_text)
-                if json_match:
-                    result_text = json_match.group(0)
-                else:
-                    # Last resort: find any JSON-like object
-                    json_match = re.search(r'\{[^{}]*"response"[^{}]*\}', result_text)
-                    if json_match:
-                        result_text = json_match.group(0)
-
-            # Clean any remaining markdown markers
-            result_text = re.sub(r'^```json\s*', '', result_text.strip())
-            result_text = re.sub(r'\s*```$', '', result_text.strip())
+            # =================================================================
+            # ROBUST JSON EXTRACTION using extract_response_from_json helper
+            # Handles: direct JSON, code blocks, mixed prose, malformed JSON
+            # =================================================================
+            parsed = extract_response_from_json(result_text)
+            logger.debug(f"[JSON_EXTRACT] Parsed result keys: {list(parsed.keys())}")
 
             try:
-                parsed = json.loads(result_text)
-
                 # CLEAN UP: Remove any JSON that leaked into the response text
                 if "response" in parsed:
                     clean_response = parsed["response"]
@@ -1887,18 +1956,14 @@ Current brief state:
 
                 return parsed
 
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parse error: {e}, text preview: {result_text[:300]}")
-                # Fallback: Extract readable text and continue conversation
-                fallback_text = original_text.split('```')[0].strip() if '```' in original_text else original_text[:500]
-                # Remove any JSON-looking content from fallback
-                fallback_text = re.sub(r'\{[\s\S]*?\}', '', fallback_text).strip()
-                if not fallback_text:
-                    fallback_text = "I understand. Let me continue with the next question."
+            except (KeyError, TypeError, AttributeError) as e:
+                # Response processing error - use the parsed response as-is
+                logger.warning(f"[RESPONSE_PROCESS] Processing error: {e}, using parsed response")
+                response_text = parsed.get("response", "I understand. Let me continue with the next question.")
 
                 return {
-                    "response": fallback_text,
-                    "extracted_data": {},
+                    "response": response_text,
+                    "extracted_data": parsed.get("extracted_data", {}),
                     "next_phase": state.phase.value,
                     "confidence": 0.5,
                     "is_complete": False,
