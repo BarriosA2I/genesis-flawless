@@ -344,7 +344,7 @@ class MetaAdLibraryScraper(PlatformScraper):
             "What if you could 10x your productivity?",
             "Stop wasting time on manual tasks",
             "The secret top companies don't want you to know",
-            "In just 30 seconds, you'll understand why",
+            "In just 64 seconds, you'll understand why",
             "Are you still doing this the old way?"
         ]
 

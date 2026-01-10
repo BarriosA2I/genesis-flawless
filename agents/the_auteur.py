@@ -538,7 +538,7 @@ async def test_auteur():
 
     # Test with mock (no frames)
     request = CreativeQARequest(
-        script_summary="A 30-second commercial for TechCorp AI platform showing business transformation",
+        script_summary="A 64-second commercial for TechCorp AI platform showing business transformation",
         visual_style="Professional, modern, tech-forward",
         brand_guidelines={
             "primary_color": "#00CED1",

@@ -833,13 +833,65 @@ async def force_close_circuit(service: str):
     """Force close a circuit breaker (admin only)"""
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
-    
+
     if service not in orchestrator.circuits:
         raise HTTPException(status_code=404, detail=f"Circuit {service} not found")
-    
+
     await orchestrator.circuits[service].force_close()
-    
+
     return {"status": "closed", "service": service}
+
+
+@app.post("/api/admin/refresh-website-knowledge", tags=["Admin"])
+async def refresh_website_knowledge():
+    """
+    Re-index barriosa2i.com website content into RAG system.
+
+    This crawls all website pages, chunks content, embeds with OpenAI,
+    and stores in Qdrant for real-time knowledge retrieval.
+
+    Use this after website content updates to keep AI knowledge current.
+    """
+    try:
+        from knowledge.website_rag import get_website_rag
+
+        rag = get_website_rag()
+        result = await rag.index_website()
+
+        logger.info(f"Website knowledge re-indexed: {result}")
+
+        return {
+            "status": "success",
+            "result": result,
+            "message": "Website knowledge updated successfully"
+        }
+    except Exception as e:
+        logger.error(f"Website knowledge refresh failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to refresh website knowledge: {str(e)}"
+        )
+
+
+@app.get("/api/admin/website-knowledge-stats", tags=["Admin"])
+async def get_website_knowledge_stats():
+    """Get statistics about the website knowledge RAG system."""
+    try:
+        from knowledge.website_rag import get_website_rag
+
+        rag = get_website_rag()
+        stats = rag.get_stats()
+
+        return {
+            "status": "success",
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"Failed to get website knowledge stats: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get stats: {str(e)}"
+        )
 
 
 # =============================================================================

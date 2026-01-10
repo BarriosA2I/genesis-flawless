@@ -74,7 +74,7 @@ class CreateCommercialRequest(BaseModel):
     industry: str = Field("", description="Industry vertical")
     client_email: Optional[str] = Field(None, description="Client email for notifications")
     thumbnail_url: Optional[str] = Field(None, description="Thumbnail URL")
-    duration_seconds: int = Field(30, description="Video duration in seconds")
+    duration_seconds: int = Field(64, description="Video duration in seconds")
 
 
 # =============================================================================

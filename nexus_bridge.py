@@ -1220,7 +1220,7 @@ class NexusBridge:
             previous_score = brief.get("previous_score")
             is_iteration = bool(improvement_directive)
 
-            system_prompt = """You are a world-class commercial script writer. Generate a 30-second video script.
+            system_prompt = """You are a world-class commercial script writer. Generate a 64-second video script (8 scenes × 8 seconds each).
 
 Output JSON with these exact keys:
 {
@@ -1338,7 +1338,7 @@ The goal is to score 85+ on the next evaluation.
 
             system_prompt = """You are a world-class video prompt engineer for AI video generation (Runway, Pika, Sora).
 
-Generate 5 video prompts for a 30-second commercial. Each prompt should be highly detailed for AI video generation.
+Generate 8 video prompts for a 64-second commercial (8 seconds per scene). Each prompt should be highly detailed for AI video generation.
 
 Output JSON array with this exact structure:
 [

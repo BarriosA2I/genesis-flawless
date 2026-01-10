@@ -81,7 +81,7 @@ class RalphLoopController:
 
         result = await controller.run_loop(
             agent_name="story_creator",
-            task="Create a 30-second commercial script",
+            task="Create a 64-second commercial script",
             agent_fn=my_agent_function,
             evaluate_fn=my_evaluation_function,
             completion_criteria={'threshold': 0.90}

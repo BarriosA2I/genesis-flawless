@@ -51,6 +51,17 @@ if KNOWLEDGE_ENABLED:
 else:
     _knowledge_file_count = 0
 
+# Website RAG for real-time business knowledge from barriosa2i.com
+_rag_logger = _logging.getLogger("WebsiteRAGInit")
+try:
+    from knowledge.website_rag import get_website_rag
+    WEBSITE_RAG_ENABLED = True
+    _rag_logger.info("Website RAG module loaded successfully")
+except ImportError as e:
+    _rag_logger.warning(f"Website RAG module not available: {e}")
+    WEBSITE_RAG_ENABLED = False
+    get_website_rag = None
+
 # Resilience module for retry logic, circuit breaker, and graceful degradation
 _resilience_logger = _logging.getLogger("ResilienceInit")
 try:
@@ -319,7 +330,7 @@ class VideoBriefState:
                 "goal": self.video_goal.value if self.video_goal else "awareness",
                 "cta": self.call_to_action,
                 "platform": self.platform or "youtube_1080p",
-                "duration_seconds": 96,
+                "duration_seconds": 64,
             },
             # Creative direction (from RAGNAROK semantic memory)
             "creative": {
@@ -609,7 +620,7 @@ You help businesses create professional commercial videos. That's it. Nothing el
 - Explain the video creation process
 - Discuss video styles, tones, formats, and platforms
 - Help with script concepts and creative direction
-- Answer questions about pricing: $500 for a 30-second commercial, delivered in 48-72 hours
+- Answer questions about pricing: $500 for a 64-second commercial, delivered in 48-72 hours
 
 ## WHAT YOU DON'T DO:
 - Discuss other Barrios A2I services (research agents, automation, websites, app development)
@@ -638,7 +649,7 @@ Guide through these areas, one question at a time:
 4. **Campaign Goal** - What action viewers should take (leads, calls, purchases, awareness)
 5. **Platform** - Where the video will run (TikTok, Instagram, Facebook, YouTube, website)
 6. **Style & Tone** - How the video should feel (energetic, professional, funny, emotional, luxury)
-7. **Duration** - 15, 30, or 60 seconds
+7. **Duration** - 64 seconds (our standard: 8 scenes × 8 seconds)
 8. **Visual Style** - Realistic, animated, or mixed
 9. **Voiceover** - Yes/no, male/female, language
 10. **Constraints** - Budget range, must-avoid content, disclaimers needed
@@ -960,6 +971,24 @@ Current brief state:
             knowledge_context = get_knowledge_context(detected_mode)
             logger.debug(f"Detected mode: {detected_mode}, knowledge context size: {len(knowledge_context)}")
 
+        # Query Website RAG for real-time business knowledge
+        website_rag_context = ""
+        if WEBSITE_RAG_ENABLED and get_website_rag:
+            try:
+                rag = get_website_rag()
+                website_rag_context = rag.query(user_message, top_k=3)
+                if website_rag_context:
+                    logger.debug(f"Website RAG context retrieved: {len(website_rag_context)} chars")
+            except Exception as e:
+                logger.warning(f"Website RAG query failed: {e}")
+
+        # Combine knowledge sources
+        if website_rag_context:
+            if knowledge_context:
+                knowledge_context = knowledge_context + "\n\n## REAL-TIME WEBSITE KNOWLEDGE\n" + website_rag_context
+            else:
+                knowledge_context = "## REAL-TIME WEBSITE KNOWLEDGE\n" + website_rag_context
+
         # Build full system prompt with knowledge
         # =================================================================
         # TOKEN LIMIT SAFETY (Prevent token overflow errors)
@@ -1178,7 +1207,7 @@ Current brief state:
         """Mock response for testing without API"""
         phase_responses = {
             BriefPhase.GREETING: {
-                "response": "Welcome! I'm your Creative Director at Barrios A2I. I'll help you create your 96-second AI video commercial. Let's start with your business - what's your company name and what industry are you in?",
+                "response": "Welcome! I'm your Creative Director at Barrios A2I. I'll help you create your 64-second AI video commercial. Let's start with your business - what's your company name and what industry are you in?",
                 "next_phase": "business_core",
             },
             BriefPhase.BUSINESS_CORE: {
@@ -1214,7 +1243,7 @@ Current brief state:
                 "next_phase": "confirm",
             },
             BriefPhase.CONFIRM: {
-                "response": "Excellent! Your brief is confirmed and queued for RAGNAROK. You'll receive your 96-second commercial within 24-48 hours!",
+                "response": "Excellent! Your brief is confirmed and queued for RAGNAROK. You'll receive your 64-second commercial within 24-48 hours!",
                 "is_complete": True,
                 "next_phase": "complete",
             },
