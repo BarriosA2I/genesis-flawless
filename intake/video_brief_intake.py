@@ -277,6 +277,9 @@ class VideoBriefState:
     video_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
 
+    # Confirmation gate - user must confirm brief before production
+    user_confirmed: bool = False
+
     # Metrics
     turns_count: int = 0
     extraction_confidence: float = 0.0
@@ -631,6 +634,23 @@ Valid extracted_data fields:
 - Don't generate setting-only video prompts
 - Don't skip the brief process for production requests
 - Don't answer general AI questions (redirect to home page)
+
+## MANDATORY BRIEFING RULES - NEVER SKIP (CRITICAL)
+1. You MUST gather ALL required fields BEFORE marking is_complete=true
+2. Required fields: business_name, primary_offering, target_demographic, call_to_action, tone
+3. NEVER trigger production (is_complete=true, ragnarok_ready=true) until user explicitly confirms the brief summary
+4. If user tries to skip ahead or asks to "just make something", politely redirect: "Before we create your commercial, I need a few quick details to make it perfect for your business..."
+5. is_complete and ragnarok_ready can ONLY be true when:
+   - All 5 required fields have been populated in extracted_data
+   - You have shown user a complete brief summary (the CONFIRMATION section)
+   - User has said "yes", "confirm", "looks good", "correct", "that's right", "proceed", or similar explicit confirmation
+
+## CONVERSATION PHASES (ENFORCE STRICTLY - NO SHORTCUTS)
+Phase 1: INTAKE - Ask questions ONE AT A TIME to gather all required fields. Do NOT rush.
+Phase 2: SUMMARY - Once all fields gathered, present the complete brief summary and ask "Does this look correct? Ready to proceed?"
+Phase 3: PRODUCTION - ONLY after user explicitly confirms with "yes", "confirm", etc., set is_complete=true and ragnarok_ready=true
+
+IMPORTANT: If user's first message is generic like "I want to make a commercial" or "hello", start with your GREETING and ask about their business name. Do NOT immediately trigger production.
 """
 
 
@@ -721,27 +741,53 @@ class CreativeDirectorOrchestrator:
                     "timestamp": time.time()
                 })
                 
-                # Check completion
+                # Check completion - WITH VALIDATION GATE
                 is_complete = ai_result.get("is_complete", False)
-                if is_complete:
+                missing_fields = state.get_missing_required_fields()
+
+                # VALIDATION GATE: Override Claude's is_complete if required fields are missing
+                if is_complete and missing_fields:
+                    logger.warning(f"[VALIDATION_GATE] Overriding is_complete=true - missing fields: {missing_fields}")
+                    is_complete = False
+                    # Claude tried to complete too early, keep gathering info
+
+                # CONFIRMATION GATE: Detect user confirmation phrases
+                confirmation_phrases = ["yes", "confirm", "looks good", "correct", "that's right", "proceed", "let's do it", "go ahead", "start production", "ready"]
+                user_confirmed_now = any(phrase in user_message.lower() for phrase in confirmation_phrases)
+
+                # Only set user_confirmed if all required fields are present AND user confirmed
+                if user_confirmed_now and not missing_fields:
+                    state.user_confirmed = True
+                    logger.info(f"[CONFIRMATION_GATE] User confirmed brief - production can now proceed")
+
+                # Final is_complete requires BOTH: no missing fields AND user confirmation
+                ragnarok_ready = is_complete and state.user_confirmed and not missing_fields
+
+                if ragnarok_ready:
                     state.phase = BriefPhase.COMPLETE
                     BRIEF_COMPLETION.inc()
                     CONVERSATION_LENGTH.observe(state.turns_count)
-                
+                    logger.info(f"[PRODUCTION_READY] Brief complete and confirmed - RAGNAROK ready")
+                elif is_complete and not state.user_confirmed:
+                    # Brief is complete but user hasn't confirmed yet
+                    logger.info(f"[AWAITING_CONFIRMATION] Brief gathered, waiting for user confirmation")
+
                 # Calculate latency
                 latency_ms = (time.time() - start_time) * 1000
                 span.set_attribute("latency_ms", latency_ms)
                 span.set_attribute("phase", state.phase.value)
                 span.set_attribute("completion", state.get_completion_percentage())
-                
+                span.set_attribute("user_confirmed", state.user_confirmed)
+
                 return {
                     "response": response_text,
                     "state": state.to_dict(),
-                    "is_complete": is_complete,
+                    "is_complete": ragnarok_ready,  # Only truly complete when confirmed
                     "completion_percentage": state.get_completion_percentage(),
-                    "missing_fields": state.get_missing_required_fields(),
-                    "ragnarok_ready": is_complete,
-                    "ragnarok_input": state.to_ragnarok_input() if is_complete else None,
+                    "missing_fields": missing_fields,
+                    "user_confirmed": state.user_confirmed,
+                    "ragnarok_ready": ragnarok_ready,
+                    "ragnarok_input": state.to_ragnarok_input() if ragnarok_ready else None,
                     "latency_ms": latency_ms,
                 }
                 
