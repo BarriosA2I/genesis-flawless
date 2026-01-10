@@ -94,12 +94,17 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """Chat response model."""
+    """Chat response model with Phase 1 enhancements."""
     session_id: str
     response: str
     phase: str
     progress: float
     is_complete: bool
+    progress_percentage: int = 0
+    missing_fields: List[str] = []
+    trigger_production: bool = False
+    ragnarok_ready: bool = False
+    mode: str = "intake"
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -172,10 +177,16 @@ async def chat(request: ChatRequest):
             phase=state.get("phase", "greeting"),
             progress=result.get("completion_percentage", 0.0),
             is_complete=result.get("is_complete", False),
+            progress_percentage=result.get("progress_percentage", 0),
+            missing_fields=result.get("missing_fields", []),
+            trigger_production=result.get("trigger_production", False),
+            ragnarok_ready=result.get("ragnarok_ready", False),
+            mode=result.get("mode", "intake"),
             metadata={
                 "latency_ms": latency_ms,
                 "turns_count": state.get("turns_count", 0),
-                "extracted_fields": list(state.get("brief_data", {}).keys()) if state.get("brief_data") else []
+                "extracted_fields": list(state.get("brief_data", {}).keys()) if state.get("brief_data") else [],
+                "sentiment": result.get("sentiment", {}),
             }
         )
 
@@ -284,6 +295,34 @@ async def delete_session(session_id: str):
 
     except Exception as e:
         logger.error(f"Session deletion error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/session/{session_id}/status")
+async def get_session_status(session_id: str):
+    """
+    Get current session state for frontend progress bar.
+    Returns Phase 1 tracking data.
+    """
+    try:
+        # Import BriefSessionState functions
+        from intake.video_brief_intake import get_or_create_brief_session
+
+        session = get_or_create_brief_session(session_id)
+
+        return {
+            "session_id": session_id,
+            "progress_percentage": session.completion_percentage(),
+            "fields_gathered": list(session.get_filled_fields().keys()),
+            "missing_fields": session.get_missing_fields(),
+            "awaiting_confirmation": session.awaiting_confirmation,
+            "conversation_count": session.conversation_count,
+            "is_complete": session.is_complete(),
+            "pricing_ask_count": session.pricing_ask_count,
+        }
+
+    except Exception as e:
+        logger.error(f"Session status error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

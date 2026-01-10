@@ -552,6 +552,308 @@ JSON response format:
 
 
 # =============================================================================
+# FEW-SHOT EXAMPLES - Inject into first user message for better pattern matching
+# =============================================================================
+
+FEW_SHOT_EXAMPLES = """
+<examples>
+  <example>
+    <user>We're a SaaS company for e-commerce marketers</user>
+    <assistant>Got it—so you're helping e-commerce marketers. What's the core problem you're solving for them?</assistant>
+  </example>
+
+  <example>
+    <user>Our tone should be fun and energetic, like Slack</user>
+    <assistant>Nice—playful and approachable. What emotion do you want viewers to feel after watching?</assistant>
+  </example>
+
+  <example>
+    <user>Marketing managers</user>
+    <assistant>Okay so marketing managers. More like solo freelancers or enterprise teams?</assistant>
+  </example>
+</examples>
+"""
+
+
+def inject_few_shot_examples(user_message: str, is_first_message: bool) -> str:
+    """Inject few-shot examples into first user message only."""
+    if is_first_message:
+        return f"{FEW_SHOT_EXAMPLES}\n\n{user_message}"
+    return user_message
+
+
+# =============================================================================
+# SESSION STATE MANAGEMENT - Track brief in backend, prevent drift
+# =============================================================================
+
+class BriefSessionState:
+    """
+    Track extracted brief fields in backend dict, not system prompt.
+    This prevents instruction drift over long conversations.
+    """
+
+    REQUIRED_FIELDS = ["business_name", "product", "audience", "tone", "cta"]
+    ALL_FIELDS = ["business_name", "product", "audience", "tone", "key_message", "cta", "platform"]
+
+    def __init__(self):
+        self.fields = {field: None for field in self.ALL_FIELDS}
+        self.conversation_count = 0
+        self.is_first_message = True
+        self.awaiting_confirmation = False
+        self.pricing_ask_count = 0
+        self.last_message_time = None
+        self.sentiment_history = []
+
+    def update_field(self, field: str, value: str) -> None:
+        """Update a brief field."""
+        if field in self.fields:
+            self.fields[field] = value
+
+    def get_filled_fields(self) -> dict:
+        """Get only fields that have values."""
+        return {k: v for k, v in self.fields.items() if v}
+
+    def get_missing_fields(self) -> list:
+        """Get fields that still need values."""
+        return [k for k, v in self.fields.items() if not v]
+
+    def get_missing_required(self) -> list:
+        """Get required fields that are missing."""
+        return [f for f in self.REQUIRED_FIELDS if not self.fields.get(f)]
+
+    def is_complete(self) -> bool:
+        """Check if all required fields are gathered."""
+        return len(self.get_missing_required()) == 0
+
+    def completion_percentage(self) -> int:
+        """Calculate completion percentage for progress bar."""
+        filled = sum(1 for v in self.fields.values() if v)
+        return int((filled / len(self.fields)) * 100)
+
+    def get_context_injection(self) -> str:
+        """
+        Generate context string to inject into Claude messages.
+        This keeps Claude aware of what's been gathered without relying on system prompt.
+        """
+        filled = self.get_filled_fields()
+        missing = self.get_missing_fields()
+
+        if not filled:
+            return ""
+
+        context_parts = []
+        for k, v in filled.items():
+            context_parts.append(f"{k.replace('_', ' ').title()}: {v}")
+
+        return f"\n---\n*Brief so far: {', '.join(context_parts)}. Still need: {', '.join(missing)}*"
+
+    def generate_summary(self) -> str:
+        """Generate human-readable brief summary for confirmation."""
+        f = self.fields
+
+        summary = f"""Here's what I've got:
+
+**Business:** {f.get('business_name') or 'Not specified'} — {f.get('product') or 'Not specified'}
+**Audience:** {f.get('audience') or 'Not specified'}
+**Tone:** {f.get('tone') or 'Not specified'}
+**Key Message:** {f.get('key_message') or 'Not specified'}
+**Call-to-Action:** {f.get('cta') or 'Not specified'}
+**Platform:** {f.get('platform') or 'Not specified'}
+
+Does this look right? Say "yes" to start your video, or tell me what to change."""
+
+        return summary.strip()
+
+
+# In-memory session store (use Redis in production for multi-instance)
+BRIEF_SESSIONS: dict = {}
+
+
+def get_or_create_brief_session(session_id: str) -> BriefSessionState:
+    """Get existing session or create new one."""
+    if session_id not in BRIEF_SESSIONS:
+        BRIEF_SESSIONS[session_id] = BriefSessionState()
+    return BRIEF_SESSIONS[session_id]
+
+
+# =============================================================================
+# SENTIMENT DETECTION - Adapt responses to user emotional state
+# =============================================================================
+
+def detect_user_sentiment(text: str) -> dict:
+    """
+    Detect user sentiment and emotional state.
+    Returns dict of boolean signals for different states.
+    """
+    text_lower = text.lower().strip()
+
+    signals = {
+        "frustrated": False,
+        "hurried": False,
+        "confused": False,
+        "pushback": False,
+        "one_word": False,
+        "pricing_focus": False,
+        "positive": False,
+    }
+
+    # === FRUSTRATION SIGNALS ===
+    frustration_words = [
+        "stupid", "waste", "ridiculous", "hate", "terrible", "awful",
+        "annoying", "useless", "pointless", "frustrat"
+    ]
+    # Check for ALL CAPS (more than 50% uppercase in message longer than 5 chars)
+    if len(text) > 5:
+        caps_ratio = sum(1 for c in text if c.isupper()) / len(text.replace(" ", ""))
+        if caps_ratio > 0.5:
+            signals["frustrated"] = True
+
+    # Check for multiple exclamation marks
+    if text.count("!") >= 2:
+        signals["frustrated"] = True
+
+    # Check for frustration words
+    if any(word in text_lower for word in frustration_words):
+        signals["frustrated"] = True
+
+    # === HURRIED SIGNALS ===
+    hurry_phrases = [
+        "speed up", "quick", "hurry", "don't have time", "no time",
+        "fast", "skip", "just", "only need", "can we finish",
+        "how long", "take forever", "faster"
+    ]
+    if any(phrase in text_lower for phrase in hurry_phrases):
+        signals["hurried"] = True
+
+    # === CONFUSION SIGNALS ===
+    confusion_patterns = [
+        "what?", "huh?", "don't understand", "confused", "what do you mean",
+        "i don't get", "not sure what", "can you explain", "what are you asking"
+    ]
+    if any(pattern in text_lower for pattern in confusion_patterns):
+        signals["confused"] = True
+
+    # === PUSHBACK SIGNALS ===
+    pushback_patterns = [
+        "actually,", "actually ", "no,", "no ", "that's not", "wrong",
+        "disagree", "i don't think", "not really", "that doesn't"
+    ]
+    if any(pattern in text_lower for pattern in pushback_patterns):
+        signals["pushback"] = True
+
+    # === ONE-WORD DETECTION ===
+    word_count = len(text.split())
+    if word_count <= 2:
+        signals["one_word"] = True
+
+    # === PRICING FOCUS ===
+    pricing_words = [
+        "cost", "price", "how much", "budget", "expensive", "afford",
+        "pricing", "pay", "money", "dollars", "$"
+    ]
+    if any(word in text_lower for word in pricing_words):
+        signals["pricing_focus"] = True
+
+    # === POSITIVE SIGNALS ===
+    positive_words = [
+        "great", "awesome", "perfect", "love", "excellent", "thanks",
+        "cool", "nice", "sounds good", "yes", "yeah"
+    ]
+    if any(word in text_lower for word in positive_words):
+        signals["positive"] = True
+
+    return signals
+
+
+def get_adaptive_instruction(sentiment: dict, session: BriefSessionState) -> str:
+    """
+    Generate adaptive instructions based on detected sentiment.
+    Injected into system prompt to guide Claude's response.
+    """
+    instructions = []
+
+    if sentiment["frustrated"]:
+        instructions.append(
+            "[USER FRUSTRATED] Acknowledge their feeling briefly. "
+            "Offer faster path: 'I hear you—let me speed this up. "
+            "Just need a few quick details and we're done.'"
+        )
+
+    if sentiment["hurried"]:
+        instructions.append(
+            "[USER IN HURRY] Switch to fast-track: "
+            "'Got it—quick version. Business name, what you sell, who's buying, "
+            "and what action you want viewers to take. Go.'"
+        )
+
+    if sentiment["one_word"] and not sentiment["positive"]:
+        instructions.append(
+            "[SHORT ANSWER] Use elicitation technique (statement + gentle probe): "
+            "'Okay so [their answer]—I'm guessing there's more to it. "
+            "Like, more X or more Y?' Don't interrogate."
+        )
+
+    if sentiment["pushback"]:
+        instructions.append(
+            "[USER PUSHBACK] Use Acknowledge → Validate → Continue: "
+            "'Got it—my mistake. That actually makes more sense. "
+            "Tell me more about that angle.'"
+        )
+
+    if sentiment["pricing_focus"]:
+        session.pricing_ask_count += 1
+        if session.pricing_ask_count >= 3:
+            instructions.append(
+                "[PRICING X3] User asked about pricing 3+ times. "
+                "Offer escalation: 'I think you need pricing clarity now—totally fair. "
+                "Let me connect you with someone who can give you exact numbers.'"
+            )
+        else:
+            instructions.append(
+                "[PRICING ASK] Redirect with empathy: "
+                "'Great question—pricing depends on scope. "
+                "Let's nail the vision first so the quote makes sense.'"
+            )
+
+    if sentiment["confused"]:
+        instructions.append(
+            "[USER CONFUSED] Clarify simply: "
+            "'Let me put it differently...' then rephrase your question "
+            "in simpler terms. One thing at a time."
+        )
+
+    if instructions:
+        return "\n\n## ADAPT YOUR RESPONSE:\n" + "\n".join(instructions)
+
+    return ""
+
+
+# Confirmation detection
+CONFIRMATION_PHRASES = [
+    "yes", "yeah", "yep", "yup", "correct", "looks good", "that's right",
+    "perfect", "let's go", "start", "confirm", "proceed", "do it",
+    "that's correct", "approved", "go ahead", "ship it", "make it",
+    "looks right", "all good", "good to go"
+]
+
+
+def user_confirmed_brief(text: str) -> bool:
+    """Check if user confirmed the brief summary."""
+    text_lower = text.lower().strip()
+
+    # Check for explicit confirmations
+    for phrase in CONFIRMATION_PHRASES:
+        if phrase in text_lower:
+            return True
+
+    # Check for very short affirmative responses
+    if text_lower in ["y", "k", "ok", "okay", "sure", "yea"]:
+        return True
+
+    return False
+
+
+# =============================================================================
 # RESPONSE GUARDRAILS - Prevent info leaks & enforce brevity
 # =============================================================================
 
@@ -819,11 +1121,52 @@ class CreativeDirectorOrchestrator:
         state: VideoBriefState,
         user_message: str
     ) -> Dict[str, Any]:
-        """Generate AI response using Claude"""
+        """Generate AI response using Claude with Phase 1 enhancements"""
+
+        # =================================================================
+        # PHASE 1: Get/create BriefSessionState for conversation tracking
+        # =================================================================
+        brief_session = get_or_create_brief_session(state.session_id)
+        brief_session.conversation_count += 1
+        brief_session.last_message_time = time.time()
+
+        # Check if user is confirming a brief summary
+        if brief_session.awaiting_confirmation:
+            if user_confirmed_brief(user_message):
+                brief_session.awaiting_confirmation = False
+                return {
+                    "response": "Perfect. Sending this to production now—I'll show you progress as it happens.",
+                    "extracted_data": brief_session.get_filled_fields(),
+                    "is_complete": True,
+                    "ragnarok_ready": True,
+                    "trigger_production": True,
+                    "progress_percentage": 100,
+                    "mode": "production",
+                    "next_phase": "complete",
+                    "confidence": 1.0,
+                }
+            else:
+                # User wants to make changes, continue conversation
+                brief_session.awaiting_confirmation = False
+
+        # Detect sentiment for adaptive responses
+        sentiment = detect_user_sentiment(user_message)
+        brief_session.sentiment_history.append(sentiment)
+
+        # Inject few-shot examples on first message only
+        processed_message = inject_few_shot_examples(user_message, brief_session.is_first_message)
+        if brief_session.is_first_message:
+            brief_session.is_first_message = False
+
+        # Add context injection (what we've gathered so far)
+        context_injection = brief_session.get_context_injection()
+        if context_injection:
+            processed_message += context_injection
+
         if not self.anthropic:
             # Mock response for testing
             return self._mock_response(state, user_message)
-        
+
         # Build conversation for Claude
         messages = []
         for turn in state.conversation_history[-10:]:  # Last 10 turns
@@ -831,7 +1174,7 @@ class CreativeDirectorOrchestrator:
                 "role": turn["role"],
                 "content": turn["content"]
             })
-        
+
         # Add current state context
         state_context = f"""
 Current brief state:
@@ -842,6 +1185,9 @@ Current brief state:
 - Audience: {state.target_demographic or 'Unknown'}
 - Missing required fields: {', '.join(state.get_missing_required_fields()) or 'None'}
 """
+
+        # Get adaptive instruction based on sentiment
+        adaptive_instruction = get_adaptive_instruction(sentiment, brief_session)
 
         # Detect conversation mode and inject relevant knowledge
         knowledge_context = ""
@@ -874,7 +1220,10 @@ Current brief state:
         # =================================================================
         MAX_SYSTEM_PROMPT_CHARS = 15000  # ~4K tokens safety limit
 
+        # Include adaptive instruction based on sentiment
         base_prompt = CREATIVE_DIRECTOR_SYSTEM_PROMPT + "\n\n" + state_context
+        if adaptive_instruction:
+            base_prompt += adaptive_instruction
 
         if knowledge_context:
             # Calculate how much space we have for knowledge
@@ -902,7 +1251,7 @@ Current brief state:
                 model=self.model,
                 max_tokens=150,
                 system=full_system_prompt,
-                messages=messages + [{"role": "user", "content": user_message}]
+                messages=messages + [{"role": "user", "content": processed_message}]
             )
 
         try:
@@ -1027,6 +1376,49 @@ Current brief state:
                 if "is_complete" not in parsed:
                     parsed["is_complete"] = False
 
+                # =================================================================
+                # PHASE 1: Sync to BriefSessionState & check completion
+                # =================================================================
+                extracted = parsed.get("extracted_data", {})
+
+                # Map extracted fields to BriefSessionState
+                field_mapping = {
+                    "business_name": "business_name",
+                    "company_name": "business_name",
+                    "name": "business_name",
+                    "product": "product",
+                    "service": "product",
+                    "offering": "product",
+                    "primary_offering": "product",
+                    "audience": "audience",
+                    "target_audience": "audience",
+                    "target_demographic": "audience",
+                    "tone": "tone",
+                    "brand_tone": "tone",
+                    "key_message": "key_message",
+                    "message": "key_message",
+                    "cta": "cta",
+                    "call_to_action": "cta",
+                    "platform": "platform",
+                }
+
+                for key, value in extracted.items():
+                    if value and key.lower() in field_mapping:
+                        brief_session.update_field(field_mapping[key.lower()], str(value))
+
+                # Check if brief is complete → trigger confirmation flow
+                if brief_session.is_complete() and not brief_session.awaiting_confirmation:
+                    brief_session.awaiting_confirmation = True
+                    parsed["response"] = brief_session.generate_summary()
+
+                # Add Phase 1 fields to response
+                parsed["progress_percentage"] = brief_session.completion_percentage()
+                parsed["missing_fields"] = brief_session.get_missing_fields()
+                parsed["trigger_production"] = False
+                parsed["ragnarok_ready"] = brief_session.is_complete()
+                parsed["mode"] = "intake"
+                parsed["sentiment"] = sentiment
+
                 return parsed
 
             except json.JSONDecodeError as e:
@@ -1043,7 +1435,11 @@ Current brief state:
                     "extracted_data": {},
                     "next_phase": state.phase.value,
                     "confidence": 0.5,
-                    "is_complete": False
+                    "is_complete": False,
+                    "progress_percentage": brief_session.completion_percentage(),
+                    "missing_fields": brief_session.get_missing_fields(),
+                    "trigger_production": False,
+                    "mode": "intake",
                 }
 
         except Exception as e:
@@ -1089,6 +1485,10 @@ Current brief state:
                     "is_complete": False,
                     "quality_tier": emergency["quality_tier"],
                     "error_type": error_type,
+                    "progress_percentage": brief_session.completion_percentage(),
+                    "missing_fields": brief_session.get_missing_fields(),
+                    "trigger_production": False,
+                    "mode": "error",
                 }
 
             raise
