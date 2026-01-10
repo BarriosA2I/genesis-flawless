@@ -393,6 +393,10 @@ app.include_router(review_router)
 # Include NEXUS Brain concierge routes (Landing Page AI)
 app.include_router(nexus_brain_router)
 
+# Include Production Status routes (Phase 2 - SSE streaming)
+from production_routes import router as production_router
+app.include_router(production_router)
+
 
 # =============================================================================
 # HEALTH & METRICS

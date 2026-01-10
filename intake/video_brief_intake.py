@@ -603,6 +603,7 @@ class BriefSessionState:
         self.pricing_ask_count = 0
         self.last_message_time = None
         self.sentiment_history = []
+        self.mode = "standard"  # Phase 2: "standard" or "fast_track"
 
     def update_field(self, field: str, value: str) -> None:
         """Update a brief field."""
@@ -674,6 +675,143 @@ def get_or_create_brief_session(session_id: str) -> BriefSessionState:
     if session_id not in BRIEF_SESSIONS:
         BRIEF_SESSIONS[session_id] = BriefSessionState()
     return BRIEF_SESSIONS[session_id]
+
+
+# =============================================================================
+# PHASE 2: PRODUCTION STATUS TRACKING - Real-time video generation progress
+# =============================================================================
+
+class ProductionStep(Enum):
+    """Steps in the RAGNAROK video production pipeline."""
+    QUEUED = "queued"
+    SCRIPT_GENERATION = "script"
+    VISUAL_SELECTION = "visuals"
+    VOICEOVER_GENERATION = "voice"
+    VIDEO_EDITING = "edit"
+    UPLOAD = "upload"
+    COMPLETE = "complete"
+    ERROR = "error"
+
+
+@dataclass
+class ProductionStatus:
+    """Track production status for a session."""
+    session_id: str
+    brief: dict
+    current_step: ProductionStep = ProductionStep.QUEUED
+    step_progress: int = 0  # 0-100 within current step
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    video_url: Optional[str] = None
+    error_message: Optional[str] = None
+    retry_count: int = 0
+    step_timestamps: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Convert to dict for API response."""
+        return {
+            "session_id": self.session_id,
+            "current_step": self.current_step.value,
+            "step_progress": self.step_progress,
+            "overall_progress": self.calculate_overall_progress(),
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "video_url": self.video_url,
+            "error_message": self.error_message,
+            "is_complete": self.current_step == ProductionStep.COMPLETE,
+            "is_error": self.current_step == ProductionStep.ERROR,
+            "estimated_remaining_seconds": self.estimate_remaining_time(),
+        }
+
+    def calculate_overall_progress(self) -> int:
+        """Calculate overall progress percentage."""
+        step_weights = {
+            ProductionStep.QUEUED: 0,
+            ProductionStep.SCRIPT_GENERATION: 15,
+            ProductionStep.VISUAL_SELECTION: 35,
+            ProductionStep.VOICEOVER_GENERATION: 55,
+            ProductionStep.VIDEO_EDITING: 80,
+            ProductionStep.UPLOAD: 95,
+            ProductionStep.COMPLETE: 100,
+            ProductionStep.ERROR: 0,
+        }
+        base = step_weights.get(self.current_step, 0)
+        if self.current_step not in [ProductionStep.COMPLETE, ProductionStep.ERROR, ProductionStep.QUEUED]:
+            next_step_values = list(step_weights.values())
+            current_index = list(step_weights.keys()).index(self.current_step)
+            if current_index < len(next_step_values) - 1:
+                step_range = next_step_values[current_index + 1] - base
+                base += int((self.step_progress / 100) * step_range)
+        return min(100, base)
+
+    def estimate_remaining_time(self) -> int:
+        """Estimate remaining seconds based on typical production times."""
+        step_times = {
+            ProductionStep.QUEUED: 5,
+            ProductionStep.SCRIPT_GENERATION: 30,
+            ProductionStep.VISUAL_SELECTION: 60,
+            ProductionStep.VOICEOVER_GENERATION: 45,
+            ProductionStep.VIDEO_EDITING: 90,
+            ProductionStep.UPLOAD: 15,
+        }
+        remaining = 0
+        found_current = False
+        for step, duration in step_times.items():
+            if step == self.current_step:
+                found_current = True
+                remaining += int(duration * (1 - self.step_progress / 100))
+            elif found_current and step != ProductionStep.COMPLETE:
+                remaining += duration
+        return remaining
+
+    def advance_step(self, new_step: ProductionStep) -> None:
+        """Advance to a new step."""
+        self.step_timestamps[self.current_step.value] = time.time()
+        self.current_step = new_step
+        self.step_progress = 0
+        if new_step == ProductionStep.COMPLETE:
+            self.completed_at = time.time()
+
+
+# Production status store
+PRODUCTION_STATUSES: Dict[str, ProductionStatus] = {}
+
+
+def get_production_status(session_id: str) -> Optional[ProductionStatus]:
+    """Get production status for a session."""
+    return PRODUCTION_STATUSES.get(session_id)
+
+
+def create_production_status(session_id: str, brief: dict) -> ProductionStatus:
+    """Create new production status tracker."""
+    status = ProductionStatus(
+        session_id=session_id,
+        brief=brief,
+        started_at=time.time()
+    )
+    PRODUCTION_STATUSES[session_id] = status
+    return status
+
+
+async def update_production_step(
+    session_id: str,
+    step: ProductionStep,
+    progress: int = 0,
+    video_url: str = None,
+    error: str = None
+) -> None:
+    """Update production status - called by RAGNAROK pipeline."""
+    status = PRODUCTION_STATUSES.get(session_id)
+    if not status:
+        return
+    if step != status.current_step:
+        status.advance_step(step)
+    status.step_progress = progress
+    if video_url:
+        status.video_url = video_url
+    if error:
+        status.error_message = error
+        status.current_step = ProductionStep.ERROR
 
 
 # =============================================================================
@@ -851,6 +989,261 @@ def user_confirmed_brief(text: str) -> bool:
         return True
 
     return False
+
+
+# =============================================================================
+# PHASE 2: FAST-TRACK MODE - 4-question quick brief for hurried users
+# =============================================================================
+
+FAST_TRACK_SYSTEM_PROMPT = """You are Alex, a creative director at a video agency.
+
+The user is in a HURRY. Use FAST-TRACK MODE:
+
+RULES:
+- Ask for ALL 4 essentials in ONE message
+- Be ultra-brief (1 sentence intro max)
+- No small talk, no explanations
+- Accept partial answers and fill gaps with reasonable defaults
+
+FAST-TRACK QUESTIONS (ask all at once):
+1. Business name?
+2. What do you sell?
+3. Who's buying?
+4. What should viewers do after watching?
+
+RESPONSE FORMAT:
+"Quick version—hit me with:
+1. Business name
+2. What you sell
+3. Who you're targeting
+4. What action you want (call, buy, sign up, etc.)"
+
+When they answer, extract what you can and confirm:
+"Got it: [business] selling [product] to [audience], goal is [action]. Sound right?"
+
+If they confirm: "Perfect. Starting your video now."
+
+JSON response format:
+{"response": "your message", "extracted_data": {}, "is_complete": false, "mode": "fast_track"}
+"""
+
+FAST_TRACK_FIELDS = ["business_name", "product", "audience", "cta"]
+
+
+def should_trigger_fast_track(sentiment: dict, session: BriefSessionState) -> bool:
+    """Determine if we should switch to fast-track mode."""
+    # Explicit hurry signals
+    if sentiment.get("hurried"):
+        return True
+
+    # Frustration + low progress = offer fast track
+    if sentiment.get("frustrated") and session.completion_percentage() < 30:
+        return True
+
+    # Multiple one-word answers in a row
+    if len(session.sentiment_history) >= 3:
+        recent = session.sentiment_history[-3:]
+        if all(s.get("one_word") for s in recent):
+            return True
+
+    return False
+
+
+def get_fast_track_prompt() -> str:
+    """Get the fast-track system prompt."""
+    return FAST_TRACK_SYSTEM_PROMPT
+
+
+def is_fast_track_complete(session: BriefSessionState) -> bool:
+    """Check if fast-track minimum fields are gathered."""
+    return all(session.fields.get(f) for f in FAST_TRACK_FIELDS)
+
+
+# =============================================================================
+# PHASE 2: ESCALATION LOGIC - When to route to human support
+# =============================================================================
+
+@dataclass
+class EscalationDecision:
+    """Result of escalation check."""
+    should_escalate: bool
+    reason: Optional[str] = None
+    priority: Literal["low", "medium", "high", "urgent"] = "medium"
+    suggested_response: Optional[str] = None
+
+
+def check_escalation_needed(
+    session: BriefSessionState,
+    sentiment: dict,
+    user_message: str,
+    production_status: Optional[ProductionStatus] = None
+) -> EscalationDecision:
+    """
+    Determine if conversation should escalate to human.
+
+    Escalation triggers:
+    1. Explicit request for human
+    2. Pricing asked 4+ times
+    3. Strong negative sentiment after video delivery
+    4. Production failures (2+ retries)
+    5. Refund/cancel language
+    """
+    message_lower = user_message.lower()
+
+    # === EXPLICIT HUMAN REQUEST ===
+    human_request_phrases = [
+        "talk to human", "real person", "speak to someone",
+        "talk to someone", "human please", "representative",
+        "customer service", "support team", "manager"
+    ]
+    if any(phrase in message_lower for phrase in human_request_phrases):
+        return EscalationDecision(
+            should_escalate=True,
+            reason="explicit_human_request",
+            priority="medium",
+            suggested_response=(
+                "Absolutely—let me connect you with our team. "
+                "Someone will reach out within the hour. "
+                "Anything specific you'd like them to know?"
+            )
+        )
+
+    # === PRICING PERSISTENCE ===
+    if session.pricing_ask_count >= 4:
+        return EscalationDecision(
+            should_escalate=True,
+            reason="pricing_persistence",
+            priority="medium",
+            suggested_response=(
+                "I hear you—pricing matters and I can't give you the detail you need. "
+                "Let me get you to someone who can give you exact numbers based on your project."
+            )
+        )
+
+    # === REFUND/CANCEL LANGUAGE ===
+    refund_phrases = [
+        "refund", "money back", "cancel", "disappointed",
+        "waste of money", "want my money", "charge back"
+    ]
+    if any(phrase in message_lower for phrase in refund_phrases):
+        return EscalationDecision(
+            should_escalate=True,
+            reason="refund_request",
+            priority="urgent",
+            suggested_response=(
+                "I'm sorry this isn't meeting your expectations. "
+                "Let me get you to our support team right away—they can help sort this out."
+            )
+        )
+
+    # === STRONG NEGATIVE AFTER DELIVERY ===
+    if production_status and production_status.current_step == ProductionStep.COMPLETE:
+        negative_phrases = [
+            "terrible", "awful", "hate it", "completely wrong",
+            "useless", "not what i asked", "garbage", "trash"
+        ]
+        if any(phrase in message_lower for phrase in negative_phrases):
+            return EscalationDecision(
+                should_escalate=True,
+                reason="negative_result_feedback",
+                priority="high",
+                suggested_response=(
+                    "I'm really sorry this isn't hitting the mark—that's on us. "
+                    "Let me get a human creative director to look at this and give you a proper revision."
+                )
+            )
+
+    # === PRODUCTION FAILURES ===
+    if production_status and production_status.retry_count >= 2:
+        return EscalationDecision(
+            should_escalate=True,
+            reason="production_failures",
+            priority="high",
+            suggested_response=(
+                "We're having some technical issues with your video. "
+                "I'm escalating this to our production team to get it sorted manually. "
+                "Someone will update you shortly."
+            )
+        )
+
+    # === SUSTAINED FRUSTRATION ===
+    if len(session.sentiment_history) >= 5:
+        recent_frustrated = sum(
+            1 for s in session.sentiment_history[-5:]
+            if s.get("frustrated")
+        )
+        if recent_frustrated >= 3:
+            return EscalationDecision(
+                should_escalate=True,
+                reason="sustained_frustration",
+                priority="medium",
+                suggested_response=(
+                    "I can tell this process isn't working for you—I apologize. "
+                    "Would it help to talk to someone directly? "
+                    "I can have our team reach out."
+                )
+            )
+
+    # No escalation needed
+    return EscalationDecision(should_escalate=False)
+
+
+async def handle_escalation(
+    session_id: str,
+    session: BriefSessionState,
+    decision: EscalationDecision,
+    conversation_history: list
+) -> dict:
+    """
+    Handle escalation to human support.
+    In production, this would integrate with your support system.
+    """
+    escalation_data = {
+        "session_id": session_id,
+        "reason": decision.reason,
+        "priority": decision.priority,
+        "brief_state": session.fields,
+        "conversation_history": conversation_history[-10:] if conversation_history else [],
+        "sentiment_history": session.sentiment_history[-5:],
+        "timestamp": time.time(),
+    }
+
+    # Log escalation
+    logger.warning(f"[ESCALATION] Session {session_id} escalated: {decision.reason}")
+
+    # TODO: Integrate with support system (Slack, Zendesk, etc.)
+
+    return {
+        "escalated": True,
+        "reason": decision.reason,
+        "priority": decision.priority,
+        "response": decision.suggested_response,
+    }
+
+
+def generate_status_response(status: ProductionStatus) -> str:
+    """Generate human-friendly status update."""
+    step_messages = {
+        ProductionStep.QUEUED: "Your video is queued up—starting any moment now.",
+        ProductionStep.SCRIPT_GENERATION: "Writing your script right now...",
+        ProductionStep.VISUAL_SELECTION: "Picking the perfect visuals for each scene...",
+        ProductionStep.VOICEOVER_GENERATION: "Recording the voiceover...",
+        ProductionStep.VIDEO_EDITING: "Editing everything together...",
+        ProductionStep.UPLOAD: "Almost there—uploading your video...",
+        ProductionStep.COMPLETE: "Your video is ready!",
+        ProductionStep.ERROR: "We hit a snag. Let me get someone to help.",
+    }
+    base_message = step_messages.get(status.current_step, "Working on it...")
+    remaining = status.estimate_remaining_time()
+
+    if remaining > 0 and status.current_step not in [ProductionStep.COMPLETE, ProductionStep.ERROR]:
+        if remaining < 60:
+            time_str = f"about {remaining} seconds"
+        else:
+            time_str = f"about {remaining // 60} minute{'s' if remaining >= 120 else ''}"
+        return f"{base_message} Should be {time_str} left."
+
+    return base_message
 
 
 # =============================================================================
@@ -1134,12 +1527,15 @@ class CreativeDirectorOrchestrator:
         if brief_session.awaiting_confirmation:
             if user_confirmed_brief(user_message):
                 brief_session.awaiting_confirmation = False
+                # Phase 2: Create production status tracker
+                prod_status = create_production_status(state.session_id, brief_session.fields)
                 return {
-                    "response": "Perfect. Sending this to production now—I'll show you progress as it happens.",
+                    "response": "Perfect. Starting your video now—I'll show you progress as each step completes.",
                     "extracted_data": brief_session.get_filled_fields(),
                     "is_complete": True,
                     "ragnarok_ready": True,
                     "trigger_production": True,
+                    "production_status": prod_status.to_dict(),
                     "progress_percentage": 100,
                     "mode": "production",
                     "next_phase": "complete",
@@ -1152,6 +1548,76 @@ class CreativeDirectorOrchestrator:
         # Detect sentiment for adaptive responses
         sentiment = detect_user_sentiment(user_message)
         brief_session.sentiment_history.append(sentiment)
+
+        # =================================================================
+        # PHASE 2: Escalation Check
+        # =================================================================
+        production_status = get_production_status(state.session_id)
+        escalation = check_escalation_needed(
+            session=brief_session,
+            sentiment=sentiment,
+            user_message=user_message,
+            production_status=production_status
+        )
+
+        if escalation.should_escalate:
+            await handle_escalation(
+                session_id=state.session_id,
+                session=brief_session,
+                decision=escalation,
+                conversation_history=state.conversation_history
+            )
+            return {
+                "response": escalation.suggested_response,
+                "extracted_data": brief_session.get_filled_fields(),
+                "is_complete": False,
+                "escalated": True,
+                "escalation_reason": escalation.reason,
+                "escalation_priority": escalation.priority,
+                "progress_percentage": brief_session.completion_percentage(),
+                "mode": "escalated",
+                "next_phase": state.phase.value,
+                "confidence": 1.0,
+            }
+
+        # =================================================================
+        # PHASE 2: Production Status Query
+        # =================================================================
+        if production_status and production_status.current_step not in [ProductionStep.COMPLETE, ProductionStep.ERROR]:
+            status_queries = ["status", "how long", "progress", "where", "when will", "ready yet"]
+            if any(q in user_message.lower() for q in status_queries):
+                return {
+                    "response": generate_status_response(production_status),
+                    "extracted_data": brief_session.get_filled_fields(),
+                    "is_complete": True,
+                    "production_status": production_status.to_dict(),
+                    "progress_percentage": 100,
+                    "mode": "production_status",
+                    "next_phase": "production",
+                    "confidence": 1.0,
+                }
+
+        # =================================================================
+        # PHASE 2: Fast-Track Mode Trigger
+        # =================================================================
+        if should_trigger_fast_track(sentiment, brief_session) and brief_session.mode != "fast_track":
+            brief_session.mode = "fast_track"
+            return {
+                "response": (
+                    "Got it—let's speed this up. Quick version:\n\n"
+                    "1. Business name?\n"
+                    "2. What do you sell?\n"
+                    "3. Who's buying?\n"
+                    "4. What should viewers do after watching?\n\n"
+                    "Hit me with all four."
+                ),
+                "extracted_data": brief_session.get_filled_fields(),
+                "is_complete": False,
+                "mode": "fast_track",
+                "progress_percentage": brief_session.completion_percentage(),
+                "next_phase": state.phase.value,
+                "confidence": 1.0,
+            }
 
         # Inject few-shot examples on first message only
         processed_message = inject_few_shot_examples(user_message, brief_session.is_first_message)
