@@ -401,7 +401,11 @@ class VideoBriefState:
         return {**profile, **override}
     
     def get_completion_percentage(self) -> float:
-        """Calculate brief completion percentage"""
+        """Calculate brief completion percentage
+
+        Returns 100% (1.0) when all required fields are filled.
+        Optional fields don't affect completion percentage.
+        """
         required_fields = [
             self.business_name,
             self.primary_offering,
@@ -409,18 +413,10 @@ class VideoBriefState:
             self.call_to_action,
             self.tone,
         ]
-        optional_fields = [
-            self.industry,
-            bool(self.unique_selling_points),
-            bool(self.pain_points),
-            self.video_goal,
-            self.contact_email,
-        ]
-        
+
+        # Return completion based only on required fields (0.0 to 1.0)
         required_score = sum(1 for f in required_fields if f) / len(required_fields)
-        optional_score = sum(1 for f in optional_fields if f) / len(optional_fields)
-        
-        return (required_score * 0.7) + (optional_score * 0.3)
+        return required_score
     
     def get_missing_required_fields(self) -> List[str]:
         """Get list of missing required fields"""
