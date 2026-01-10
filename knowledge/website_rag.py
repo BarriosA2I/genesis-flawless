@@ -134,7 +134,12 @@ class WebsiteKnowledgeRAG:
         """
         pages = []
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+
+        async with httpx.AsyncClient(timeout=30.0, headers=headers, follow_redirects=True) as client:
             for url in self.TARGET_URLS:
                 try:
                     response = await client.get(url)
@@ -351,12 +356,20 @@ class WebsiteKnowledgeRAG:
         """Get collection statistics."""
         try:
             info = self.qdrant.get_collection(self.COLLECTION_NAME)
-            return {
+            # Handle different Qdrant client versions
+            stats = {
                 "collection": self.COLLECTION_NAME,
-                "vectors_count": info.vectors_count,
-                "points_count": info.points_count,
-                "status": info.status
+                "status": str(info.status) if hasattr(info, 'status') else "unknown"
             }
+            # Try different attribute names for vector count
+            if hasattr(info, 'vectors_count'):
+                stats["vectors_count"] = info.vectors_count
+            elif hasattr(info, 'indexed_vectors_count'):
+                stats["vectors_count"] = info.indexed_vectors_count
+            # Points count
+            if hasattr(info, 'points_count'):
+                stats["points_count"] = info.points_count
+            return stats
         except Exception as e:
             return {"error": str(e)}
 
