@@ -1570,7 +1570,9 @@ class CreativeDirectorOrchestrator:
                     "state": state.to_dict(),
                     "is_complete": ragnarok_ready,  # Only truly complete when confirmed
                     "completion_percentage": state.get_completion_percentage(),
+                    "progress_percentage": int(state.get_completion_percentage() * 100),  # Convert 0-1 to 0-100 int
                     "missing_fields": missing_fields,
+                    "trigger_production": ragnarok_ready,  # Same as ragnarok_ready for API consistency
                     "user_confirmed": state.user_confirmed,
                     "ragnarok_ready": ragnarok_ready,
                     "ragnarok_input": state.to_ragnarok_input() if ragnarok_ready else None,
@@ -1618,7 +1620,9 @@ class CreativeDirectorOrchestrator:
                     "state": state.to_dict(),
                     "is_complete": False,
                     "completion_percentage": state.get_completion_percentage(),
+                    "progress_percentage": int(state.get_completion_percentage() * 100),  # Convert 0-1 to 0-100 int
                     "missing_fields": state.get_missing_required_fields(),
+                    "trigger_production": False,  # Always False on error path
                     "ragnarok_ready": False,
                     "latency_ms": latency_ms,
                     "error_type": error_type,
