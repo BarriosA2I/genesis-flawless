@@ -2281,8 +2281,10 @@ Current brief state:
                 parsed["mode"] = "intake"
                 parsed["sentiment"] = sentiment
                 parsed["escalation"] = escalation_triggered
+                # CRITICAL FIX: Include actual extracted data so _apply_extraction can update VideoBriefState
+                parsed["extracted_data"] = extracted or {}
 
-                logger.info(f"[BriefProgress] Session {state.session_id}: {progress_info['progress_percentage']}% complete, missing: {progress_info['missing_fields']}")
+                logger.info(f"[BriefProgress] Session {state.session_id}: {progress_info['progress_percentage']}% complete, missing: {progress_info['missing_fields']}, extracted: {list(extracted.keys()) if extracted else []}")
 
                 return parsed
 
@@ -2293,10 +2295,12 @@ Current brief state:
 
                 # Use new progress calculation method even in error case
                 progress_info = self._calculate_brief_progress(brief_session)
+                # Get extracted data from the fallback extraction (if any)
+                extracted_data = extracted if 'extracted' in locals() else parsed.get("extracted_data", {})
 
                 return {
                     "response": response_text,
-                    "extracted_data": parsed.get("extracted_data", {}),
+                    "extracted_data": extracted_data,
                     "next_phase": state.phase.value,
                     "confidence": 0.5,
                     "is_complete": progress_info["is_complete"],
