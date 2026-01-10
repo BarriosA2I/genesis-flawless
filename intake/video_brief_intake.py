@@ -1576,6 +1576,156 @@ class CreativeDirectorOrchestrator:
             self.sessions[session_id] = state
             logger.info(f"Created new session: {session_id}")
         return self.sessions[session_id]
+
+    def _update_session_state_from_extraction(self, session_id: str, extracted_data: dict) -> BriefSessionState:
+        """
+        Update BriefSessionState with extracted brief fields.
+        Maps various field name variations to canonical field names.
+
+        Args:
+            session_id: Session identifier
+            extracted_data: Dictionary of extracted fields from Claude's response
+
+        Returns:
+            Updated BriefSessionState instance
+        """
+        if not extracted_data:
+            return get_or_create_brief_session(session_id)
+
+        brief_session = get_or_create_brief_session(session_id)
+
+        # Comprehensive field mapping - handles variations in field names
+        field_mapping = {
+            # Business name variations
+            "business_name": "business_name",
+            "company_name": "business_name",
+            "brand_name": "business_name",
+            "name": "business_name",
+            "company": "business_name",
+
+            # Product/offering variations
+            "primary_offering": "product",
+            "product": "product",
+            "service": "product",
+            "offering": "product",
+            "what_you_sell": "product",
+            "products": "product",
+            "services": "product",
+
+            # Audience variations
+            "target_demographic": "audience",
+            "target_audience": "audience",
+            "audience": "audience",
+            "who_is_buying": "audience",
+            "customer": "audience",
+            "customers": "audience",
+            "demographic": "audience",
+
+            # CTA variations
+            "call_to_action": "cta",
+            "cta": "cta",
+            "action": "cta",
+            "desired_action": "cta",
+
+            # Tone variations
+            "tone": "tone",
+            "brand_tone": "tone",
+            "style": "tone",
+            "mood": "tone",
+
+            # Optional fields
+            "key_message": "key_message",
+            "message": "key_message",
+            "platform": "platform",
+            "platforms": "platform",
+        }
+
+        # Apply extracted fields to session state
+        for extracted_key, value in extracted_data.items():
+            if not value:
+                continue
+
+            canonical_field = field_mapping.get(extracted_key.lower())
+            if canonical_field:
+                # Only update if field is currently empty or None
+                if not brief_session.fields.get(canonical_field):
+                    brief_session.update_field(canonical_field, str(value))
+                    logger.info(f"[BriefState] Updated {canonical_field} = {str(value)[:50]}")
+
+        # Store updated session
+        BRIEF_SESSIONS[session_id] = brief_session
+
+        return brief_session
+
+    def _calculate_brief_progress(self, brief_session: BriefSessionState) -> dict:
+        """
+        Calculate brief completion progress from actual filled fields.
+
+        Args:
+            brief_session: Current brief session state
+
+        Returns:
+            Dictionary with progress metrics:
+            - progress_percentage: 0-100 completion percentage
+            - missing_fields: List of unfilled required fields
+            - is_complete: Boolean indicating all required fields are filled
+            - trigger_production: Boolean indicating readiness for production
+        """
+        required_fields = ["business_name", "product", "audience", "cta", "tone"]
+
+        # Count filled required fields
+        filled_count = sum(1 for field in required_fields if brief_session.fields.get(field))
+        total_count = len(required_fields)
+
+        # Calculate percentage
+        progress = int((filled_count / total_count) * 100) if total_count > 0 else 0
+
+        # Identify missing fields
+        missing = [field for field in required_fields if not brief_session.fields.get(field)]
+
+        # Check completion
+        is_complete = len(missing) == 0
+
+        return {
+            "progress_percentage": progress,
+            "missing_fields": missing,
+            "is_complete": is_complete,
+            "trigger_production": is_complete,  # Only trigger when complete
+        }
+
+    def _check_escalation_triggered(self, response_text: str, sentiment: dict) -> bool:
+        """
+        Check if escalation to human support should be triggered.
+
+        Args:
+            response_text: AI's response text
+            sentiment: Sentiment analysis dictionary
+
+        Returns:
+            Boolean indicating if escalation should occur
+        """
+        # Explicit escalation phrases in AI response
+        escalation_phrases = [
+            "connect you with",
+            "team member will",
+            "human support",
+            "speak with someone",
+            "get you to support",
+            "reach out",
+            "talk to someone",
+            "escalating this",
+        ]
+
+        text_lower = response_text.lower()
+        explicit_escalation = any(phrase in text_lower for phrase in escalation_phrases)
+
+        # Sentiment-based escalation (frustrated + escalation requested)
+        sentiment_escalation = (
+            sentiment.get("frustrated", False) and
+            sentiment.get("escalation_requested", False)
+        )
+
+        return explicit_escalation or sentiment_escalation
     
     def _pre_extract(self, message: str, state: VideoBriefState):
         """Pre-extract structured data using regex patterns"""
@@ -1912,47 +2062,41 @@ Current brief state:
                     parsed["is_complete"] = False
 
                 # =================================================================
-                # PHASE 1: Sync to BriefSessionState & check completion
+                # PHASE 2 FIX: Use new methods for session state update & progress
                 # =================================================================
                 extracted = parsed.get("extracted_data", {})
 
-                # Map extracted fields to BriefSessionState
-                field_mapping = {
-                    "business_name": "business_name",
-                    "company_name": "business_name",
-                    "name": "business_name",
-                    "product": "product",
-                    "service": "product",
-                    "offering": "product",
-                    "primary_offering": "product",
-                    "audience": "audience",
-                    "target_audience": "audience",
-                    "target_demographic": "audience",
-                    "tone": "tone",
-                    "brand_tone": "tone",
-                    "key_message": "key_message",
-                    "message": "key_message",
-                    "cta": "cta",
-                    "call_to_action": "cta",
-                    "platform": "platform",
-                }
+                # Update session state from extracted data using new method
+                brief_session = self._update_session_state_from_extraction(
+                    session_id=state.session_id,
+                    extracted_data=extracted
+                )
 
-                for key, value in extracted.items():
-                    if value and key.lower() in field_mapping:
-                        brief_session.update_field(field_mapping[key.lower()], str(value))
+                # Calculate accurate progress from filled fields
+                progress_info = self._calculate_brief_progress(brief_session)
+
+                # Check for escalation triggers
+                escalation_triggered = self._check_escalation_triggered(
+                    response_text=parsed.get("response", ""),
+                    sentiment=sentiment
+                )
 
                 # Check if brief is complete → trigger confirmation flow
                 if brief_session.is_complete() and not brief_session.awaiting_confirmation:
                     brief_session.awaiting_confirmation = True
                     parsed["response"] = brief_session.generate_summary()
 
-                # Add Phase 1 fields to response
-                parsed["progress_percentage"] = brief_session.completion_percentage()
-                parsed["missing_fields"] = brief_session.get_missing_fields()
-                parsed["trigger_production"] = False
-                parsed["ragnarok_ready"] = brief_session.is_complete()
+                # Build response with accurate progress from new methods
+                parsed["progress_percentage"] = progress_info["progress_percentage"]
+                parsed["missing_fields"] = progress_info["missing_fields"]
+                parsed["is_complete"] = progress_info["is_complete"]
+                parsed["trigger_production"] = progress_info["trigger_production"]
+                parsed["ragnarok_ready"] = progress_info["is_complete"]
                 parsed["mode"] = "intake"
                 parsed["sentiment"] = sentiment
+                parsed["escalation"] = escalation_triggered
+
+                logger.info(f"[BriefProgress] Session {state.session_id}: {progress_info['progress_percentage']}% complete, missing: {progress_info['missing_fields']}")
 
                 return parsed
 
@@ -1961,16 +2105,20 @@ Current brief state:
                 logger.warning(f"[RESPONSE_PROCESS] Processing error: {e}, using parsed response")
                 response_text = parsed.get("response", "I understand. Let me continue with the next question.")
 
+                # Use new progress calculation method even in error case
+                progress_info = self._calculate_brief_progress(brief_session)
+
                 return {
                     "response": response_text,
                     "extracted_data": parsed.get("extracted_data", {}),
                     "next_phase": state.phase.value,
                     "confidence": 0.5,
-                    "is_complete": False,
-                    "progress_percentage": brief_session.completion_percentage(),
-                    "missing_fields": brief_session.get_missing_fields(),
-                    "trigger_production": False,
+                    "is_complete": progress_info["is_complete"],
+                    "progress_percentage": progress_info["progress_percentage"],
+                    "missing_fields": progress_info["missing_fields"],
+                    "trigger_production": progress_info["trigger_production"],
                     "mode": "intake",
+                    "escalation": False,
                 }
 
         except Exception as e:
@@ -2008,18 +2156,23 @@ Current brief state:
             if RESILIENCE_ENABLED and GracefulDegrader:
                 emergency = GracefulDegrader.get_emergency_response(user_message)
                 logger.warning(f"[CHAT_ERROR] Using emergency fallback: {emergency['category']}")
+
+                # Use new progress calculation method
+                progress_info = self._calculate_brief_progress(brief_session)
+
                 return {
                     "response": emergency["response"],
                     "extracted_data": {},
                     "next_phase": state.phase.value,
                     "confidence": 0.0,
-                    "is_complete": False,
+                    "is_complete": progress_info["is_complete"],
                     "quality_tier": emergency["quality_tier"],
                     "error_type": error_type,
-                    "progress_percentage": brief_session.completion_percentage(),
-                    "missing_fields": brief_session.get_missing_fields(),
-                    "trigger_production": False,
+                    "progress_percentage": progress_info["progress_percentage"],
+                    "missing_fields": progress_info["missing_fields"],
+                    "trigger_production": progress_info["trigger_production"],
                     "mode": "error",
+                    "escalation": False,
                 }
 
             raise
