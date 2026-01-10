@@ -546,8 +546,37 @@ When you have all info, confirm briefly: "Got everything. Ready to bring this to
 Required fields: business_name, primary_offering, target_demographic, call_to_action, tone
 Only set is_complete=true when user confirms with "yes", "confirm", "looks good", etc.
 
+=== DATA EXTRACTION RULES ===
+You MUST extract information from EVERY user message into extracted_data.
+
+Field mapping:
+- business_name: Company name, brand name, "I run X", "my company X"
+- primary_offering: What they sell, service, product, "we make X", "we sell X"
+- target_demographic: Target customers, audience, "for X", "targeting X"
+- call_to_action: What viewers should do, "sign up", "buy now", "learn more"
+- tone: Professional, friendly, energetic, casual, etc.
+
+Example extractions:
+User: "I'm Gary from TechStart" → extracted_data: {"business_name": "TechStart"}
+User: "We sell SaaS tools for startups" → extracted_data: {"primary_offering": "SaaS tools for startups"}
+User: "1. TechStart 2. SaaS 3. Founders 4. Sign up" → extracted_data: {"business_name": "TechStart", "primary_offering": "SaaS", "target_demographic": "Founders", "call_to_action": "Sign up"}
+
+NEVER leave extracted_data empty if the user provided ANY relevant information.
+
 JSON response format:
-{"response": "your short message", "extracted_data": {}, "next_phase": "phase", "confidence": 0.8, "is_complete": false}
+{
+  "response": "your short 1-2 sentence message",
+  "extracted_data": {
+    "business_name": "extracted business name or null",
+    "primary_offering": "extracted product/service or null",
+    "target_demographic": "extracted target audience or null",
+    "call_to_action": "extracted CTA or null",
+    "tone": "extracted tone or null"
+  },
+  "next_phase": "phase",
+  "confidence": 0.8,
+  "is_complete": false
+}
 """
 
 
@@ -558,18 +587,23 @@ JSON response format:
 FEW_SHOT_EXAMPLES = """
 <examples>
   <example>
-    <user>We're a SaaS company for e-commerce marketers</user>
-    <assistant>Got it—so you're helping e-commerce marketers. What's the core problem you're solving for them?</assistant>
+    <user>I run a fitness studio called FitLife</user>
+    <assistant>{"response": "Nice! Who's your ideal customer?", "extracted_data": {"business_name": "FitLife", "primary_offering": "fitness studio"}}</assistant>
   </example>
 
   <example>
-    <user>Our tone should be fun and energetic, like Slack</user>
-    <assistant>Nice—playful and approachable. What emotion do you want viewers to feel after watching?</assistant>
+    <user>We target busy professionals who want quick workouts</user>
+    <assistant>{"response": "Got it. What should viewers do after watching?", "extracted_data": {"target_demographic": "busy professionals who want quick workouts"}}</assistant>
   </example>
 
   <example>
-    <user>Marketing managers</user>
-    <assistant>Okay so marketing managers. More like solo freelancers or enterprise teams?</assistant>
+    <user>Book a free class</user>
+    <assistant>{"response": "Perfect. What tone—energetic, professional, friendly?", "extracted_data": {"call_to_action": "Book a free class"}}</assistant>
+  </example>
+
+  <example>
+    <user>Professional and motivating</user>
+    <assistant>{"response": "Got everything. Ready to bring this to life?", "extracted_data": {"tone": "professional"}}</assistant>
   </example>
 </examples>
 """
@@ -1023,8 +1057,30 @@ When they answer, extract what you can and confirm:
 
 If they confirm: "Perfect. Starting your video now."
 
+=== EXTRACTION INSTRUCTIONS ===
+CRITICAL: Extract ALL information from the user's message into extracted_data.
+If user provides "1. TechStart 2. SaaS tools 3. Founders 4. Sign up", extract:
+{
+  "business_name": "TechStart",
+  "primary_offering": "SaaS tools",
+  "target_demographic": "Founders",
+  "call_to_action": "Sign up"
+}
+
+NEVER leave extracted_data empty if ANY information was provided.
+
 JSON response format:
-{"response": "your message", "extracted_data": {}, "is_complete": false, "mode": "fast_track"}
+{
+  "response": "your brief message",
+  "extracted_data": {
+    "business_name": "extracted value or null",
+    "primary_offering": "extracted value or null",
+    "target_demographic": "extracted value or null",
+    "call_to_action": "extracted value or null"
+  },
+  "is_complete": false,
+  "mode": "fast_track"
+}
 """
 
 FAST_TRACK_FIELDS = ["business_name", "product", "audience", "cta"]
