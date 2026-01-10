@@ -435,6 +435,19 @@ class VideoBriefState:
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize state to dictionary"""
+        # Build brief_data dict with all extracted fields for frontend metadata
+        brief_data = {}
+        if self.business_name:
+            brief_data["business_name"] = self.business_name
+        if self.primary_offering:
+            brief_data["primary_offering"] = self.primary_offering
+        if self.target_demographic:
+            brief_data["target_demographic"] = self.target_demographic
+        if self.call_to_action:
+            brief_data["call_to_action"] = self.call_to_action
+        if self.tone:
+            brief_data["tone"] = self.tone.value if hasattr(self.tone, 'value') else self.tone
+
         return {
             "session_id": self.session_id,
             "created_at": self.created_at,
@@ -470,6 +483,7 @@ class VideoBriefState:
             "turns_count": self.turns_count,
             "extraction_confidence": self.extraction_confidence,
             "completion_percentage": self.get_completion_percentage(),
+            "brief_data": brief_data,  # For frontend metadata.extracted_fields
         }
     
     @classmethod
