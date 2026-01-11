@@ -163,6 +163,10 @@ class VideoBriefState(TypedDict):
     production_cost: Optional[float]      # Estimated cost in USD
     production_started_at: Optional[str]  # ISO timestamp
 
+    # Asset Upload (NEW)
+    uploaded_assets: Optional[List[dict]]  # List of {type, url, name}
+    assets_reviewed: bool                  # Gate flag to ensure we asked
+
 
 # ============================================================================
 # 2. EXTRACTION SCHEMA - Replaces Regex
@@ -237,6 +241,47 @@ INTAKE_PROMPT = """You are a Creative Director gathering information for a video
 Acknowledge their input → Ask for next missing field"""
 
 
+# ============================================================================
+# ASSET DETECTION HELPER
+# ============================================================================
+
+def _detect_assets(message: str) -> List[dict]:
+    """
+    Detect URLs and file references in message.
+    Returns list of {type, url, name} dicts.
+    """
+    import re
+    assets = []
+
+    # 1. Regex for URLs (images/docs)
+    url_pattern = r'https?://[^\s<>"]+|www\.[^\s<>"]+'
+    urls = re.findall(url_pattern, message)
+
+    for url in urls:
+        # Simple heuristic for file type
+        filename = url.split('/')[-1].split('?')[0]
+        lower_name = filename.lower()
+
+        if any(ext in lower_name for ext in ['.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif']):
+            asset_type = "image"
+        elif any(ext in lower_name for ext in ['.pdf', '.doc', '.docx', '.txt']):
+            asset_type = "document"
+        else:
+            asset_type = "link"
+
+        assets.append({"type": asset_type, "url": url, "name": filename})
+
+    # 2. Check for "upload" intent keywords if no URL found
+    # This allows the AI to acknowledge the intent even if the file processing
+    # happened in a middleware layer we can't see here.
+    if not assets and any(w in message.lower() for w in ["uploaded", "attached", "sending file", "here is the logo", "logo attached"]):
+        # We assume the frontend might have handled the upload and sent a message.
+        # In a full implementation, we'd check state["incoming_files"]
+        pass
+
+    return assets
+
+
 async def intake_node(state: VideoBriefState) -> dict:
     """
     Schema-First Extraction: Replaces 2800 lines of regex with structured LLM output.
@@ -289,26 +334,43 @@ Extract ONLY what user explicitly stated. Do not guess."""
             logger.info(f"[IntakeAgent] Set {field} = {value}")
 
     # =========================================================================
+    # STEP 2.5: Asset Detection (NEW)
+    # =========================================================================
+    new_assets = _detect_assets(latest_msg)
+
+    if new_assets:
+        current_assets = new_state.get("uploaded_assets") or []
+        # Avoid duplicates
+        existing_urls = {a['url'] for a in current_assets}
+        for asset in new_assets:
+            if asset['url'] not in existing_urls:
+                current_assets.append(asset)
+
+        new_state["uploaded_assets"] = current_assets
+        logger.info(f"[IntakeAgent] Assets detected: {len(new_assets)}")
+
+    # =========================================================================
     # STEP 3: Calculate Missing (Deterministic)
     # =========================================================================
     required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
     missing = [f for f in required if not new_state.get(f)]
 
     new_state["missing_fields"] = missing
-    new_state["is_complete"] = len(missing) == 0
-
-    logger.info(f"[IntakeAgent] Missing: {missing}, Complete: {new_state['is_complete']}")
 
     # =========================================================================
-    # STEP 4: Generate Response
+    # STEP 4: Generate Response (UPGRADED WITH ASSET WORKFLOW)
     # =========================================================================
-    if new_state["is_complete"]:
-        response_text = (
-            f"Excellent! I have everything I need for {new_state['business_name']}. "
-            f"Let me connect with our research team to analyze your market."
-        )
-        new_state["current_phase"] = "research"
-    else:
+    # LOGIC GATE:
+    # A. Missing Fields → Ask for Fields
+    # B. Fields Done AND Assets NOT Reviewed → Ask for Assets
+    # C. Fields Done AND Assets Reviewed → Complete
+
+    response_text = ""
+
+    if missing:
+        # CASE A: Still gathering basic info
+        new_state["is_complete"] = False
+
         # Build context-aware prompt
         prompt = INTAKE_PROMPT.format(
             business_name=new_state.get("business_name") or "[not yet provided]",
@@ -328,6 +390,49 @@ Extract ONLY what user explicitly stated. Do not guess."""
 
         response = await llm.ainvoke(messages)
         response_text = response.content
+
+    elif not new_state.get("assets_reviewed"):
+        # CASE B: Fields done, now ask for assets (The "Missing Step")
+        new_state["is_complete"] = False
+        new_state["assets_reviewed"] = True  # Mark as asked so we don't loop forever
+
+        if new_assets:
+            # They just uploaded it spontaneously!
+            response_text = (
+                "✅ **Assets Received!** I've added them to your brief.\n\n"
+                "I have everything I need now. Starting market research..."
+            )
+            new_state["is_complete"] = True
+            new_state["current_phase"] = "research"
+        else:
+            # We need to ask proactively
+            response_text = (
+                f"Perfect! I have all the details for **{new_state.get('business_name', 'your business')}**.\n\n"
+                "**One last thing:** Do you have a **logo** or **product images** you'd like to include?\n\n"
+                "Please upload them now or paste a link. If not, just say 'no' and we'll start research."
+            )
+
+    else:
+        # CASE C: All done
+        new_state["is_complete"] = True
+
+        if new_assets:
+            response_text = (
+                "✅ **Got it!** Assets received. Sending this to our research team..."
+            )
+        elif "no" in latest_msg.lower() or "don't" in latest_msg.lower():
+            response_text = (
+                "Understood. We'll proceed without specific assets. Starting research..."
+            )
+        else:
+            # Catch-all if they said something else after being asked
+            response_text = (
+                f"Great! Moving to research phase for {new_state.get('business_name', 'your business')}..."
+            )
+
+        new_state["current_phase"] = "research"
+
+    logger.info(f"[IntakeAgent] Missing: {missing}, Assets Reviewed: {new_state.get('assets_reviewed')}, Complete: {new_state.get('is_complete')}")
 
     # Add to history
     new_state["messages"] = list(state["messages"]) + [
@@ -1152,6 +1257,7 @@ async def production_node(state: VideoBriefState) -> dict:
         "call_to_action": call_to_action,
         "tone": tone,
         "research_data": research_findings,
+        "assets": state.get("uploaded_assets", []),  # Pass assets to RAGNAROK
         "goals": ["brand_awareness", "lead_generation"]
     }
 
@@ -1376,6 +1482,9 @@ class CreativeDirectorV2:
             "video_urls": None,
             "production_cost": None,
             "production_started_at": None,
+            # Asset Upload (NEW)
+            "uploaded_assets": [],
+            "assets_reviewed": False,
             "messages": [],
             "missing_fields": [
                 "business_name", "primary_offering",
