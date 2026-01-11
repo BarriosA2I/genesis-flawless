@@ -37,6 +37,54 @@ logger = logging.getLogger("creative_director_v2")
 TRINITY_URL = "https://barrios-genesis-flawless.onrender.com/api/genesis/research"
 TRINITY_TIMEOUT = 60.0  # Trinity research can take time
 
+# Script Writer Prompt
+SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for video advertisements.
+
+## VIDEO BRIEF
+- Business: {business_name}
+- Product/Service: {primary_offering}
+- Target Audience: {target_demographic}
+- Call to Action: {call_to_action}
+- Desired Tone: {tone}
+
+## MARKET RESEARCH INSIGHTS
+{research_summary}
+
+## YOUR TASK
+Create a compelling 30-second video commercial script that:
+1. Opens with a HOOK that stops the scroll (0-3 seconds)
+2. Presents the PROBLEM the audience faces (3-8 seconds)
+3. Introduces the SOLUTION - the product/service (8-18 seconds)
+4. Provides PROOF/credibility (18-25 seconds)
+5. Ends with a clear CTA (25-30 seconds)
+
+## OUTPUT FORMAT
+Return a JSON object with this exact structure:
+{{
+    "title": "Commercial title",
+    "duration_seconds": 30,
+    "target_platform": "social_media",
+    "scenes": [
+        {{
+            "scene_number": 1,
+            "timestamp": "0:00-0:03",
+            "type": "hook",
+            "visual_description": "What viewers SEE",
+            "narration": "What viewers HEAR (voiceover text)",
+            "text_overlay": "Any on-screen text",
+            "music_mood": "Music/sound direction"
+        }}
+    ],
+    "voiceover_full_script": "Complete narration script for voice recording",
+    "visual_style_notes": "Overall visual direction",
+    "key_messaging": ["Main message 1", "Main message 2"],
+    "estimated_production_complexity": "low|medium|high"
+}}
+
+Create exactly 5 scenes covering: hook, problem, solution, proof, cta.
+Make it emotionally compelling and specific to {business_name}.
+"""
+
 
 # ============================================================================
 # 1. SHARED STATE - Single Source of Truth
@@ -70,6 +118,9 @@ class VideoBriefState(TypedDict):
 
     # Research findings from Trinity
     research_findings: Optional[dict]
+
+    # Script draft from Script Writer
+    script_draft: Optional[dict]
 
 
 # ============================================================================
@@ -454,6 +505,218 @@ async def researcher_node(state: VideoBriefState) -> dict:
     return new_state
 
 
+def _build_research_summary(research_findings: dict) -> str:
+    """
+    Convert Trinity research findings into a summary for the script prompt.
+    """
+    if not research_findings:
+        return "No market research available. Create a compelling general commercial."
+
+    # Handle different Trinity response structures
+    summary_parts = []
+
+    # Check for pipeline status (async research)
+    if research_findings.get("status") == "started":
+        return "Market research is being gathered. Create a compelling commercial based on the brief."
+
+    # Extract key insights
+    if "market_analysis" in research_findings:
+        market = research_findings["market_analysis"]
+        if isinstance(market, dict):
+            if market.get("key_insight"):
+                summary_parts.append(f"Key Insight: {market['key_insight']}")
+            if market.get("opportunity"):
+                summary_parts.append(f"Opportunity: {market['opportunity']}")
+
+    if "competitors" in research_findings:
+        competitors = research_findings["competitors"]
+        if isinstance(competitors, list) and competitors:
+            comp_info = []
+            for c in competitors[:3]:
+                if isinstance(c, dict):
+                    name = c.get("name", "Unknown")
+                    weakness = c.get("weakness", c.get("gap", ""))
+                    if weakness:
+                        comp_info.append(f"{name} (gap: {weakness})")
+                    else:
+                        comp_info.append(name)
+            if comp_info:
+                summary_parts.append(f"Competitors: {', '.join(comp_info)}")
+
+    if "audience_insights" in research_findings:
+        audience = research_findings["audience_insights"]
+        if isinstance(audience, dict):
+            if audience.get("pain_points"):
+                summary_parts.append(f"Audience Pain Points: {audience['pain_points']}")
+            if audience.get("desires"):
+                summary_parts.append(f"Audience Desires: {audience['desires']}")
+
+    if "positioning" in research_findings:
+        summary_parts.append(f"Recommended Positioning: {research_findings['positioning']}")
+
+    if "trends" in research_findings:
+        trends = research_findings["trends"]
+        if isinstance(trends, list) and trends:
+            trend_names = [t if isinstance(t, str) else t.get("name", "") for t in trends[:3]]
+            summary_parts.append(f"Current Trends: {', '.join(filter(None, trend_names))}")
+
+    if summary_parts:
+        return "\n".join(summary_parts)
+
+    # Fallback for unknown structure
+    return f"Research data available: {list(research_findings.keys())}"
+
+
+def _parse_script_json(response_text: str) -> Optional[dict]:
+    """
+    Parse JSON from LLM response, handling common formatting issues.
+    """
+    import re
+
+    # Try direct parse first
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try to extract JSON from markdown code block
+    json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response_text)
+    if json_match:
+        try:
+            return json.loads(json_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Try to find JSON object in response
+    json_match = re.search(r'\{[\s\S]*\}', response_text)
+    if json_match:
+        try:
+            return json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _format_script_preview(script_data: dict) -> str:
+    """
+    Format script data into a readable preview for the user.
+    """
+    preview_parts = []
+
+    scenes = script_data.get("scenes", [])
+    for scene in scenes:
+        scene_num = scene.get("scene_number", "?")
+        timestamp = scene.get("timestamp", "")
+        scene_type = scene.get("type", "").upper()
+        visual = scene.get("visual_description", "")
+        narration = scene.get("narration", "")
+
+        preview_parts.append(
+            f"**Scene {scene_num}** ({timestamp}) - {scene_type}\n"
+            f"📹 *{visual}*\n"
+            f"🎙️ \"{narration}\""
+        )
+
+    if preview_parts:
+        return "\n\n".join(preview_parts)
+
+    # Fallback to voiceover script
+    voiceover = script_data.get("voiceover_full_script", "")
+    if voiceover:
+        return f"**Voiceover Script:**\n\n\"{voiceover}\""
+
+    return "Script generated - see details below."
+
+
+async def script_writer_node(state: VideoBriefState) -> dict:
+    """
+    Script Writer Agent - Generates commercial scripts using brief + research.
+
+    Takes:
+    - Video brief (5 core fields)
+    - Trinity research findings
+
+    Produces:
+    - Structured 30-second commercial script
+    - 5 scenes: hook, problem, solution, proof, cta
+    - Complete voiceover script
+    - Visual direction notes
+    """
+    logger.info(f"[ScriptWriterAgent] Generating script for {state.get('business_name', 'unknown')}")
+
+    new_state = dict(state)
+    new_state["current_phase"] = "scripting"
+
+    # Build research summary for the prompt
+    research_summary = _build_research_summary(state.get("research_findings", {}))
+
+    # Build the prompt
+    prompt = SCRIPT_WRITER_PROMPT.format(
+        business_name=state.get("business_name", "the business"),
+        primary_offering=state.get("primary_offering", "their product/service"),
+        target_demographic=state.get("target_demographic", "their target audience"),
+        call_to_action=state.get("call_to_action", "take action"),
+        tone=state.get("tone", "professional"),
+        research_summary=research_summary
+    )
+
+    try:
+        llm = get_llm()
+
+        # Request JSON output
+        response = await llm.ainvoke([
+            {"role": "system", "content": "You are a commercial scriptwriter. Always respond with valid JSON only, no markdown."},
+            {"role": "user", "content": prompt}
+        ])
+
+        response_text = response.content
+
+        # Parse JSON from response
+        script_data = _parse_script_json(response_text)
+
+        if script_data:
+            logger.info(f"[ScriptWriterAgent] Script generated: {script_data.get('title', 'Untitled')}")
+            new_state["script_draft"] = script_data
+
+            # Build user-friendly response
+            script_preview = _format_script_preview(script_data)
+            response_message = (
+                f"✍️ **Script Draft Complete!**\n\n"
+                f"**Title:** {script_data.get('title', 'Untitled Commercial')}\n"
+                f"**Duration:** {script_data.get('duration_seconds', 30)} seconds\n"
+                f"**Scenes:** {len(script_data.get('scenes', []))}\n\n"
+                f"---\n\n"
+                f"{script_preview}\n\n"
+                f"---\n\n"
+                f"Does this script capture what you're looking for? "
+                f"I can revise it or we can move to production."
+            )
+        else:
+            logger.error("[ScriptWriterAgent] Failed to parse script JSON")
+            new_state["script_draft"] = {"status": "parse_error", "raw": response_text[:500]}
+            response_message = (
+                f"I've drafted a script concept for {state.get('business_name', 'your business')}. "
+                f"Let me refine it and get it ready for your review."
+            )
+
+    except Exception as e:
+        logger.error(f"[ScriptWriterAgent] Error: {e}")
+        new_state["script_draft"] = {"status": "error", "message": str(e)}
+        response_message = (
+            f"I'm working on your script for {state.get('business_name', 'your business')}. "
+            f"Give me a moment to finalize it."
+        )
+
+    # Add response to messages
+    new_state["messages"] = list(state.get("messages", [])) + [{
+        "role": "assistant",
+        "content": response_message
+    }]
+
+    return new_state
+
+
 # ============================================================================
 # 6. DETERMINISTIC ROUTING
 # ============================================================================
@@ -471,6 +734,23 @@ def route_after_intake(state: VideoBriefState) -> Literal["intake", "researcher"
     return "intake"
 
 
+def route_after_research(state: VideoBriefState) -> Literal["script_writer", "researcher"]:
+    """
+    Route after research node.
+    If research is complete (or we're continuing without it), go to script writer.
+    """
+    research = state.get("research_findings")
+
+    # If we have research findings (success or graceful failure), proceed to scripting
+    if research is not None:
+        logger.info("[Router] Research complete → script_writer")
+        return "script_writer"
+
+    # This shouldn't happen, but stay in research if no findings
+    logger.info("[Router] No research findings → stay in researcher")
+    return "researcher"
+
+
 # ============================================================================
 # 7. BUILD GRAPH
 # ============================================================================
@@ -482,11 +762,12 @@ def build_graph():
     # Add nodes
     workflow.add_node("intake", intake_node)
     workflow.add_node("researcher", researcher_node)
+    workflow.add_node("script_writer", script_writer_node)
 
     # Entry point
     workflow.add_edge(START, "intake")
 
-    # Conditional routing
+    # Conditional routing after intake
     workflow.add_conditional_edges(
         "intake",
         route_after_intake,
@@ -496,7 +777,18 @@ def build_graph():
         }
     )
 
-    workflow.add_edge("researcher", END)
+    # Conditional routing after research
+    workflow.add_conditional_edges(
+        "researcher",
+        route_after_research,
+        {
+            "researcher": "researcher",      # Retry research
+            "script_writer": "script_writer" # Proceed to scripting
+        }
+    )
+
+    # Script writer goes to END (for now - reviewer node later)
+    workflow.add_edge("script_writer", END)
 
     return workflow.compile()
 
@@ -528,6 +820,7 @@ class CreativeDirectorV2:
             "tone": None,
             "top_rivals": None,
             "research_findings": None,
+            "script_draft": None,
             "messages": [],
             "missing_fields": [
                 "business_name", "primary_offering",
