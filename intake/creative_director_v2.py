@@ -43,6 +43,14 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+# Barrios Product Knowledge
+try:
+    from knowledge.barrios_product import BARRIOS_PRODUCT_KNOWLEDGE
+    PRODUCT_KNOWLEDGE_AVAILABLE = True
+except ImportError:
+    BARRIOS_PRODUCT_KNOWLEDGE = ""
+    PRODUCT_KNOWLEDGE_AVAILABLE = False
+
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("creative_director_v2")
