@@ -1801,7 +1801,29 @@ class CreativeDirectorOrchestrator:
     # Extraction patterns
     EMAIL_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
     PHONE_PATTERN = re.compile(r'[\+]?[(]?[0-9]{1,3}[)]?[-\s\.]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{1,4}[-\s\.]?[0-9]{1,9}')
-    
+
+    # --- PHASE 1 PATCH: FIELD NORMALIZATION ---
+    # This maps frontend display names to backend internal names
+    FIELD_MAPPING = {
+        # UPPERCASE (from progress bar)
+        'PRODUCT': 'primary_offering',
+        'CTA': 'call_to_action',
+        'AUDIENCE': 'target_demographic',
+        'BUSINESS': 'business_name',
+        'TONE': 'tone',
+        # lowercase variants
+        'product': 'primary_offering',
+        'cta': 'call_to_action',
+        'audience': 'target_demographic',
+        'business': 'business_name',
+        'tone': 'tone',
+        # Already correct (map to self)
+        'primary_offering': 'primary_offering',
+        'call_to_action': 'call_to_action',
+        'target_demographic': 'target_demographic',
+        'business_name': 'business_name',
+    }
+
     def __init__(self, anthropic_client=None, model: str = "claude-3-5-sonnet-20241022"):
         self.anthropic = anthropic_client
         self.model = model
@@ -2409,90 +2431,118 @@ class CreativeDirectorOrchestrator:
 
     def force_question_in_response(self, response_text: str, missing_fields: list) -> str:
         """
-        CRITICAL: Post-process AI response to ensure it asks for missing fields.
-        NEVER say "Ready to create" unless ALL 5 fields are complete.
+        PATCHED: Normalizes field names and strips premature 'Ready' messages.
+
+        This fixes the bug where the AI says "Ready to create?" while the
+        progress bar shows fields are still missing.
+
+        Root cause: Progress bar returns "PRODUCT" but code checks for "primary_offering"
         """
         import re
 
-        if not response_text:
-            return "What's the name of your business?"
+        # 1. Normalize frontend field names to backend keys
+        normalized_missing = []
+        for f in missing_fields:
+            if not f:
+                continue
+            # Handle various formats
+            clean_f = str(f).strip()
 
-        # Normalize field names - handle PRODUCT vs primary_offering, etc.
-        normalized_missing = set()
-        for field in missing_fields:
-            f = field.lower().strip()
-            if f in ['product', 'primary_offering', 'offering', 'service']:
-                normalized_missing.add('primary_offering')
-            elif f in ['audience', 'target_demographic', 'demographic', 'target']:
-                normalized_missing.add('target_demographic')
-            elif f in ['cta', 'call_to_action', 'action']:
-                normalized_missing.add('call_to_action')
-            elif f in ['business', 'business_name', 'name', 'company']:
-                normalized_missing.add('business_name')
-            elif f in ['tone', 'vibe', 'style', 'feel']:
-                normalized_missing.add('tone')
+            # Try uppercase lookup first
+            if clean_f.upper() in self.FIELD_MAPPING:
+                normalized_missing.append(self.FIELD_MAPPING[clean_f.upper()])
+            # Then lowercase
+            elif clean_f.lower() in self.FIELD_MAPPING:
+                normalized_missing.append(self.FIELD_MAPPING[clean_f.lower()])
+            # Then exact match
+            elif clean_f in self.FIELD_MAPPING:
+                normalized_missing.append(self.FIELD_MAPPING[clean_f])
+            else:
+                # Last resort: use as-is
+                normalized_missing.append(clean_f.lower())
 
-        # CRITICAL: If fields are missing, REMOVE any "Ready to create" from response
-        if normalized_missing:
-            # Strip all variations of "ready to create"
-            patterns_to_remove = [
-                r"Ready to create your video\??\s*",
-                r"ready to create your video\??\s*",
-                r"Ready to proceed\??\s*",
-                r"ready to proceed\??\s*",
-                r"Ready to get started\??\s*",
-                r"Shall we create your video\??\s*",
-                r"Want to create your video\??\s*",
-                r"Let's create your video\??\s*",
-                r"Just say ['\"]?yes['\"]? to confirm!?\s*",
-                r"Say ['\"]?yes['\"]? when ready\.?\s*",
-            ]
-            for pattern in patterns_to_remove:
-                response_text = re.sub(pattern, '', response_text, flags=re.IGNORECASE)
-            response_text = response_text.strip()
+        # Remove duplicates while preserving order
+        normalized_missing = list(dict.fromkeys(normalized_missing))
 
-        # Question map
+        logger.info(f"[FORCE_Q] Input: {missing_fields} -> Normalized: {normalized_missing}")
+
+        # 2. Define the mandatory questions
         question_map = {
-            'business_name': "What's the name of your business?",
-            'primary_offering': "What product or service do you want to highlight?",
-            'target_demographic': "Who are you trying to reach with this video?",
-            'call_to_action': "What should viewers do after watching?",
-            'tone': "What vibe - professional, fun, or luxurious?"
+            'business_name': "What is the name of your business or brand?",
+            'primary_offering': "What specific product or service should we highlight in this video?",
+            'target_demographic': "Who is your ideal customer? (age, interests, lifestyle)",
+            'call_to_action': "What action should viewers take after watching? (visit website, call, book, buy)",
+            'tone': "What vibe should this video have? (e.g., luxurious, energetic, professional, fun)"
         }
 
-        # If fields are missing, MUST ask for one
+        # 3. SAFETY LOCK: Strip "Ready" phrases if ANY field is missing
         if normalized_missing:
-            priority = ['business_name', 'primary_offering', 'target_demographic', 'call_to_action', 'tone']
-            for field in priority:
-                if field in normalized_missing:
-                    question = question_map[field]
-                    # Check if response already has appropriate question
-                    resp_lower = response_text.lower()
-                    if field == 'business_name' and any(w in resp_lower for w in ['business', 'company', 'called']):
-                        if response_text.strip().endswith('?'):
-                            return response_text
-                    elif field == 'primary_offering' and any(w in resp_lower for w in ['product', 'service', 'offer', 'highlight', 'specialize']):
-                        if response_text.strip().endswith('?'):
-                            return response_text
-                    elif field == 'target_demographic' and any(w in resp_lower for w in ['audience', 'reach', 'target', 'who are you']):
-                        if response_text.strip().endswith('?'):
-                            return response_text
-                    elif field == 'call_to_action' and any(w in resp_lower for w in ['after watching', 'viewers do', 'action', 'cta']):
-                        if response_text.strip().endswith('?'):
-                            return response_text
-                    elif field == 'tone' and any(w in resp_lower for w in ['vibe', 'tone', 'style', 'feel']):
-                        if response_text.strip().endswith('?'):
-                            return response_text
+            # Patterns to remove (catches variations)
+            forbidden_patterns = [
+                r"[Rr]eady to create[^.!?]*[.!?]?\s*",
+                r"[Rr]eady to proceed[^.!?]*[.!?]?\s*",
+                r"[Rr]eady to get started[^.!?]*[.!?]?\s*",
+                r"[Ll]et'?s create[^.!?]*[.!?]?\s*",
+                r"[Ll]et'?s build[^.!?]*[.!?]?\s*",
+                r"[Ll]et'?s begin[^.!?]*[.!?]?\s*",
+                r"[Ll]et'?s get started[^.!?]*[.!?]?\s*",
+                r"[Ss]hall we (begin|start|create|proceed)[^.!?]*[.!?]?\s*",
+                r"[Ww]e'?re all set[^.!?]*[.!?]?\s*",
+                r"[Ww]e'?re ready[^.!?]*[.!?]?\s*",
+                r"[Yy]ou'?re all set[^.!?]*[.!?]?\s*",
+                r"I have everything I need[^.!?]*[.!?]?\s*",
+                r"I'?ve got everything[^.!?]*[.!?]?\s*",
+                r"That'?s all I need[^.!?]*[.!?]?\s*",
+                r"Just say ['\"]?yes['\"]?[^.!?]*[.!?]?\s*",
+            ]
 
-                    # Response doesn't have right question - add it
-                    if response_text.strip():
-                        return f"{response_text.strip()} {question}"
-                    return question
+            original_text = response_text
+            for pattern in forbidden_patterns:
+                response_text = re.sub(pattern, '', response_text, flags=re.IGNORECASE)
 
-        # All fields complete - NOW we can ask for confirmation
-        if response_text.strip().endswith('?'):
-            return response_text
-        return f"{response_text.strip()} Ready to create your video? Just say 'yes' to confirm!"
+            if original_text != response_text:
+                logger.info(f"[FORCE_Q] Stripped completion phrases from response")
+
+            # Clean up whitespace
+            response_text = re.sub(r'\s+', ' ', response_text).strip()
+
+        # 4. Inject the correct question for the FIRST missing field
+        # Priority order ensures we ask for most important fields first
+        priority_order = [
+            'business_name',
+            'primary_offering',
+            'target_demographic',
+            'call_to_action',
+            'tone'
+        ]
+
+        for field in priority_order:
+            if field in normalized_missing and field in question_map:
+                question = question_map[field]
+
+                # Don't add if response already contains similar question
+                response_lower = response_text.lower()
+                skip_indicators = {
+                    'business_name': ['business name', 'company name', 'brand name'],
+                    'primary_offering': ['product', 'service', 'offering', 'highlight', 'promote'],
+                    'target_demographic': ['audience', 'customer', 'target', 'who are'],
+                    'call_to_action': ['action', 'cta', 'viewers', 'what should'],
+                    'tone': ['vibe', 'tone', 'feel', 'style']
+                }
+
+                already_asking = any(
+                    indicator in response_lower
+                    for indicator in skip_indicators.get(field, [])
+                )
+
+                if not already_asking:
+                    logger.info(f"[FORCE_Q] Appending question for: {field}")
+                    return f"{response_text.strip()} {question}"
+                else:
+                    logger.info(f"[FORCE_Q] Response already asks about {field}")
+                    return response_text
+
+        return response_text
 
     async def _generate_response(
         self,
