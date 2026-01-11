@@ -1692,10 +1692,7 @@ async def list_voices():
     except Exception as e:
         logger.error(f"Error fetching voices: {e}")
         return {"voices": default_voices, "source": "default", "error": str(e)}
-'''
 
-print("Copy the endpoint code from VOICES_ENDPOINT_CODE and add it to flawless_api.py")
-print("Location: After the voice_preview endpoint, before ROOT & DOCS section")
 # ROOT & DOCS
 # =============================================================================
 

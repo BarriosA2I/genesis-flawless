@@ -36,6 +36,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Video Preview API - Auto-publish completed commercials
+VIDEO_PREVIEW_API = "https://video-preview-theta.vercel.app/api/videos"
+
 
 # =============================================================================
 # DATA MODELS
@@ -88,6 +91,9 @@ class Commercial:
     # Tags for filtering
     tags: List[str] = field(default_factory=lambda: ["commercial"])
 
+    # Video preview URL (shareable link)
+    preview_url: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary"""
         return {
@@ -111,6 +117,7 @@ class Commercial:
             "pipeline_duration_ms": self.pipeline_duration_ms,
             "formats": self.formats,
             "tags": self.tags,
+            "preview_url": self.preview_url,
             # Computed fields
             "created_at_iso": datetime.fromtimestamp(self.created_at).isoformat(),
             "duration_formatted": f"{self.duration_seconds // 60}:{self.duration_seconds % 60:02d}"
@@ -143,7 +150,8 @@ class Commercial:
             pipeline_cost_usd=data.get("pipeline_cost_usd", 0.0),
             pipeline_duration_ms=data.get("pipeline_duration_ms", 0.0),
             formats=data.get("formats", {}),
-            tags=data.get("tags", ["commercial"])
+            tags=data.get("tags", ["commercial"]),
+            preview_url=data.get("preview_url")
         )
 
 
@@ -712,5 +720,30 @@ async def on_production_complete(
         formats=video_urls,
         tags=["commercial", brief.get("industry", "general")]
     )
+
+    # Auto-publish to video-preview-theta.vercel.app
+    if primary_url:
+        try:
+            preview_payload = {
+                "url": primary_url,
+                "title": f"{brief.get('business_name', 'Commercial')} Commercial",
+                "description": f"AI-generated commercial for {brief.get('business_name', 'client')}",
+                "duration": "1:04",
+                "tags": ["commercial", "ai-generated", "barrios-a2i", brief.get("industry", "general")],
+                "business_name": brief.get("business_name", ""),
+                "industry": brief.get("industry", "general"),
+                "created": datetime.now().isoformat().split("T")[0]
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(VIDEO_PREVIEW_API, json=preview_payload)
+                if response.status_code in [200, 201]:
+                    preview_result = response.json()
+                    video_id = preview_result.get("video", {}).get("id", session_id)
+                    commercial.preview_url = f"https://video-preview-theta.vercel.app/gallery.html#{video_id}"
+                    logger.info(f"[VideoPreview] Published: {commercial.preview_url}")
+                else:
+                    logger.warning(f"[VideoPreview] Failed to publish: {response.status_code}")
+        except Exception as e:
+            logger.error(f"[VideoPreview] Error: {e}")
 
     return commercial

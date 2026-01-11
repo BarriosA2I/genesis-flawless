@@ -54,7 +54,7 @@ class TestIntakeFlow:
         assert any(word in response for word in expected_words), \
             f"Should ask for business name, got: {response}"
 
-        print("✅ test_hello_asks_for_business PASSED")
+        print("[PASS] test_hello_asks_for_business PASSED")
 
     def test_full_intake_sequence(self):
         """Complete intake should collect all 5 fields before asking for assets"""
@@ -101,7 +101,7 @@ class TestIntakeFlow:
         assert has_asset_prompt, \
             f"Should ask for assets after all fields, got: {r6.get('response', '')}"
 
-        print("✅ test_full_intake_sequence PASSED")
+        print("[PASS] test_full_intake_sequence PASSED")
 
     def test_session_isolation(self):
         """Different sessions should have independent state"""
@@ -132,7 +132,7 @@ class TestIntakeFlow:
         assert "alpha" not in r_b1.get("response", "").lower(), \
             "Session B leaked data from Session A!"
 
-        print("✅ test_session_isolation PASSED")
+        print("[PASS] test_session_isolation PASSED")
 
 
 class TestVoiceSelector:
@@ -147,10 +147,10 @@ class TestVoiceSelector:
             data = r.json()
             voices = data.get("voices", [])
             assert len(voices) > 0, "No voices returned"
-            print(f"✅ Found {len(voices)} voices (source: {data.get('source', 'unknown')})")
+            print(f"[PASS] Found {len(voices)} voices (source: {data.get('source', 'unknown')})")
 
         except requests.exceptions.RequestException as e:
-            print(f"❌ test_voices_endpoint_exists FAILED: {e}")
+            print(f"[FAIL] test_voices_endpoint_exists FAILED: {e}")
             raise
 
     def test_voice_preview_endpoint_exists(self):
@@ -165,10 +165,10 @@ class TestVoiceSelector:
             # Expect either 200 (success) or 4xx (bad request due to invalid voice_id)
             # but NOT 404 (endpoint doesn't exist)
             assert r.status_code != 404, "Voice preview endpoint not found"
-            print(f"✅ Voice preview endpoint exists (returned {r.status_code})")
+            print(f"[PASS] Voice preview endpoint exists (returned {r.status_code})")
 
         except requests.exceptions.RequestException as e:
-            print(f"❌ test_voice_preview_endpoint_exists FAILED: {e}")
+            print(f"[FAIL] test_voice_preview_endpoint_exists FAILED: {e}")
             raise
 
 
@@ -179,7 +179,7 @@ class TestScriptGeneration:
         """Script should be 64 seconds with 4 scenes"""
         # This test requires completing the full flow
         # TODO: Implement after intake is fixed
-        print("⏳ test_script_format_64_seconds SKIPPED (requires full flow)")
+        print("[SKIP] test_script_format_64_seconds SKIPPED (requires full flow)")
 
 
 def run_smoke_tests():
@@ -199,10 +199,10 @@ def run_smoke_tests():
         test.test_hello_asks_for_business()
         results["passed"] += 1
     except AssertionError as e:
-        print(f"❌ FAILED: {e}")
+        print(f"[FAIL] FAILED: {e}")
         results["failed"] += 1
     except Exception as e:
-        print(f"❌ ERROR: {e}")
+        print(f"[FAIL] ERROR: {e}")
         results["failed"] += 1
 
     # Test 2: Voice selector endpoint
@@ -212,10 +212,10 @@ def run_smoke_tests():
         test.test_voices_endpoint_exists()
         results["passed"] += 1
     except AssertionError as e:
-        print(f"❌ FAILED: {e}")
+        print(f"[FAIL] FAILED: {e}")
         results["failed"] += 1
     except Exception as e:
-        print(f"❌ ERROR: {e}")
+        print(f"[FAIL] ERROR: {e}")
         results["failed"] += 1
 
     # Test 3: Full intake sequence (longer test)
@@ -226,10 +226,10 @@ def run_smoke_tests():
         test.test_full_intake_sequence()
         results["passed"] += 1
     except AssertionError as e:
-        print(f"❌ FAILED: {e}")
+        print(f"[FAIL] FAILED: {e}")
         results["failed"] += 1
     except Exception as e:
-        print(f"❌ ERROR: {e}")
+        print(f"[FAIL] ERROR: {e}")
         results["failed"] += 1
 
     # Summary
