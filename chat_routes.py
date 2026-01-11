@@ -28,6 +28,15 @@ except ImportError as e:
     INTAKE_AVAILABLE = False
     CreativeDirectorOrchestrator = None
 
+# Import V2 LangGraph Creative Director
+try:
+    from intake.creative_director_v2 import creative_director_v2
+    V2_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Creative Director V2 not available: {e}")
+    V2_AVAILABLE = False
+    creative_director_v2 = None
+
 # Import session storage
 try:
     from storage.redis_session_store import RedisSessionStore, SessionData
@@ -400,3 +409,82 @@ async def genesis_session(request: SessionRequest):
 async def genesis_get_session(session_id: str):
     """Alias for /api/session/{id} - for GENESIS routing compatibility."""
     return await get_session(session_id)
+
+
+# =============================================================================
+# V2 ENDPOINTS - LangGraph Creative Director (Beta)
+# =============================================================================
+
+@router.post("/chat/v2")
+async def chat_v2(request: ChatRequest):
+    """
+    LangGraph-powered Creative Director (Beta)
+
+    This endpoint runs the new state machine architecture in parallel
+    with the existing /api/chat endpoint.
+
+    Key differences from v1:
+    - Schema-first extraction (no regex)
+    - Deterministic routing (code decides, not AI)
+    - Proper session state management
+    - Normalized field names
+
+    Returns same format as v1 for frontend compatibility.
+    """
+    if not V2_AVAILABLE or not creative_director_v2:
+        raise HTTPException(
+            status_code=503,
+            detail="Creative Director V2 not available. Check langgraph dependency."
+        )
+
+    try:
+        result = await creative_director_v2.process_message(
+            session_id=request.session_id,
+            message=request.message
+        )
+        return result
+
+    except Exception as e:
+        logger.error(f"V2 endpoint error: {e}", exc_info=True)
+        return {
+            "response": "I encountered an issue. Please try again.",
+            "progress_percentage": 0,
+            "missing_fields": [],
+            "error": str(e),
+            "version": "v2-langgraph"
+        }
+
+
+@router.get("/chat/v2/session/{session_id}")
+async def get_session_v2(session_id: str):
+    """
+    Debug endpoint: Get current V2 session state.
+    Useful for troubleshooting extraction issues.
+    """
+    if not V2_AVAILABLE or not creative_director_v2:
+        raise HTTPException(
+            status_code=503,
+            detail="Creative Director V2 not available"
+        )
+
+    state = creative_director_v2.sessions.get(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return state
+
+
+@router.delete("/chat/v2/session/{session_id}")
+async def reset_session_v2(session_id: str):
+    """
+    Reset a V2 session to start fresh.
+    """
+    if not V2_AVAILABLE or not creative_director_v2:
+        raise HTTPException(
+            status_code=503,
+            detail="Creative Director V2 not available"
+        )
+
+    if session_id in creative_director_v2.sessions:
+        del creative_director_v2.sessions[session_id]
+        return {"status": "reset", "session_id": session_id}
+    return {"status": "not_found", "session_id": session_id}
