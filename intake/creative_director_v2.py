@@ -54,8 +54,24 @@ TRINITY_TIMEOUT = 60.0  # Trinity research can take time
 # RAGNAROK Production API Configuration
 GENESIS_API_BASE = "https://barrios-genesis-flawless.onrender.com"
 
-# Script Writer Prompt
-SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for video advertisements.
+# ============================================================================
+# BARRIOS A2I COMMERCIAL SPECIFICATIONS
+# ============================================================================
+# Standard commercial: 64 seconds, 4 scenes (16 seconds each)
+COMMERCIAL_CONFIG = {
+    "duration_seconds": 64,
+    "scene_count": 4,
+    "scene_duration_seconds": 16,
+    "scenes": [
+        {"name": "HOOK", "duration": "0:00-0:16", "purpose": "Attention-grabbing opening"},
+        {"name": "PROBLEM", "duration": "0:16-0:32", "purpose": "Pain point identification"},
+        {"name": "SOLUTION", "duration": "0:32-0:48", "purpose": "Product/service showcase"},
+        {"name": "CTA", "duration": "0:48-1:04", "purpose": "Clear call to action"}
+    ]
+}
+
+# Script Writer Prompt (Barrios A2I Standard: 64 seconds, 4 scenes)
+SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for Barrios A2I video advertisements.
 
 ## VIDEO BRIEF
 - Business: {business_name}
@@ -67,39 +83,65 @@ SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for vide
 ## MARKET RESEARCH INSIGHTS
 {research_summary}
 
-## YOUR TASK
-Create a compelling 30-second video commercial script that:
-1. Opens with a HOOK that stops the scroll (0-3 seconds)
-2. Presents the PROBLEM the audience faces (3-8 seconds)
-3. Introduces the SOLUTION - the product/service (8-18 seconds)
-4. Provides PROOF/credibility (18-25 seconds)
-5. Ends with a clear CTA (25-30 seconds)
+## BARRIOS A2I COMMERCIAL SPECIFICATIONS
+Create a **64-second** commercial with exactly **4 scenes** (16 seconds each):
+
+1. **HOOK** (0:00-0:16): Attention-grabbing opening that stops the scroll
+2. **PROBLEM** (0:16-0:32): Pain point identification - show what's broken
+3. **SOLUTION** (0:32-0:48): Product/service showcase - how you fix it
+4. **CTA** (0:48-1:04): Clear call to action with contact info
 
 ## OUTPUT FORMAT
 Return a JSON object with this exact structure:
 {{
     "title": "Commercial title",
-    "duration_seconds": 30,
+    "duration_seconds": 64,
     "target_platform": "social_media",
     "scenes": [
         {{
             "scene_number": 1,
-            "timestamp": "0:00-0:03",
+            "timestamp": "0:00-0:16",
             "type": "hook",
-            "visual_description": "What viewers SEE",
-            "narration": "What viewers HEAR (voiceover text)",
+            "visual_description": "What viewers SEE (be specific and cinematic)",
+            "narration": "What viewers HEAR (voiceover text, 3-4 sentences)",
             "text_overlay": "Any on-screen text",
             "music_mood": "Music/sound direction"
+        }},
+        {{
+            "scene_number": 2,
+            "timestamp": "0:16-0:32",
+            "type": "problem",
+            "visual_description": "Show the pain point visually",
+            "narration": "Describe the problem they face",
+            "text_overlay": "Key pain point text",
+            "music_mood": "Tension building"
+        }},
+        {{
+            "scene_number": 3,
+            "timestamp": "0:32-0:48",
+            "type": "solution",
+            "visual_description": "Showcase the product/service in action",
+            "narration": "How {business_name} solves the problem",
+            "text_overlay": "Key benefit",
+            "music_mood": "Uplifting"
+        }},
+        {{
+            "scene_number": 4,
+            "timestamp": "0:48-1:04",
+            "type": "cta",
+            "visual_description": "Strong call-to-action visual with logo",
+            "narration": "{call_to_action}",
+            "text_overlay": "CTA text + contact info",
+            "music_mood": "Confident closing"
         }}
     ],
-    "voiceover_full_script": "Complete narration script for voice recording",
+    "voiceover_full_script": "Complete 64-second narration script for voice recording",
     "visual_style_notes": "Overall visual direction",
-    "key_messaging": ["Main message 1", "Main message 2"],
+    "key_messaging": ["Main message 1", "Main message 2", "Main message 3"],
     "estimated_production_complexity": "low|medium|high"
 }}
 
-Create exactly 5 scenes covering: hook, problem, solution, proof, cta.
-Make it emotionally compelling and specific to {business_name}.
+Create EXACTLY 4 scenes totaling 64 seconds. Make it cinematic and compelling for {business_name}.
 """
 
 # Reviewer Node - Approval/Revision detection patterns
@@ -819,8 +861,8 @@ async def script_writer_node(state: VideoBriefState) -> dict:
     - Trinity research findings
 
     Produces:
-    - Structured 30-second commercial script
-    - 5 scenes: hook, problem, solution, proof, cta
+    - Structured 64-second commercial script (Barrios A2I standard)
+    - 4 scenes: HOOK, PROBLEM, SOLUTION, CTA (16 seconds each)
     - Complete voiceover script
     - Visual direction notes
     """
@@ -857,7 +899,7 @@ async def script_writer_node(state: VideoBriefState) -> dict:
             f"The previous script titled \"{previous_title}\" needs changes.\n"
             f"User feedback: \"{revision_feedback}\"\n\n"
             f"Please generate a NEW version that addresses this feedback while "
-            f"maintaining the core messaging and 5-scene structure."
+            f"maintaining the core messaging and 4-scene structure (64 seconds total)."
         )
         logger.info(f"[ScriptWriterAgent] Revision mode - feedback: {revision_feedback[:100]}")
     else:
@@ -1585,6 +1627,11 @@ class CreativeDirectorV2:
                 if state.get("script_status") == "revision_requested":
                     state = await script_writer_node(state)
 
+                # If approved, immediately trigger production
+                if state.get("script_status") == "approved":
+                    logger.info("[V2] Script approved - triggering production")
+                    state = await production_node(state)
+
                 result = state
                 self.sessions[session_id] = result
             except Exception as e:
@@ -1594,6 +1641,32 @@ class CreativeDirectorV2:
                     "role": "assistant",
                     "content": "I encountered an issue processing your feedback. Could you try again?"
                 })
+
+        # If script is already approved and user confirms, trigger production
+        elif script_status == "approved" and current_phase == "approved":
+            logger.info("[V2] Script already approved - checking for production confirmation")
+            user_msg_lower = message.lower().strip()
+            if any(p in user_msg_lower for p in ["yes", "start", "produce", "go", "make"]):
+                try:
+                    state = await production_node(state)
+                    result = state
+                    self.sessions[session_id] = result
+                except Exception as e:
+                    logger.error(f"Production error: {e}")
+                    result = state
+                    result["messages"].append({
+                        "role": "assistant",
+                        "content": "I encountered an issue starting production. Please try again."
+                    })
+            else:
+                # User doesn't want production, just acknowledge
+                result = state
+                result["messages"].append({
+                    "role": "assistant",
+                    "content": "Your script is approved and ready. Say 'start production' when you're ready to generate your video!"
+                })
+                self.sessions[session_id] = result
+
         else:
             # Normal flow through graph
             try:
