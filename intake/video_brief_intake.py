@@ -2081,7 +2081,7 @@ class CreativeDirectorOrchestrator:
     def _extract_from_user_message(self, user_message: str) -> dict:
         """
         Fallback extraction: Parse user message directly using regex patterns.
-        Used when Claude doesn't return structured extracted_data.
+        CRITICAL ORDER: Extract TONE first to prevent it being captured as business_name.
 
         Args:
             user_message: The user's raw message
@@ -2095,42 +2095,126 @@ class CreativeDirectorOrchestrator:
         message_lower = user_message.lower().strip()
 
         # =========================================================================
-        # BUSINESS NAME EXTRACTION - Comprehensive patterns
+        # TONE EXTRACTION - MUST BE FIRST to prevent false positives
         # =========================================================================
-        business_patterns = [
-            # "My business name is X" / "My business is X"
-            r"(?:my |our )?business (?:name )?is ([A-Z][A-Za-z0-9\s&'.-]+)",
-            # "My salon/studio/shop is called X"
-            r"(?:my |our )?(?:salon|studio|shop|store|company|restaurant|clinic|pharmacy|bakery|gym|spa) (?:is )?(?:called |named )?([A-Z][A-Za-z0-9\s&'.-]+)",
-            # "I own X" / "I run X"
-            r"(?:i own |i run |we own |we run |we are |we're )([A-Z][A-Za-z0-9\s&'.-]+)",
-            # "X is my salon/business"
-            r"([A-Z][A-Za-z0-9\s&'.-]+) is (?:my |our )?(?:salon|studio|shop|store|company|business)",
-            # "It's called X" / "We're called X"
-            r"(?:it's called |its called |we're called |were called |named )([A-Z][A-Za-z0-9\s&'.-]+)",
-            # "called X" anywhere
-            r"called ([A-Z][A-Za-z0-9\s&'.-]+)",
-            # Just a capitalized name by itself
-            r"^([A-Z][A-Za-z0-9\s&'.-]+)$",
-            # Original patterns
-            r"(?:i run|i own|my company is|we are|i'm from|i'm)\s+([A-Z][A-Za-z0-9\s&'.-]+?)(?:\s*[,.]|\s+and|\s+we|\s+selling|$)",
-            r"^([A-Z][A-Za-z0-9]+)\s*[-–]\s*",
-            r"(?:at|for)\s+([A-Z][A-Za-z0-9\s&'.-]+?)(?:\s*[,.]|\s+and|$)",
-        ]
+        tone_map = {
+            # Luxury/Premium
+            'luxurious': 'luxurious', 'luxury': 'luxurious', 'upscale': 'luxurious and upscale',
+            'elegant': 'elegant', 'premium': 'premium', 'sophisticated': 'sophisticated',
+            'high-end': 'high-end', 'high end': 'high-end', 'exclusive': 'exclusive',
+            'classy': 'classy', 'refined': 'refined',
 
-        for pattern in business_patterns:
-            match = re.search(pattern, user_message, re.IGNORECASE)
-            if match:
-                name = match.group(1).strip()
-                # Clean up
-                name = re.sub(r'\s+(?:and|for|to|the|a|in|on|is|are|we|i)$', '', name, flags=re.IGNORECASE)
-                name = name.strip(' .,')
-                # Filter false positives
-                skip_words = ['i', 'we', 'my', 'our', 'the', 'a', 'an', 'yes', 'no', 'ok', 'okay',
-                             'hello', 'hi', 'hey', 'sure', 'yeah', 'yep', 'nope', 'thanks']
-                if len(name) > 1 and len(name) < 50 and name.lower() not in skip_words:
-                    extracted["business_name"] = name
-                    break
+            # Professional
+            'professional': 'professional', 'corporate': 'professional', 'formal': 'professional',
+            'business': 'professional', 'clinical': 'professional', 'serious': 'professional',
+            'polished': 'professional', 'authoritative': 'authoritative', 'trustworthy': 'trustworthy',
+
+            # Friendly/Warm
+            'friendly': 'friendly', 'warm': 'warm and friendly', 'welcoming': 'welcoming',
+            'approachable': 'approachable', 'casual': 'casual', 'relaxed': 'relaxed',
+            'conversational': 'conversational', 'personable': 'personable', 'inviting': 'inviting',
+
+            # Energetic/Fun
+            'energetic': 'energetic', 'exciting': 'exciting', 'dynamic': 'dynamic',
+            'upbeat': 'upbeat', 'fun': 'fun', 'playful': 'playful', 'lively': 'lively',
+            'vibrant': 'vibrant', 'enthusiastic': 'enthusiastic', 'bold': 'bold',
+
+            # Calm/Cozy
+            'cozy': 'cozy', 'calm': 'calm', 'soothing': 'soothing', 'peaceful': 'peaceful',
+            'serene': 'serene', 'tranquil': 'tranquil', 'gentle': 'gentle', 'soft': 'soft',
+
+            # Modern/Trendy
+            'modern': 'modern', 'trendy': 'trendy', 'edgy': 'edgy',
+            'cutting-edge': 'cutting-edge', 'cutting edge': 'cutting-edge',
+            'contemporary': 'contemporary', 'hip': 'trendy', 'cool': 'cool and modern',
+            'sleek': 'sleek', 'minimalist': 'minimalist',
+
+            # Urgent/Direct
+            'urgent': 'urgent', 'direct': 'direct', 'compelling': 'compelling',
+        }
+
+        # Check for tone keywords
+        for keyword, tone_value in tone_map.items():
+            if keyword in message_lower:
+                extracted["tone"] = tone_value
+                break
+
+        # Check for "X vibe/tone/feel/style" patterns
+        if 'tone' not in extracted:
+            vibe_match = re.search(r'(\w+)\s+(?:vibe|tone|feel|style|aesthetic|mood)', message_lower)
+            if vibe_match:
+                vibe_word = vibe_match.group(1)
+                if vibe_word in tone_map:
+                    extracted["tone"] = tone_map[vibe_word]
+                elif len(vibe_word) > 2:
+                    extracted["tone"] = vibe_word
+
+        # Check for "should be X" or "make it X" patterns
+        if 'tone' not in extracted:
+            should_match = re.search(r'(?:should be|make it|keep it|go with|want it) (\w+)', message_lower)
+            if should_match:
+                word = should_match.group(1)
+                if word in tone_map:
+                    extracted["tone"] = tone_map[word]
+
+        # =========================================================================
+        # BUSINESS NAME EXTRACTION - WITH SKIP LOGIC
+        # =========================================================================
+
+        # SKIP if message is tone-only (e.g., "Luxurious and upscale")
+        word_count = len(user_message.split())
+        has_tone_keyword = any(keyword in message_lower for keyword in tone_map.keys())
+
+        if word_count <= 5 and has_tone_keyword and 'tone' in extracted:
+            # This is a tone-only message, don't extract business name
+            pass
+
+        # SKIP if message starts with demographic keywords
+        elif re.match(r'^(?:women|men|people|adults|seniors|families|patients|clients)', message_lower):
+            # This is likely a demographic message, skip business name
+            pass
+
+        else:
+            business_patterns = [
+                # "My business name is X" / "My business is X"
+                r"(?:my |our )?business (?:name )?is ([A-Z][A-Za-z0-9\s&'.-]+)",
+                # "My salon/studio/shop is called X"
+                r"(?:my |our )?(?:salon|studio|shop|store|company|restaurant|clinic|pharmacy|bakery|gym|spa) (?:is )?(?:called |named )?([A-Z][A-Za-z0-9\s&'.-]+)",
+                # "I own X" / "I run X"
+                r"(?:i own |i run |we own |we run |we are |we're )([A-Z][A-Za-z0-9\s&'.-]+)",
+                # "X is my salon/business"
+                r"([A-Z][A-Za-z0-9\s&'.-]+) is (?:my |our )?(?:salon|studio|shop|store|company|business)",
+                # "It's called X" / "We're called X"
+                r"(?:it's called |its called |we're called |were called |named )([A-Z][A-Za-z0-9\s&'.-]+)",
+                # "called X" anywhere (but NOT "is called" - handled above)
+                r"(?<!is )called ([A-Z][A-Za-z0-9\s&'.-]+)",
+                # Just a capitalized name by itself
+                r"^([A-Z][A-Za-z0-9\s&'.-]+)$",
+                # Original patterns
+                r"(?:i run|i own|my company is|we are|i'm from|i'm)\s+([A-Z][A-Za-z0-9\s&'.-]+?)(?:\s*[,.]|\s+and|\s+we|\s+selling|$)",
+                r"^([A-Z][A-Za-z0-9]+)\s*[-–]\s*",
+                r"(?:at|for)\s+([A-Z][A-Za-z0-9\s&'.-]+?)(?:\s*[,.]|\s+and|$)",
+            ]
+
+            for pattern in business_patterns:
+                match = re.search(pattern, user_message, re.IGNORECASE)
+                if match:
+                    name = match.group(1).strip()
+                    # Clean up trailing words
+                    name = re.sub(r'\s+(?:and|for|to|the|a|in|on|is|are|we|i)$', '', name, flags=re.IGNORECASE)
+                    name = name.strip(' .,')
+
+                    # Remove tone words that might have been captured
+                    for tone_keyword in tone_map.keys():
+                        if tone_keyword in name.lower():
+                            name = re.sub(rf'\b{tone_keyword}\b', '', name, flags=re.IGNORECASE).strip()
+
+                    # Filter false positives
+                    skip_words = ['i', 'we', 'my', 'our', 'the', 'a', 'an', 'yes', 'no', 'ok', 'okay',
+                                 'hello', 'hi', 'hey', 'sure', 'yeah', 'yep', 'nope', 'thanks']
+                    if len(name) > 1 and len(name) < 50 and name.lower() not in skip_words:
+                        extracted["business_name"] = name
+                        break
 
         # =========================================================================
         # PRIMARY OFFERING EXTRACTION - Enhanced patterns
@@ -2201,12 +2285,12 @@ class CreativeDirectorOrchestrator:
                     break
 
         # =========================================================================
-        # CALL TO ACTION EXTRACTION
+        # CALL TO ACTION EXTRACTION - FIXED: removed bare 'call'
         # =========================================================================
         cta_map = {
             'book online': ['book online', 'book through', 'book via', 'book on'],
             'book appointment': ['book appointment', 'schedule', 'make an appointment'],
-            'call us': ['call us', 'call', 'give us a call', 'phone us'],
+            'call us': ['call us', 'give us a call', 'phone us'],  # REMOVED bare 'call'
             'visit website': ['visit website', 'visit our website', 'check out our website'],
             'visit store': ['visit store', 'come in', 'stop by', 'walk in', 'visit us'],
             'order online': ['order online', 'order from', 'buy online', 'purchase online'],
@@ -2235,69 +2319,6 @@ class CreativeDirectorOrchestrator:
                     cta = match.group(1 if match.groups() else 0).strip()[:50]
                     extracted["call_to_action"] = cta
                     break
-
-        # =========================================================================
-        # TONE EXTRACTION - CRITICAL FIX with comprehensive keyword map
-        # =========================================================================
-        tone_map = {
-            # Luxury/Premium
-            'luxurious': 'luxurious', 'luxury': 'luxurious', 'upscale': 'luxurious and upscale',
-            'elegant': 'elegant', 'premium': 'premium', 'sophisticated': 'sophisticated',
-            'high-end': 'high-end', 'high end': 'high-end', 'exclusive': 'exclusive',
-            'classy': 'classy', 'refined': 'refined',
-
-            # Professional
-            'professional': 'professional', 'corporate': 'professional', 'formal': 'professional',
-            'business': 'professional', 'clinical': 'professional', 'serious': 'professional',
-            'polished': 'professional', 'authoritative': 'authoritative', 'trustworthy': 'trustworthy',
-
-            # Friendly/Warm
-            'friendly': 'friendly', 'warm': 'warm and friendly', 'welcoming': 'welcoming',
-            'approachable': 'approachable', 'casual': 'casual', 'relaxed': 'relaxed',
-            'conversational': 'conversational', 'personable': 'personable', 'inviting': 'inviting',
-
-            # Energetic/Fun
-            'energetic': 'energetic', 'exciting': 'exciting', 'dynamic': 'dynamic',
-            'upbeat': 'upbeat', 'fun': 'fun', 'playful': 'playful', 'lively': 'lively',
-            'vibrant': 'vibrant', 'enthusiastic': 'enthusiastic', 'bold': 'bold',
-
-            # Calm/Cozy
-            'cozy': 'cozy', 'calm': 'calm', 'soothing': 'soothing', 'peaceful': 'peaceful',
-            'serene': 'serene', 'tranquil': 'tranquil', 'gentle': 'gentle', 'soft': 'soft',
-
-            # Modern/Trendy
-            'modern': 'modern', 'trendy': 'trendy', 'edgy': 'edgy',
-            'cutting-edge': 'cutting-edge', 'cutting edge': 'cutting-edge',
-            'contemporary': 'contemporary', 'hip': 'trendy', 'cool': 'cool and modern',
-            'sleek': 'sleek', 'minimalist': 'minimalist',
-
-            # Urgent/Direct
-            'urgent': 'urgent', 'direct': 'direct', 'compelling': 'compelling',
-        }
-
-        # Check for tone keywords
-        for keyword, tone_value in tone_map.items():
-            if keyword in message_lower:
-                extracted["tone"] = tone_value
-                break
-
-        # Check for "X vibe/tone/feel/style" patterns
-        if 'tone' not in extracted:
-            vibe_match = re.search(r'(\w+)\s+(?:vibe|tone|feel|style|aesthetic|mood)', message_lower)
-            if vibe_match:
-                vibe_word = vibe_match.group(1)
-                if vibe_word in tone_map:
-                    extracted["tone"] = tone_map[vibe_word]
-                elif len(vibe_word) > 2:
-                    extracted["tone"] = vibe_word
-
-        # Check for "should be X" or "make it X" patterns
-        if 'tone' not in extracted:
-            should_match = re.search(r'(?:should be|make it|keep it|go with|want it) (\w+)', message_lower)
-            if should_match:
-                word = should_match.group(1)
-                if word in tone_map:
-                    extracted["tone"] = tone_map[word]
 
         # =========================================================================
         # NUMBERED LIST EXTRACTION (fast-track format)
