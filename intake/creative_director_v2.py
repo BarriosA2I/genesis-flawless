@@ -16,6 +16,8 @@ This replaces the 2800-line monolith with a proper state machine.
 import os
 import json
 import logging
+import time
+import httpx
 from typing import TypedDict, List, Optional, Literal
 from datetime import datetime
 
@@ -30,6 +32,10 @@ from pydantic import BaseModel, Field
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("creative_director_v2")
+
+# Trinity API Configuration
+TRINITY_URL = "https://barrios-genesis-flawless.onrender.com/api/genesis/research"
+TRINITY_TIMEOUT = 60.0  # Trinity research can take time
 
 
 # ============================================================================
@@ -61,6 +67,9 @@ class VideoBriefState(TypedDict):
 
     # Session metadata
     session_id: str
+
+    # Research findings from Trinity
+    research_findings: Optional[dict]
 
 
 # ============================================================================
@@ -240,24 +249,206 @@ Extract ONLY what user explicitly stated. Do not guess."""
 # 5. RESEARCHER NODE (Trinity Integration Placeholder)
 # ============================================================================
 
+def _infer_industry(primary_offering: str) -> str:
+    """
+    Infer industry from the primary offering description.
+    Trinity needs an industry for market segmentation.
+    """
+    offering_lower = primary_offering.lower()
+
+    industry_keywords = {
+        "technology": ["software", "app", "saas", "tech", "ai", "cloud", "digital"],
+        "healthcare": ["health", "medical", "clinic", "wellness", "therapy", "dental"],
+        "beauty": ["salon", "spa", "beauty", "hair", "nail", "skincare", "cosmetic"],
+        "fitness": ["gym", "fitness", "workout", "training", "yoga", "pilates"],
+        "food": ["restaurant", "food", "catering", "bakery", "cafe", "coffee"],
+        "retail": ["shop", "store", "boutique", "retail", "ecommerce", "products"],
+        "professional_services": ["consulting", "legal", "accounting", "agency", "marketing"],
+        "real_estate": ["real estate", "property", "home", "apartment", "rental"],
+        "automotive": ["car", "auto", "vehicle", "mechanic", "dealer"],
+        "education": ["school", "training", "course", "tutoring", "education", "learning"],
+        "finance": ["finance", "investment", "insurance", "banking", "loan", "mortgage"],
+    }
+
+    for industry, keywords in industry_keywords.items():
+        if any(kw in offering_lower for kw in keywords):
+            return industry
+
+    return "general_business"
+
+
+def _build_goals(state: VideoBriefState) -> List[str]:
+    """
+    Build goals list from video brief for Trinity research.
+    """
+    goals = []
+
+    # Primary goal from CTA
+    cta = state.get("call_to_action", "")
+    if cta:
+        cta_lower = cta.lower()
+        if any(w in cta_lower for w in ["book", "schedule", "appointment"]):
+            goals.append("drive_appointments")
+        elif any(w in cta_lower for w in ["buy", "purchase", "order", "shop"]):
+            goals.append("increase_sales")
+        elif any(w in cta_lower for w in ["call", "contact", "reach"]):
+            goals.append("generate_leads")
+        elif any(w in cta_lower for w in ["visit", "website", "learn"]):
+            goals.append("drive_traffic")
+        elif any(w in cta_lower for w in ["sign up", "subscribe", "join"]):
+            goals.append("grow_subscribers")
+        else:
+            goals.append("increase_awareness")
+
+    # Add tone-based goal
+    tone = state.get("tone", "")
+    if tone:
+        tone_lower = tone.lower()
+        if any(w in tone_lower for w in ["luxury", "premium", "exclusive"]):
+            goals.append("premium_positioning")
+        elif any(w in tone_lower for w in ["fun", "energetic", "exciting"]):
+            goals.append("viral_potential")
+        elif any(w in tone_lower for w in ["trust", "professional", "reliable"]):
+            goals.append("build_trust")
+
+    # Default if no goals inferred
+    if not goals:
+        goals = ["increase_awareness", "drive_engagement"]
+
+    return goals
+
+
+def _summarize_insights(research_data: dict) -> str:
+    """
+    Create a human-readable summary of Trinity research findings.
+    """
+    summary_parts = []
+
+    # Check for different data structures Trinity might return
+    if "market_analysis" in research_data:
+        market = research_data["market_analysis"]
+        if isinstance(market, dict):
+            if "key_insight" in market:
+                summary_parts.append(f"**Key Insight:** {market['key_insight']}")
+            if "market_size" in market:
+                summary_parts.append(f"**Market Size:** {market['market_size']}")
+
+    if "competitors" in research_data:
+        competitors = research_data["competitors"]
+        if isinstance(competitors, list) and len(competitors) > 0:
+            comp_names = [c.get("name", "Unknown") for c in competitors[:3] if isinstance(c, dict)]
+            if comp_names:
+                summary_parts.append(f"**Top Competitors:** {', '.join(comp_names)}")
+
+    if "audience_insights" in research_data:
+        audience = research_data["audience_insights"]
+        if isinstance(audience, dict) and "summary" in audience:
+            summary_parts.append(f"**Audience:** {audience['summary']}")
+
+    if "positioning" in research_data:
+        pos = research_data["positioning"]
+        if isinstance(pos, str):
+            summary_parts.append(f"**Recommended Position:** {pos}")
+
+    if "trends" in research_data:
+        trends = research_data["trends"]
+        if isinstance(trends, list) and len(trends) > 0:
+            trend_items = trends[:3] if isinstance(trends[0], str) else [t.get("name", "") for t in trends[:3] if isinstance(t, dict)]
+            if trend_items:
+                summary_parts.append(f"**Trending:** {', '.join(filter(None, trend_items))}")
+
+    # If no structured data, check for raw summary
+    if not summary_parts:
+        if "summary" in research_data:
+            return research_data["summary"]
+        elif "message" in research_data:
+            return research_data["message"]
+        else:
+            return "Market intelligence gathered. Ready to create a targeted commercial."
+
+    return "\n".join(summary_parts)
+
+
 async def researcher_node(state: VideoBriefState) -> dict:
     """
-    Calls Trinity for market intelligence.
-    Currently a placeholder - will integrate with real Trinity API.
-    """
-    logger.info(f"[ResearcherAgent] Starting research for {state['business_name']}")
+    Trinity Market Intelligence Integration.
 
-    # TODO: Replace with actual Trinity API call
-    # TRINITY_URL = "https://barrios-genesis-flawless.onrender.com/api/trinity/analyze"
+    Calls the real Trinity API at /api/genesis/research to get:
+    - Competitor analysis
+    - Market positioning insights
+    - Audience intelligence
+    - Trend data
+
+    Maps video brief fields to Trinity's expected schema.
+    """
+    logger.info(f"[ResearcherAgent] Starting Trinity research for {state.get('business_name', 'unknown')}")
 
     new_state = dict(state)
-    new_state["current_phase"] = "scripting"
-    new_state["messages"] = list(state["messages"]) + [{
-        "role": "assistant",
-        "content": (
-            "🔍 Research complete! I've analyzed your market and competitors. "
-            "Now let me draft a script that positions you to win."
+    new_state["current_phase"] = "research"
+
+    # Map video brief to Trinity request schema
+    trinity_payload = {
+        "session_id": state.get("session_id", f"v2-{int(time.time())}"),
+        "business_name": state.get("business_name", "Unknown Business"),
+        "industry": _infer_industry(state.get("primary_offering", "")),
+        "website_url": None,  # Could be added to intake if needed
+        "goals": _build_goals(state)
+    }
+
+    logger.info(f"[ResearcherAgent] Trinity payload: {trinity_payload}")
+
+    try:
+        async with httpx.AsyncClient(timeout=TRINITY_TIMEOUT) as client:
+            response = await client.post(
+                TRINITY_URL,
+                json=trinity_payload,
+                headers={"Content-Type": "application/json"}
+            )
+
+            if response.status_code == 200:
+                research_data = response.json()
+                logger.info(f"[ResearcherAgent] Trinity returned: {list(research_data.keys())}")
+
+                # Store research findings
+                new_state["research_findings"] = research_data
+
+                # Build success message with key insights
+                insights_summary = _summarize_insights(research_data)
+                response_text = (
+                    f"🔍 **Market Research Complete!**\n\n"
+                    f"{insights_summary}\n\n"
+                    f"I have deep competitive intelligence on your market. "
+                    f"Ready to craft a script that positions {state.get('business_name', 'you')} to win."
+                )
+
+            else:
+                logger.error(f"[ResearcherAgent] Trinity error: {response.status_code} - {response.text}")
+                # Graceful degradation - continue without research
+                new_state["research_findings"] = {"status": "unavailable", "reason": f"API returned {response.status_code}"}
+                response_text = (
+                    f"📊 I've gathered the core information about {state.get('business_name', 'your business')}. "
+                    f"Let me craft a compelling script based on what we know."
+                )
+
+    except httpx.TimeoutException:
+        logger.error("[ResearcherAgent] Trinity timeout")
+        new_state["research_findings"] = {"status": "timeout"}
+        response_text = (
+            f"⚡ Moving forward with script creation for {state.get('business_name', 'your business')}. "
+            f"We have everything we need to create something powerful."
         )
+
+    except Exception as e:
+        logger.error(f"[ResearcherAgent] Trinity exception: {e}")
+        new_state["research_findings"] = {"status": "error", "message": str(e)}
+        response_text = (
+            f"Let me proceed with creating your commercial script for {state.get('business_name', 'your business')}."
+        )
+
+    # Add response to messages
+    new_state["messages"] = list(state.get("messages", [])) + [{
+        "role": "assistant",
+        "content": response_text
     }]
 
     return new_state
@@ -336,6 +527,7 @@ class CreativeDirectorV2:
             "call_to_action": None,
             "tone": None,
             "top_rivals": None,
+            "research_findings": None,
             "messages": [],
             "missing_fields": [
                 "business_name", "primary_offering",
