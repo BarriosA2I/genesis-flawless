@@ -179,6 +179,187 @@ class VideoTone(str, Enum):
     URGENT = "urgent"
 
 
+# =============================================================================
+# TONE EXTRACTION - Enhanced keyword mapping for fallback extraction
+# =============================================================================
+
+TONE_KEYWORDS = {
+    # Professional/Corporate
+    'professional': 'professional',
+    'trustworthy': 'professional',
+    'corporate': 'professional',
+    'business': 'professional',
+    'polished': 'professional',
+    'sophisticated': 'professional',
+    'credible': 'professional',
+    'formal': 'professional',
+    'serious': 'professional',
+    'authoritative': 'professional',
+
+    # Energetic/Dynamic
+    'energetic': 'energetic',
+    'exciting': 'energetic',
+    'dynamic': 'energetic',
+    'vibrant': 'energetic',
+    'lively': 'energetic',
+    'active': 'energetic',
+    'powerful': 'energetic',
+
+    # Urgent/Time-Sensitive
+    'urgent': 'urgent',
+    'time-sensitive': 'urgent',
+    'limited': 'urgent',
+    'now': 'urgent',
+    'hurry': 'urgent',
+    'fast': 'urgent',
+    'immediate': 'urgent',
+
+    # Friendly/Warm
+    'friendly': 'friendly',
+    'warm': 'friendly',
+    'approachable': 'friendly',
+    'welcoming': 'friendly',
+    'personable': 'friendly',
+    'inviting': 'friendly',
+
+    # Casual/Relaxed
+    'casual': 'casual',
+    'relaxed': 'casual',
+    'laid-back': 'casual',
+    'easygoing': 'casual',
+    'conversational': 'casual',
+
+    # Modern/Innovative
+    'modern': 'modern',
+    'sleek': 'modern',
+    'contemporary': 'modern',
+    'innovative': 'modern',
+    'cutting-edge': 'modern',
+    'fresh': 'modern',
+
+    # Inspirational/Motivational
+    'inspirational': 'inspirational',
+    'motivational': 'inspirational',
+    'uplifting': 'inspirational',
+    'empowering': 'inspirational',
+    'encouraging': 'inspirational',
+
+    # Humorous/Fun
+    'humorous': 'humorous',
+    'fun': 'humorous',
+    'playful': 'humorous',
+    'quirky': 'humorous',
+    'witty': 'humorous',
+    'lighthearted': 'humorous',
+
+    # Bold/Confident
+    'bold': 'bold',
+    'confident': 'bold',
+    'assertive': 'bold',
+    'strong': 'bold',
+    'daring': 'bold',
+
+    # Emotional/Heartfelt
+    'emotional': 'emotional',
+    'heartfelt': 'emotional',
+    'touching': 'emotional',
+    'sincere': 'emotional',
+    'authentic': 'emotional',
+
+    # Luxurious/Premium
+    'luxury': 'luxurious',
+    'luxurious': 'luxurious',
+    'premium': 'luxurious',
+    'elegant': 'luxurious',
+    'exclusive': 'luxurious',
+    'high-end': 'luxurious',
+}
+
+
+def extract_tone_fallback(message: str, current_tone: Optional[str] = None) -> Optional[str]:
+    """
+    Fallback tone extraction using keyword matching and pattern detection.
+
+    Called when LLM extraction misses tone from phrases like:
+    - "Keep it professional"
+    - "Make it feel energetic"
+    - "I want a modern vibe"
+    - "Should be trustworthy and serious"
+
+    Args:
+        message: User's message to extract tone from
+        current_tone: Already extracted tone (if any)
+
+    Returns:
+        Normalized tone value or None
+    """
+    if current_tone:
+        return normalize_tone(current_tone)
+
+    message_lower = message.lower()
+
+    # Pattern 1: Explicit tone directives - "keep it X", "make it X", etc.
+    tone_directive_patterns = [
+        r'keep\s+it\s+(\w+(?:\s+and\s+\w+)?)',
+        r'make\s+it\s+(?:feel\s+)?(\w+(?:\s+and\s+\w+)?)',
+        r'should\s+be\s+(\w+(?:\s+and\s+\w+)?)',
+        r'want\s+(?:it\s+)?(?:to\s+be\s+)?(\w+(?:\s+and\s+\w+)?)',
+        r'(\w+)\s+(?:tone|vibe|feel|style|mood)',
+        r'going\s+for\s+(?:a\s+)?(\w+)',
+        r'needs?\s+to\s+(?:feel|be)\s+(\w+)',
+    ]
+
+    for pattern in tone_directive_patterns:
+        matches = re.findall(pattern, message_lower)
+        for match in matches:
+            # Check each word in the match (handles "professional and trustworthy")
+            words = match.replace(' and ', ' ').split()
+            for word in words:
+                word = word.strip()
+                if word in TONE_KEYWORDS:
+                    return TONE_KEYWORDS[word]
+
+    # Pattern 2: Direct keyword scan (fallback)
+    # Find all matching keywords and return the first one that appears
+    found_tones = []
+    for keyword, tone_value in TONE_KEYWORDS.items():
+        if keyword in message_lower:
+            # Store position and tone
+            found_tones.append((message_lower.index(keyword), tone_value))
+
+    if found_tones:
+        # Return the tone whose keyword appears first in the message
+        found_tones.sort(key=lambda x: x[0])
+        return found_tones[0][1]
+
+    return None
+
+
+def normalize_tone(tone: str) -> str:
+    """
+    Normalize tone value to canonical VideoTone enum values.
+
+    Maps various tone descriptions to standard categories:
+    - professional, energetic, urgent, friendly, casual, modern,
+      inspirational, humorous, bold, emotional, luxurious
+    """
+    if not tone:
+        return "professional"  # Default
+
+    tone_lower = tone.lower().strip()
+
+    # Direct enum match
+    if tone_lower in ['professional', 'energetic', 'urgent', 'friendly', 'bold', 'luxury']:
+        return tone_lower
+
+    # Use TONE_KEYWORDS for normalization
+    if tone_lower in TONE_KEYWORDS:
+        return TONE_KEYWORDS[tone_lower]
+
+    # Fallback to professional
+    return "professional"
+
+
 # Industry profiles from RAGNAROK's semantic memory
 RAGNAROK_INDUSTRY_PROFILES = {
     "flooring": {
@@ -1880,18 +2061,11 @@ class CreativeDirectorOrchestrator:
                     extracted["call_to_action"] = match.group(0).strip()[:50]
                 break
 
-        # Tone patterns
-        tone_keywords = {
-            "professional": ["professional", "corporate", "business", "formal"],
-            "friendly": ["friendly", "warm", "approachable", "casual"],
-            "energetic": ["energetic", "exciting", "dynamic", "bold"],
-            "playful": ["playful", "fun", "quirky", "humorous"],
-            "luxury": ["luxury", "premium", "elegant", "sophisticated"],
-        }
-        for tone, keywords in tone_keywords.items():
-            if any(kw in message_lower for kw in keywords):
-                extracted["tone"] = tone
-                break
+        # Tone extraction using enhanced fallback with pattern matching
+        # Handles phrases like "Keep it professional", "make it feel energetic", etc.
+        tone_result = extract_tone_fallback(user_message, extracted.get("tone"))
+        if tone_result:
+            extracted["tone"] = tone_result
 
         # Numbered list extraction (fast-track format)
         # Pattern: "1. TechStart 2. SaaS tools 3. Founders 4. Sign up"
