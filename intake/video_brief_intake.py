@@ -716,12 +716,43 @@ class VideoBriefState:
 # CREATIVE DIRECTOR SYSTEM PROMPT
 # =============================================================================
 
-INTAKE_SYSTEM_PROMPT = """You are the Creative Director at Barrios A2I, helping gather information to create a commercial video.
+INTAKE_SYSTEM_PROMPT = """You are the Creative Director at Barrios A2I.
 
-## YOUR MISSION
-Guide the conversation to collect ALL required fields for video production. Be friendly but focused - every response should:
-1. Acknowledge what they shared (1 sentence max)
-2. Ask for the NEXT missing piece of information
+## CRITICAL RULE - READ THIS FIRST
+**EVERY response you give MUST end with a question mark (?)**
+If your response doesn't end with "?" you are WRONG. Fix it.
+
+## YOUR JOB
+Collect 5 pieces of information to create a video:
+1. business_name - Their company name
+2. primary_offering - What they sell/do
+3. target_demographic - Who they're trying to reach
+4. call_to_action - What viewers should do
+5. tone - Video style (professional, fun, luxurious, etc.)
+
+## RESPONSE FORMAT
+Every response = 1 short acknowledgment + 1 specific question
+
+## QUESTION TO ASK (based on what's missing)
+- Missing business_name → "What's the name of your business?"
+- Missing primary_offering → "What product or service do you want to highlight?"
+- Missing target_demographic → "Who are you trying to reach?"
+- Missing call_to_action → "What should viewers do after watching?"
+- Missing tone → "What vibe - professional, fun, or luxurious?"
+
+## EXAMPLES
+
+User: "hello"
+You: "Hello! Let's create a great video. What's the name of your business?"
+
+User: "hi"
+You: "Hi there! What business are we making this video for?"
+
+User: "I want a video"
+You: "Awesome! What's your business called?"
+
+User: "My business is Glamour Studio"
+You: "Great name! What does Glamour Studio specialize in?"
 
 ## REQUIRED FIELDS (must collect all 5)
 1. business_name - Company/brand name
@@ -877,6 +908,21 @@ CREATIVE_DIRECTOR_SYSTEM_PROMPT = INTAKE_SYSTEM_PROMPT
 
 FEW_SHOT_EXAMPLES = """
 <examples>
+  <example>
+    <user>hello</user>
+    <assistant>{"response": "Hello! Let's create a great video. What's the name of your business?", "extracted_data": {}, "next_phase": "greeting", "confidence": 1.0, "is_complete": false}</assistant>
+  </example>
+
+  <example>
+    <user>hi</user>
+    <assistant>{"response": "Hi there! What business are we making this video for?", "extracted_data": {}, "next_phase": "greeting", "confidence": 1.0, "is_complete": false}</assistant>
+  </example>
+
+  <example>
+    <user>I want a video</user>
+    <assistant>{"response": "Awesome! What's your business called?", "extracted_data": {}, "next_phase": "greeting", "confidence": 1.0, "is_complete": false}</assistant>
+  </example>
+
   <example>
     <user>I run a fitness studio called FitLife</user>
     <assistant>{"response": "Nice! Who's your ideal customer?", "extracted_data": {"business_name": "FitLife", "primary_offering": "fitness studio"}}</assistant>
@@ -2349,7 +2395,37 @@ class CreativeDirectorOrchestrator:
             if phones:
                 state.contact_phone = phones[0]
                 FIELD_CAPTURED.labels(field_name="contact_phone").inc()
-    
+
+    def force_question_in_response(self, response_text: str, missing_fields: list) -> str:
+        """
+        Post-process AI response to ensure it ends with a question.
+        If response doesn't end with ?, append the next logical question.
+        """
+        if not response_text:
+            return "What's the name of your business?"
+
+        # Check if response already ends with a question
+        cleaned = response_text.strip()
+        if cleaned.endswith('?'):
+            return response_text
+
+        # Response doesn't end with question - need to add one
+        question_map = {
+            'business_name': "What's the name of your business?",
+            'primary_offering': "What product or service do you want to highlight?",
+            'target_demographic': "Who are you trying to reach with this video?",
+            'call_to_action': "What should viewers do after watching?",
+            'tone': "What vibe should this video have?"
+        }
+
+        # Find the first missing field and add its question
+        for field in ['business_name', 'primary_offering', 'target_demographic', 'call_to_action', 'tone']:
+            if field in missing_fields:
+                return f"{response_text} {question_map[field]}"
+
+        # All fields complete - ask for confirmation
+        return f"{response_text} Ready to create your video?"
+
     async def _generate_response(
         self,
         state: VideoBriefState,
@@ -2731,6 +2807,17 @@ IMPORTANT: If any fields are MISSING, your response MUST ask for the NEXT missin
                 parsed["escalation"] = escalation_triggered
                 # CRITICAL FIX: Include actual extracted data so _apply_extraction can update VideoBriefState
                 parsed["extracted_data"] = extracted or {}
+
+                # =================================================================
+                # FORCE QUESTION POST-PROCESSING
+                # This ensures every response ends with a question
+                # =================================================================
+                if parsed and "response" in parsed:
+                    missing = progress_info.get("missing_fields", [])
+                    original_response = parsed["response"]
+                    parsed["response"] = self.force_question_in_response(parsed["response"], missing)
+                    if original_response != parsed["response"]:
+                        logger.info(f"[FORCE_QUESTION] Added question to response. Missing fields: {missing}")
 
                 logger.info(f"[BriefProgress] Session {state.session_id}: {progress_info['progress_percentage']}% complete, missing: {progress_info['missing_fields']}, extracted: {list(extracted.keys()) if extracted else []}")
 
