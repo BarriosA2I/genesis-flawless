@@ -351,6 +351,10 @@ async def intake_node(state: VideoBriefState) -> dict:
     Schema-First Extraction: Replaces 2800 lines of regex with structured LLM output.
     """
     logger.info(f"[IntakeAgent] Processing for session {state.get('session_id', 'unknown')}")
+    # DEBUG: Log current state to diagnose intake skipping bug
+    logger.info(f"[DEBUG INTAKE] Session: {state.get('session_id', 'unknown')}")
+    logger.info(f"[DEBUG INTAKE] Fields: business={state.get('business_name')}, product={state.get('primary_offering')}, audience={state.get('target_demographic')}, cta={state.get('call_to_action')}, tone={state.get('tone')}")
+    logger.info(f"[DEBUG INTAKE] assets_reviewed={state.get('assets_reviewed')}, is_complete={state.get('is_complete')}, phase={state.get('current_phase')}")
 
     llm = get_llm()
 
@@ -418,6 +422,10 @@ Extract ONLY what user explicitly stated. Do not guess."""
     # =========================================================================
     required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
     missing = [f for f in required if not new_state.get(f)]
+    # DEBUG: Log missing fields calculation
+    logger.info(f"[DEBUG INTAKE] Missing fields calculated: {missing}")
+    logger.info(f"[DEBUG INTAKE] Will enter CASE A (ask for field): {bool(missing)}")
+    logger.info(f"[DEBUG INTAKE] Will enter CASE B (ask for assets): {not missing and not new_state.get('assets_reviewed')}")
 
     new_state["missing_fields"] = missing
 
