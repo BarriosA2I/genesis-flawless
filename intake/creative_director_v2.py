@@ -422,6 +422,12 @@ Extract ONLY what user explicitly stated. Do not guess."""
     # =========================================================================
     required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
     missing = [f for f in required if not new_state.get(f)]
+
+    # DEFENSIVE CHECK: If missing is empty but business_name is None, force recalculation
+    if not missing and not new_state.get("business_name"):
+        logger.error(f"[INTAKE BUG] missing is empty but business_name is None!")
+        logger.error(f"[INTAKE BUG] Field values: {[(f, new_state.get(f)) for f in required]}")
+        missing = required.copy()
     # DEBUG: Log missing fields calculation
     logger.info(f"[DEBUG INTAKE] Missing fields calculated: {missing}")
     logger.info(f"[DEBUG INTAKE] Will enter CASE A (ask for field): {bool(missing)}")
