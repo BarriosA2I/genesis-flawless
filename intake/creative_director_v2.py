@@ -367,72 +367,93 @@ Extract ONLY what user explicitly stated. Do not guess."""
 
     response_text = ""
 
-    if missing:
-        # CASE A: Still gathering basic info
-        new_state["is_complete"] = False
+    try:
+        if missing:
+            # CASE A: Still gathering basic info
+            new_state["is_complete"] = False
 
-        # Build context-aware prompt
-        prompt = INTAKE_PROMPT.format(
-            business_name=new_state.get("business_name") or "[not yet provided]",
-            primary_offering=new_state.get("primary_offering") or "[not yet provided]",
-            target_demographic=new_state.get("target_demographic") or "[not yet provided]",
-            call_to_action=new_state.get("call_to_action") or "[not yet provided]",
-            tone=new_state.get("tone") or "[not yet provided]",
-            missing_fields=", ".join(missing)
-        )
-
-        messages = [SystemMessage(content=prompt)]
-        for m in state["messages"]:
-            if m["role"] == "user":
-                messages.append(HumanMessage(content=m["content"]))
-            else:
-                messages.append(AIMessage(content=m["content"]))
-
-        response = await llm.ainvoke(messages)
-        response_text = response.content
-
-    elif not new_state.get("assets_reviewed"):
-        # CASE B: Fields done, now ask for assets (The "Missing Step")
-        new_state["is_complete"] = False
-        new_state["assets_reviewed"] = True  # Mark as asked so we don't loop forever
-
-        if new_assets:
-            # They just uploaded it spontaneously!
-            response_text = (
-                "✅ **Assets Received!** I've added them to your brief.\n\n"
-                "I have everything I need now. Starting market research..."
+            # Build context-aware prompt
+            prompt = INTAKE_PROMPT.format(
+                business_name=new_state.get("business_name") or "[not yet provided]",
+                primary_offering=new_state.get("primary_offering") or "[not yet provided]",
+                target_demographic=new_state.get("target_demographic") or "[not yet provided]",
+                call_to_action=new_state.get("call_to_action") or "[not yet provided]",
+                tone=new_state.get("tone") or "[not yet provided]",
+                missing_fields=", ".join(missing)
             )
+
+            messages = [SystemMessage(content=prompt)]
+            for m in state["messages"]:
+                if m["role"] == "user":
+                    messages.append(HumanMessage(content=m["content"]))
+                else:
+                    messages.append(AIMessage(content=m["content"]))
+
+            response = await llm.ainvoke(messages)
+            response_text = response.content
+
+        elif not new_state.get("assets_reviewed"):
+            # CASE B: Fields done, now ask for assets (The "Missing Step")
+            new_state["is_complete"] = False
+            new_state["assets_reviewed"] = True  # Mark as asked so we don't loop forever
+
+            if new_assets:
+                # They just uploaded it spontaneously!
+                response_text = (
+                    "✅ **Assets Received!** I've added them to your brief.\n\n"
+                    "I have everything I need now. Starting market research..."
+                )
+                new_state["is_complete"] = True
+                new_state["current_phase"] = "research"
+            else:
+                # We need to ask proactively
+                response_text = (
+                    f"Perfect! I have all the details for **{new_state.get('business_name', 'your business')}**.\n\n"
+                    "**One last thing:** Do you have a **logo** or **product images** you'd like to include?\n\n"
+                    "Please upload them now or paste a link. If not, just say 'no' and we'll start research."
+                )
+
+        else:
+            # CASE C: All done - User responded to asset prompt
+            # This handles: logo URLs, "no", "skip", "proceed", etc.
             new_state["is_complete"] = True
             new_state["current_phase"] = "research"
-        else:
-            # We need to ask proactively
-            response_text = (
-                f"Perfect! I have all the details for **{new_state.get('business_name', 'your business')}**.\n\n"
-                "**One last thing:** Do you have a **logo** or **product images** you'd like to include?\n\n"
-                "Please upload them now or paste a link. If not, just say 'no' and we'll start research."
-            )
 
-    else:
-        # CASE C: All done
-        new_state["is_complete"] = True
+            # Skip word patterns for declining assets
+            skip_words = ["no", "skip", "none", "don't have", "proceed", "no logo", "no assets",
+                          "don't need", "without", "nope", "n/a", "na", "not now", "later", "pass"]
+            msg_lower = latest_msg.lower()
 
-        if new_assets:
-            response_text = (
-                "✅ **Got it!** Assets received. Sending this to our research team..."
-            )
-        elif "no" in latest_msg.lower() or "don't" in latest_msg.lower():
-            response_text = (
-                "Understood. We'll proceed without specific assets. Starting research..."
-            )
-        else:
-            # Catch-all if they said something else after being asked
-            response_text = (
-                f"Great! Moving to research phase for {new_state.get('business_name', 'your business')}..."
-            )
+            if new_assets:
+                # User provided asset URL(s)
+                response_text = (
+                    "✅ **Got it!** Assets received. Sending this to our research team..."
+                )
+                logger.info(f"[IntakeAgent] CASE C: Assets received, transitioning to research")
+            elif any(skip in msg_lower for skip in skip_words):
+                # User explicitly declined to provide assets
+                response_text = (
+                    "Understood. We'll proceed without specific assets. Starting research..."
+                )
+                logger.info(f"[IntakeAgent] CASE C: User skipped assets, transitioning to research")
+            else:
+                # Catch-all - user said something else, proceed anyway
+                response_text = (
+                    f"Great! Moving to research phase for {new_state.get('business_name', 'your business')}..."
+                )
+                logger.info(f"[IntakeAgent] CASE C: Catch-all response, transitioning to research")
 
-        new_state["current_phase"] = "research"
+    except Exception as e:
+        # Error handling for asset transition
+        logger.error(f"[IntakeAgent] Asset transition error: {e}")
+        response_text = (
+            "I hit a snag processing that. Let me try again - "
+            "do you have any brand assets to include, or shall we proceed?"
+        )
+        new_state["current_phase"] = "intake"  # Stay in intake to retry
+        new_state["is_complete"] = False
 
-    logger.info(f"[IntakeAgent] Missing: {missing}, Assets Reviewed: {new_state.get('assets_reviewed')}, Complete: {new_state.get('is_complete')}")
+    logger.info(f"[IntakeAgent] Missing: {missing}, Assets Reviewed: {new_state.get('assets_reviewed')}, Complete: {new_state.get('is_complete')}, Phase: {new_state.get('current_phase')}")
 
     # Add to history
     new_state["messages"] = list(state["messages"]) + [
@@ -1135,10 +1156,13 @@ async def _call_production_api(
         return {"success": False, "error": f"Production API error: {str(e)}"}
 
 
-def _infer_industry(primary_offering: str, research_findings: dict) -> str:
+def _infer_industry_for_production(primary_offering: str, research_findings: dict) -> str:
     """
     Infer industry category from product/service description.
     Used by RAGNAROK to select appropriate video templates.
+
+    NOTE: This is the production-specific version that also checks research findings.
+    The simpler _infer_industry() at line 449 is used during research phase.
     """
     offering_lower = (primary_offering or "").lower()
 
@@ -1262,7 +1286,7 @@ async def production_node(state: VideoBriefState) -> dict:
     }
 
     # Infer industry for template selection
-    industry = _infer_industry(primary_offering, research_findings)
+    industry = _infer_industry_for_production(primary_offering, research_findings)
     logger.info(f"[ProductionNode] Inferred industry: {industry}")
 
     # Call RAGNAROK production API
