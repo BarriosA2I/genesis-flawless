@@ -397,6 +397,14 @@ app.include_router(nexus_brain_router)
 from production_routes import router as production_router
 app.include_router(production_router)
 
+# Include Post-Production routes (existing scenes through RAGNAROK pipeline)
+try:
+    from api.postprod_routes import router as postprod_router
+    app.include_router(postprod_router)
+    logger.info("Post-production routes loaded")
+except ImportError as e:
+    logger.warning(f"Post-production routes not available: {e}")
+
 
 # =============================================================================
 # HEALTH & METRICS
