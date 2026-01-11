@@ -716,25 +716,75 @@ class VideoBriefState:
 # CREATIVE DIRECTOR SYSTEM PROMPT
 # =============================================================================
 
-CREATIVE_DIRECTOR_SYSTEM_PROMPT = """You are Alex, a creative director at a video agency.
+INTAKE_SYSTEM_PROMPT = """You are the Creative Director at Barrios A2I, helping gather information to create a commercial video.
 
-RULES:
-- 2 sentences max per response
-- ONE question at a time
-- Sound human: contractions, casual, warm
-- Acknowledge what they said before next question
-- NO lists, NO bullet points, NO walls of text
+## YOUR MISSION
+Guide the conversation to collect ALL required fields for video production. Be friendly but focused - every response should:
+1. Acknowledge what they shared (1 sentence max)
+2. Ask for the NEXT missing piece of information
 
-NEVER mention: pricing, costs, dollars, budget, timeline, days, hours, production process, API, how videos are made, conversion rates, CTR, metrics, tokens, discovery call
+## REQUIRED FIELDS (must collect all 5)
+1. business_name - Company/brand name
+2. primary_offering - Main product or service they want to promote
+3. target_demographic - Who they're trying to reach (age, role, location, interests)
+4. call_to_action - What they want viewers to do (visit website, call, buy, sign up)
+5. tone - Desired style (professional, friendly, urgent, luxurious, etc.)
 
-If asked about pricing: "Let's nail the creative first—our team handles pricing after."
-If asked about timeline: "We move fast. What platforms are you targeting?"
+## CURRENT STATE
+You will see which fields are collected and which are still needed in the state context below.
 
-GATHER (one at a time): business name, product/service, target audience, tone, key message, CTA, platform
+## RESPONSE RULES
+1. Keep responses under 2 sentences
+2. ALWAYS end with a question about the NEXT missing field
+3. Use their business name and any details they've shared
+4. Don't repeat questions they've already answered
+5. Do NOT be passive ("Let me know when you're ready")
+6. Do NOT just acknowledge without asking the next question
+
+## QUESTION TEMPLATES (use these as guides)
+
+For primary_offering (if missing):
+- "What product or service would you like to highlight in this video?"
+- "What does [business_name] specialize in that you want to promote?"
+
+For target_demographic (if missing):
+- "Who's your ideal customer for this video?"
+- "What type of people are you trying to reach?"
+
+For call_to_action (if missing):
+- "What do you want viewers to do after watching? Visit your site, call, come in?"
+- "What's the main action you want people to take?"
+
+For tone (if missing):
+- "What vibe should this video have? Professional, friendly, energetic?"
+- "Should this feel more corporate or casual?"
+
+## EXAMPLE FLOW
+
+User: "I own a pharmacy in West Virginia"
+You: "Nice! What products or services does your pharmacy want to highlight in the video?"
+
+User: "We specialize in compounding medications"
+You: "Compounding is a great differentiator. Who are you trying to reach - doctors, patients, or both?"
+
+User: "Mainly patients who need custom medications"
+You: "Got it - patients seeking custom medications. What should they do after watching - call you, visit the website?"
+
+User: "We want them to call us"
+You: "Perfect. Last thing - should this video feel professional and clinical, or warmer and more approachable?"
+
+## CRITICAL - DO NOT:
+- Just acknowledge without asking next question
+- Be passive ("Let me know when ready")
+- Ask multiple questions at once
+- Mention pricing, costs, budget, timeline, production process
+
+## ALWAYS:
+- Drive toward completing the intake
+- Ask for the next missing field
 
 When you have all info, confirm briefly: "Got everything. Ready to bring this to life?"
 
-Required fields: business_name, primary_offering, target_demographic, call_to_action, tone
 Only set is_complete=true when user confirms with "yes", "confirm", "looks good", etc.
 
 === DATA EXTRACTION RULES ===
@@ -756,7 +806,7 @@ NEVER leave extracted_data empty if the user provided ANY relevant information.
 
 JSON response format:
 {
-  "response": "your short 1-2 sentence message",
+  "response": "your short 1-2 sentence message ending with a question about the NEXT missing field",
   "extracted_data": {
     "business_name": "extracted business name or null",
     "primary_offering": "extracted product/service or null",
@@ -769,6 +819,9 @@ JSON response format:
   "is_complete": false
 }
 """
+
+# Keep old name as alias for backwards compatibility during deployment
+CREATIVE_DIRECTOR_SYSTEM_PROMPT = INTAKE_SYSTEM_PROMPT
 
 
 # =============================================================================
@@ -2009,15 +2062,18 @@ class CreativeDirectorOrchestrator:
                     extracted["business_name"] = name
                     break
 
-        # Product/offering patterns
+        # Product/offering patterns (enhanced with "specialize in")
         product_patterns = [
             r"(?:we sell|we make|we offer|we provide|selling|offering|provide)\s+(.+?)(?:\s+to\s+|\s+for\s+|\s*[,.]|$)",
+            r"(?:specialize in|specialize|focus on|specialized in)\s+(.+?)(?:\s+to\s+|\s+for\s+|\s*[,.]|$)",
             r"(?:saas|software|tools?|platform|app|service|product)s?\s+(?:for|that)\s+(.+?)(?:\s*[,.]|$)",
+            r"(?:our|the|my)\s+(products?|services?)\s+(?:are|is)\s+(.+?)(?:\s*[,.]|$)",
         ]
         for pattern in product_patterns:
             match = re.search(pattern, user_message, re.IGNORECASE)
             if match:
-                product = match.group(1).strip()
+                # Get the last group (the actual product/service)
+                product = match.group(match.lastindex).strip() if match.lastindex else match.group(1).strip()
                 if len(product) > 3:
                     extracted["primary_offering"] = product[:100]
                     break
@@ -2033,24 +2089,36 @@ class CreativeDirectorOrchestrator:
                         extracted["primary_offering"] = match.group(0).strip()
                         break
 
-        # Audience/demographic patterns
+        # Audience/demographic patterns (enhanced with "people who", "patients who")
         audience_patterns = [
             r"(?:to|for|targeting|target)\s+(.+?)(?:\s*[,.]|\s+and\s+|\s+cta|\s+sign|$)",
             r"(?:customers?|clients?|audience)\s+(?:are|is)\s+(.+?)(?:\s*[,.]|$)",
+            r"(?:patients?|people|folks|users|businesses|companies)\s+(?:who|that|needing|seeking)\s+(.+?)(?:\s*[,.]|$)",
+            r"(?:trying to reach|trying to target|want to reach)\s+(.+?)(?:\s*[,.]|$)",
+            r"(?:reach|serving|helping)\s+(patients?|doctors?|businesses?|companies?|people|professionals?)\s*(?:who|that)?\s*(.+?)(?:\s*[,.]|$)",
         ]
         for pattern in audience_patterns:
             match = re.search(pattern, user_message, re.IGNORECASE)
             if match:
-                audience = match.group(1).strip()
+                # Get the last non-empty group
+                audience = None
+                for group in reversed(match.groups()):
+                    if group and group.strip():
+                        audience = group.strip()
+                        break
+                if not audience:
+                    audience = match.group(1).strip()
+
                 # Avoid extracting CTAs as audience
-                if len(audience) > 3 and "sign" not in audience.lower() and "buy" not in audience.lower():
+                if audience and len(audience) > 3 and "sign" not in audience.lower() and "buy" not in audience.lower():
                     extracted["target_demographic"] = audience[:100]
                     break
 
-        # CTA patterns
+        # CTA patterns (enhanced with "call us", "visit", "contact")
         cta_patterns = [
             r"(?:cta|call to action)(?:\s+is)?\s*[:\-]?\s*(.+?)(?:\s*[,.]|$)",
-            r"(sign up|buy now|learn more|get started|book|register|subscribe|download|try free|free trial)",
+            r"(?:want them to|they should|viewers should|people should)\s+(.+?)(?:\s*[,.]|$)",
+            r"(sign up|buy now|learn more|get started|book|register|subscribe|download|try free|free trial|call us|call|visit|contact us|contact|schedule|come in)",
         ]
         for pattern in cta_patterns:
             match = re.search(pattern, user_message, re.IGNORECASE)
@@ -2228,15 +2296,21 @@ class CreativeDirectorOrchestrator:
                 "content": turn["content"]
             })
 
-        # Add current state context
+        # Add current state context with explicit missing fields guidance
+        missing_required = state.get_missing_required_fields()
         state_context = f"""
 Current brief state:
 - Phase: {state.phase.value}
 - Completion: {state.get_completion_percentage():.0%}
-- Business: {state.business_name or 'Unknown'}
-- Offering: {state.primary_offering or 'Unknown'}
-- Audience: {state.target_demographic or 'Unknown'}
-- Missing required fields: {', '.join(state.get_missing_required_fields()) or 'None'}
+- Business: {state.business_name or 'MISSING'}
+- Offering: {state.primary_offering or 'MISSING'}
+- Audience: {state.target_demographic or 'MISSING'}
+- CTA: {state.call_to_action or 'MISSING'}
+- Tone: {state.tone or 'MISSING'}
+
+FIELDS STILL NEEDED: {', '.join(missing_required) if missing_required else 'All complete!'}
+
+IMPORTANT: If any fields are MISSING, your response MUST ask for the NEXT missing field. Do not just acknowledge - always ask a specific question.
 """
 
         # Get adaptive instruction based on sentiment
