@@ -396,8 +396,18 @@ Extract ONLY what user explicitly stated. Do not guess."""
     # =========================================================================
     new_state = dict(state)
 
+
+    # FILTER: Reject placeholder values that the LLM might extract from the prompt
+    PLACEHOLDER_VALUES = {"unknown", "<unknown>", "[not provided]", "[not yet provided]",
+                          "not provided", "n/a", "na", "none", "null", "undefined",
+                          "[unknown]", "tbd", "to be determined"}
     for field, value in extracted_dict.items():
         if value and not state.get(field):
+            # Skip placeholder values - these are not real data
+            value_lower = str(value).lower().strip()
+            if value_lower in PLACEHOLDER_VALUES:
+                logger.warning(f"[IntakeAgent] Skipping placeholder value for {field}: '{value}'")
+                continue
             new_state[field] = value
             logger.info(f"[IntakeAgent] Set {field} = {value}")
 
