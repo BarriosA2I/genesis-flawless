@@ -718,7 +718,18 @@ class VideoBriefState:
 
 INTAKE_SYSTEM_PROMPT = """You are the Creative Director at Barrios A2I.
 
-## CRITICAL RULE - READ THIS FIRST
+## ABSOLUTE RULE #1 - READ THIS FIRST
+**NEVER say "Ready to create your video" or ask for confirmation if ANY field is missing.**
+If business_name, primary_offering, target_demographic, call_to_action, OR tone is empty:
+- DO NOT say "Ready to create"
+- DO NOT ask "shall we proceed"
+- DO NOT say "just say yes to confirm"
+- INSTEAD: Ask for the NEXT missing field
+
+WRONG (when fields missing): "Great! Ready to create your video?"
+RIGHT (when fields missing): "Great! What product or service should we highlight?"
+
+## CRITICAL RULE #2
 **EVERY response you give MUST end with a question mark (?)**
 If your response doesn't end with "?" you are WRONG. Fix it.
 
@@ -2398,33 +2409,90 @@ class CreativeDirectorOrchestrator:
 
     def force_question_in_response(self, response_text: str, missing_fields: list) -> str:
         """
-        Post-process AI response to ensure it ends with a question.
-        If response doesn't end with ?, append the next logical question.
+        CRITICAL: Post-process AI response to ensure it asks for missing fields.
+        NEVER say "Ready to create" unless ALL 5 fields are complete.
         """
+        import re
+
         if not response_text:
             return "What's the name of your business?"
 
-        # Check if response already ends with a question
-        cleaned = response_text.strip()
-        if cleaned.endswith('?'):
-            return response_text
+        # Normalize field names - handle PRODUCT vs primary_offering, etc.
+        normalized_missing = set()
+        for field in missing_fields:
+            f = field.lower().strip()
+            if f in ['product', 'primary_offering', 'offering', 'service']:
+                normalized_missing.add('primary_offering')
+            elif f in ['audience', 'target_demographic', 'demographic', 'target']:
+                normalized_missing.add('target_demographic')
+            elif f in ['cta', 'call_to_action', 'action']:
+                normalized_missing.add('call_to_action')
+            elif f in ['business', 'business_name', 'name', 'company']:
+                normalized_missing.add('business_name')
+            elif f in ['tone', 'vibe', 'style', 'feel']:
+                normalized_missing.add('tone')
 
-        # Response doesn't end with question - need to add one
+        # CRITICAL: If fields are missing, REMOVE any "Ready to create" from response
+        if normalized_missing:
+            # Strip all variations of "ready to create"
+            patterns_to_remove = [
+                r"Ready to create your video\??\s*",
+                r"ready to create your video\??\s*",
+                r"Ready to proceed\??\s*",
+                r"ready to proceed\??\s*",
+                r"Ready to get started\??\s*",
+                r"Shall we create your video\??\s*",
+                r"Want to create your video\??\s*",
+                r"Let's create your video\??\s*",
+                r"Just say ['\"]?yes['\"]? to confirm!?\s*",
+                r"Say ['\"]?yes['\"]? when ready\.?\s*",
+            ]
+            for pattern in patterns_to_remove:
+                response_text = re.sub(pattern, '', response_text, flags=re.IGNORECASE)
+            response_text = response_text.strip()
+
+        # Question map
         question_map = {
             'business_name': "What's the name of your business?",
             'primary_offering': "What product or service do you want to highlight?",
             'target_demographic': "Who are you trying to reach with this video?",
             'call_to_action': "What should viewers do after watching?",
-            'tone': "What vibe should this video have?"
+            'tone': "What vibe - professional, fun, or luxurious?"
         }
 
-        # Find the first missing field and add its question
-        for field in ['business_name', 'primary_offering', 'target_demographic', 'call_to_action', 'tone']:
-            if field in missing_fields:
-                return f"{response_text} {question_map[field]}"
+        # If fields are missing, MUST ask for one
+        if normalized_missing:
+            priority = ['business_name', 'primary_offering', 'target_demographic', 'call_to_action', 'tone']
+            for field in priority:
+                if field in normalized_missing:
+                    question = question_map[field]
+                    # Check if response already has appropriate question
+                    resp_lower = response_text.lower()
+                    if field == 'business_name' and any(w in resp_lower for w in ['business', 'company', 'called']):
+                        if response_text.strip().endswith('?'):
+                            return response_text
+                    elif field == 'primary_offering' and any(w in resp_lower for w in ['product', 'service', 'offer', 'highlight', 'specialize']):
+                        if response_text.strip().endswith('?'):
+                            return response_text
+                    elif field == 'target_demographic' and any(w in resp_lower for w in ['audience', 'reach', 'target', 'who are you']):
+                        if response_text.strip().endswith('?'):
+                            return response_text
+                    elif field == 'call_to_action' and any(w in resp_lower for w in ['after watching', 'viewers do', 'action', 'cta']):
+                        if response_text.strip().endswith('?'):
+                            return response_text
+                    elif field == 'tone' and any(w in resp_lower for w in ['vibe', 'tone', 'style', 'feel']):
+                        if response_text.strip().endswith('?'):
+                            return response_text
 
-        # All fields complete - ask for confirmation
-        return f"{response_text} Ready to create your video?"
+                    # Response doesn't have right question - add it
+                    if response_text.strip():
+                        return f"{response_text.strip()} {question}"
+                    return question
+
+        # All fields complete - NOW we can ask for confirmation
+        if response_text.strip().endswith('?'):
+            return response_text
+        return f"{response_text.strip()} Ready to create your video? Just say 'yes' to confirm!"
 
     async def _generate_response(
         self,
@@ -2814,10 +2882,12 @@ IMPORTANT: If any fields are MISSING, your response MUST ask for the NEXT missin
                 # =================================================================
                 if parsed and "response" in parsed:
                     missing = progress_info.get("missing_fields", [])
+                    logger.info(f"[FORCE_QUESTION] Before: missing_fields={missing}, response={parsed['response'][:50]}...")
                     original_response = parsed["response"]
                     parsed["response"] = self.force_question_in_response(parsed["response"], missing)
                     if original_response != parsed["response"]:
-                        logger.info(f"[FORCE_QUESTION] Added question to response. Missing fields: {missing}")
+                        logger.info(f"[FORCE_QUESTION] Modified response. Original ended with: ...{original_response[-30:]}")
+                        logger.info(f"[FORCE_QUESTION] New response ends with: ...{parsed['response'][-30:]}")
 
                 logger.info(f"[BriefProgress] Session {state.session_id}: {progress_info['progress_percentage']}% complete, missing: {progress_info['missing_fields']}, extracted: {list(extracted.keys()) if extracted else []}")
 
