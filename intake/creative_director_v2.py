@@ -85,6 +85,29 @@ Create exactly 5 scenes covering: hook, problem, solution, proof, cta.
 Make it emotionally compelling and specific to {business_name}.
 """
 
+# Reviewer Node - Approval/Revision detection patterns
+APPROVAL_PATTERNS = [
+    "approve", "approved", "looks good", "perfect", "love it", "great",
+    "yes", "go ahead", "proceed", "let's do it", "ship it", "send it",
+    "ready to produce", "ready for production", "make it", "create it",
+    "that's perfect", "exactly what i wanted", "nailed it", "awesome",
+    "👍", "✅", "🎬", "produce it", "generate", "make the video"
+]
+
+REVISION_PATTERNS = [
+    "change", "revise", "update", "modify", "tweak", "adjust",
+    "make it more", "make it less", "can you", "could you",
+    "i'd like", "i want", "different", "instead", "but", "however",
+    "not quite", "almost", "close but", "try again", "redo",
+    "more", "less", "shorter", "longer", "faster", "slower",
+    "upbeat", "serious", "funny", "professional", "casual"
+]
+
+REJECTION_PATTERNS = [
+    "start over", "cancel", "stop", "forget it", "never mind",
+    "don't want", "scrap it", "delete", "trash", "no thanks"
+]
+
 
 # ============================================================================
 # 1. SHARED STATE - Single Source of Truth
@@ -121,6 +144,11 @@ class VideoBriefState(TypedDict):
 
     # Script draft from Script Writer
     script_draft: Optional[dict]
+
+    # Review workflow fields
+    script_status: Optional[str]       # "pending_review" | "approved" | "revision_requested" | "rejected"
+    revision_feedback: Optional[str]   # User's revision request
+    revision_count: int                # Track revision iterations (max 3)
 
 
 # ============================================================================
@@ -651,8 +679,12 @@ async def script_writer_node(state: VideoBriefState) -> dict:
     # Build research summary for the prompt
     research_summary = _build_research_summary(state.get("research_findings", {}))
 
+    # Check if this is a revision
+    revision_feedback = state.get("revision_feedback")
+    is_revision = revision_feedback is not None and state.get("script_status") == "revision_requested"
+
     # Build the prompt
-    prompt = SCRIPT_WRITER_PROMPT.format(
+    base_prompt = SCRIPT_WRITER_PROMPT.format(
         business_name=state.get("business_name", "the business"),
         primary_offering=state.get("primary_offering", "their product/service"),
         target_demographic=state.get("target_demographic", "their target audience"),
@@ -660,6 +692,23 @@ async def script_writer_node(state: VideoBriefState) -> dict:
         tone=state.get("tone", "professional"),
         research_summary=research_summary
     )
+
+    # Add revision context if applicable
+    if is_revision:
+        previous_script = state.get("script_draft", {})
+        previous_title = previous_script.get("title", "previous version")
+
+        prompt = (
+            f"{base_prompt}\n\n"
+            f"## REVISION REQUEST\n"
+            f"The previous script titled \"{previous_title}\" needs changes.\n"
+            f"User feedback: \"{revision_feedback}\"\n\n"
+            f"Please generate a NEW version that addresses this feedback while "
+            f"maintaining the core messaging and 5-scene structure."
+        )
+        logger.info(f"[ScriptWriterAgent] Revision mode - feedback: {revision_feedback[:100]}")
+    else:
+        prompt = base_prompt
 
     try:
         llm = get_llm()
@@ -678,19 +727,32 @@ async def script_writer_node(state: VideoBriefState) -> dict:
         if script_data:
             logger.info(f"[ScriptWriterAgent] Script generated: {script_data.get('title', 'Untitled')}")
             new_state["script_draft"] = script_data
+            new_state["script_status"] = "pending_review"
+
+            # Clear revision feedback after applying it
+            if is_revision:
+                new_state["revision_feedback"] = None
 
             # Build user-friendly response
             script_preview = _format_script_preview(script_data)
+
+            revision_note = ""
+            if is_revision:
+                revision_count = state.get("revision_count", 1)
+                revision_note = f"**Revision #{revision_count}** - Updated based on your feedback.\n\n"
+
             response_message = (
-                f"✍️ **Script Draft Complete!**\n\n"
+                f"✍️ **Script {'Revised' if is_revision else 'Draft Complete'}!**\n\n"
+                f"{revision_note}"
                 f"**Title:** {script_data.get('title', 'Untitled Commercial')}\n"
                 f"**Duration:** {script_data.get('duration_seconds', 30)} seconds\n"
                 f"**Scenes:** {len(script_data.get('scenes', []))}\n\n"
                 f"---\n\n"
                 f"{script_preview}\n\n"
                 f"---\n\n"
-                f"Does this script capture what you're looking for? "
-                f"I can revise it or we can move to production."
+                f"Does this script capture what you're looking for?\n"
+                f"- **Approve** - Say 'looks good' to proceed to production\n"
+                f"- **Revise** - Tell me what to change (e.g., 'make it more upbeat')"
             )
         else:
             logger.error("[ScriptWriterAgent] Failed to parse script JSON")
@@ -751,44 +813,241 @@ def route_after_research(state: VideoBriefState) -> Literal["script_writer", "re
     return "researcher"
 
 
+def _detect_review_intent(message: str) -> str:
+    """
+    Detect user's intent from their review message.
+    Returns: "approved" | "revision" | "rejected" | "unclear"
+    """
+    message_lower = message.lower()
+
+    # Check rejection first (highest priority)
+    for pattern in REJECTION_PATTERNS:
+        if pattern in message_lower:
+            return "rejected"
+
+    # Check approval
+    approval_score = sum(1 for p in APPROVAL_PATTERNS if p in message_lower)
+
+    # Check revision
+    revision_score = sum(1 for p in REVISION_PATTERNS if p in message_lower)
+
+    # If message is long (>50 chars) and contains revision words, likely revision
+    if len(message) > 50 and revision_score > 0:
+        return "revision"
+
+    # If clear approval signals
+    if approval_score >= 1 and revision_score == 0:
+        return "approved"
+
+    # If revision signals present
+    if revision_score >= 1:
+        return "revision"
+
+    # Short positive responses
+    if message_lower in ["yes", "ok", "okay", "sure", "yep", "yeah", "y"]:
+        return "approved"
+
+    return "unclear"
+
+
+async def reviewer_node(state: VideoBriefState) -> dict:
+    """
+    Reviewer Node - Handles user feedback on script draft.
+
+    Detects:
+    - APPROVAL: User likes the script → ready for production
+    - REVISION: User wants changes → store feedback, regenerate
+    - REJECTION: User wants to stop → end workflow
+
+    This creates a human-in-the-loop approval system.
+    """
+    logger.info(f"[ReviewerAgent] Processing user feedback")
+
+    new_state = dict(state)
+
+    # Get the last user message (their feedback)
+    messages = state.get("messages", [])
+    user_messages = [m for m in messages if m.get("role") == "user"]
+
+    if not user_messages:
+        # No user message yet, stay in review
+        new_state["script_status"] = "pending_review"
+        return new_state
+
+    last_user_message = user_messages[-1].get("content", "").lower().strip()
+    logger.info(f"[ReviewerAgent] Analyzing: '{last_user_message[:100]}'")
+
+    # Detect intent
+    intent = _detect_review_intent(last_user_message)
+    logger.info(f"[ReviewerAgent] Detected intent: {intent}")
+
+    if intent == "approved":
+        new_state["script_status"] = "approved"
+        new_state["current_phase"] = "approved"
+        response_text = (
+            "🎬 **Script Approved!**\n\n"
+            f"Excellent! Your commercial script for **{state.get('business_name', 'your business')}** "
+            f"is locked and ready for production.\n\n"
+            f"The next step is video generation with RAGNAROK. "
+            f"Would you like me to start producing your commercial?"
+        )
+
+    elif intent == "revision":
+        revision_count = state.get("revision_count", 0) + 1
+
+        if revision_count > 3:
+            # Max revisions reached
+            new_state["script_status"] = "max_revisions"
+            new_state["current_phase"] = "max_revisions"
+            response_text = (
+                "📝 We've done several revisions on this script. "
+                "To keep things moving, I recommend we either:\n\n"
+                "1. **Approve** the current version and refine in production\n"
+                "2. **Start fresh** with a new brief\n\n"
+                "What would you like to do?"
+            )
+        else:
+            new_state["script_status"] = "revision_requested"
+            new_state["revision_feedback"] = last_user_message
+            new_state["revision_count"] = revision_count
+            new_state["current_phase"] = "revising"
+            response_text = (
+                f"✏️ **Revision #{revision_count}**\n\n"
+                f"Got it! I'll incorporate your feedback:\n"
+                f"> *\"{last_user_message[:200]}{'...' if len(last_user_message) > 200 else ''}\"*\n\n"
+                f"Generating updated script..."
+            )
+
+    elif intent == "rejected":
+        new_state["script_status"] = "rejected"
+        new_state["current_phase"] = "rejected"
+        response_text = (
+            "No problem! I've set this script aside.\n\n"
+            "Would you like to:\n"
+            "1. **Start over** with a new commercial concept?\n"
+            "2. **End** this session?\n\n"
+            "Just let me know how you'd like to proceed."
+        )
+
+    else:
+        # Unclear intent - ask for clarification
+        new_state["script_status"] = "pending_review"
+        response_text = (
+            "I want to make sure I understand your feedback.\n\n"
+            "Could you clarify:\n"
+            "- **Approve** - Say 'looks good' or 'approve' to proceed to production\n"
+            "- **Revise** - Tell me what changes you'd like (e.g., 'make it more upbeat')\n"
+            "- **Start over** - Say 'start over' to begin fresh\n\n"
+            "What would you like to do with this script?"
+        )
+
+    # Add response to messages
+    new_state["messages"] = list(state.get("messages", [])) + [{
+        "role": "assistant",
+        "content": response_text
+    }]
+
+    return new_state
+
+
+def route_after_script_writer(state: VideoBriefState) -> Literal["reviewer", "script_writer"]:
+    """
+    After script writer generates a script, go to reviewer for user feedback.
+    """
+    script_status = state.get("script_status")
+
+    if script_status == "pending_review":
+        logger.info("[Router] Script ready → reviewer (awaiting feedback)")
+        return "reviewer"
+
+    # Error case - retry
+    logger.info("[Router] Script error → retry script_writer")
+    return "script_writer"
+
+
+def route_after_reviewer(state: VideoBriefState) -> Literal["script_writer", "production", "end"]:
+    """
+    After reviewer processes feedback:
+    - approved → production (or end for now)
+    - revision_requested → back to script_writer
+    - rejected/max_revisions → end
+    """
+    script_status = state.get("script_status")
+
+    if script_status == "approved":
+        logger.info("[Router] Script approved → production")
+        return "production"  # Will go to END until production node exists
+
+    if script_status == "revision_requested":
+        logger.info("[Router] Revision requested → script_writer")
+        return "script_writer"
+
+    if script_status in ["rejected", "max_revisions"]:
+        logger.info(f"[Router] Status {script_status} → end")
+        return "end"
+
+    # Unclear/pending - stay in reviewer (wait for next input)
+    logger.info("[Router] Status unclear → end (await next input)")
+    return "end"
+
+
 # ============================================================================
 # 7. BUILD GRAPH
 # ============================================================================
 
 def build_graph():
-    """Construct the LangGraph state machine."""
+    """Construct the LangGraph state machine with approval loop."""
     workflow = StateGraph(VideoBriefState)
 
-    # Add nodes
+    # Add all nodes
     workflow.add_node("intake", intake_node)
     workflow.add_node("researcher", researcher_node)
     workflow.add_node("script_writer", script_writer_node)
+    workflow.add_node("reviewer", reviewer_node)  # NEW
 
     # Entry point
     workflow.add_edge(START, "intake")
 
-    # Conditional routing after intake
+    # After intake: wait for input OR go to research
     workflow.add_conditional_edges(
         "intake",
         route_after_intake,
         {
-            "intake": END,        # Wait for next user input
+            "intake": END,
             "researcher": "researcher"
         }
     )
 
-    # Conditional routing after research
+    # After research: go to script writer
     workflow.add_conditional_edges(
         "researcher",
         route_after_research,
         {
-            "researcher": "researcher",      # Retry research
-            "script_writer": "script_writer" # Proceed to scripting
+            "researcher": "researcher",
+            "script_writer": "script_writer"
         }
     )
 
-    # Script writer goes to END (for now - reviewer node later)
-    workflow.add_edge("script_writer", END)
+    # After script writer: go to reviewer
+    workflow.add_conditional_edges(
+        "script_writer",
+        route_after_script_writer,
+        {
+            "reviewer": END,        # END to wait for user input, then reviewer processes
+            "script_writer": "script_writer"
+        }
+    )
+
+    # After reviewer: loop back to script_writer OR end
+    workflow.add_conditional_edges(
+        "reviewer",
+        route_after_reviewer,
+        {
+            "script_writer": "script_writer",  # Revision loop
+            "production": END,                  # Approved - END for now (production node later)
+            "end": END
+        }
+    )
 
     return workflow.compile()
 
@@ -821,6 +1080,9 @@ class CreativeDirectorV2:
             "top_rivals": None,
             "research_findings": None,
             "script_draft": None,
+            "script_status": None,
+            "revision_feedback": None,
+            "revision_count": 0,
             "messages": [],
             "missing_fields": [
                 "business_name", "primary_offering",
@@ -853,17 +1115,41 @@ class CreativeDirectorV2:
         # Add user message
         state["messages"].append({"role": "user", "content": message})
 
-        # Run graph
-        try:
-            result = await self.graph.ainvoke(state)
-            self.sessions[session_id] = result
-        except Exception as e:
-            logger.error(f"Graph error: {e}")
-            result = state
-            result["messages"].append({
-                "role": "assistant",
-                "content": "I encountered an issue. Could you repeat that?"
-            })
+        # Determine which node to invoke based on current state
+        current_phase = state.get("current_phase", "intake")
+        script_status = state.get("script_status")
+
+        # If script is pending review, route to reviewer
+        if script_status == "pending_review" or current_phase == "scripting":
+            logger.info(f"[V2] Script pending review - invoking reviewer")
+            try:
+                state = await reviewer_node(state)
+
+                # If revision requested, immediately generate new script
+                if state.get("script_status") == "revision_requested":
+                    state = await script_writer_node(state)
+
+                result = state
+                self.sessions[session_id] = result
+            except Exception as e:
+                logger.error(f"Reviewer error: {e}")
+                result = state
+                result["messages"].append({
+                    "role": "assistant",
+                    "content": "I encountered an issue processing your feedback. Could you try again?"
+                })
+        else:
+            # Normal flow through graph
+            try:
+                result = await self.graph.ainvoke(state)
+                self.sessions[session_id] = result
+            except Exception as e:
+                logger.error(f"Graph error: {e}")
+                result = state
+                result["messages"].append({
+                    "role": "assistant",
+                    "content": "I encountered an issue. Could you repeat that?"
+                })
 
         # Calculate progress
         required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
@@ -886,6 +1172,8 @@ class CreativeDirectorV2:
             "missing_fields": missing_display,
             "current_phase": result.get("current_phase", "intake"),
             "is_complete": result.get("is_complete", False),
+            "script_status": result.get("script_status"),
+            "revision_count": result.get("revision_count", 0),
             "version": "v2-langgraph",
             "metadata": {
                 "session_id": session_id,
