@@ -186,6 +186,7 @@ async def chat(request: ChatRequest):
                 "latency_ms": latency_ms,
                 "turns_count": state.get("turns_count", 0),
                 "extracted_fields": list(state.get("brief_data", {}).keys()) if state.get("brief_data") else [],
+                "extracted_data": state.get("brief_data", {}),  # Full brief data for voice selector
                 "sentiment": result.get("sentiment", {}),
             }
         )
