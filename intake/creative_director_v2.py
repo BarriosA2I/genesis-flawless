@@ -19,7 +19,7 @@ import logging
 import time
 import httpx
 from typing import TypedDict, List, Optional, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 
 # LangGraph
 from langgraph.graph import StateGraph, START, END
@@ -36,6 +36,9 @@ logger = logging.getLogger("creative_director_v2")
 # Trinity API Configuration
 TRINITY_URL = "https://barrios-genesis-flawless.onrender.com/api/genesis/research"
 TRINITY_TIMEOUT = 60.0  # Trinity research can take time
+
+# RAGNAROK Production API Configuration
+GENESIS_API_BASE = "https://barrios-genesis-flawless.onrender.com"
 
 # Script Writer Prompt
 SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for video advertisements.
@@ -149,6 +152,16 @@ class VideoBriefState(TypedDict):
     script_status: Optional[str]       # "pending_review" | "approved" | "revision_requested" | "rejected"
     revision_feedback: Optional[str]   # User's revision request
     revision_count: int                # Track revision iterations (max 3)
+
+    # Production tracking (NEW)
+    production_id: Optional[str]          # RAGNAROK pipeline ID
+    production_status: Optional[str]      # queued, processing, completed, failed
+    production_progress: Optional[float]  # 0.0 to 1.0
+    production_phase: Optional[str]       # Current production phase
+    production_error: Optional[str]       # Error message if failed
+    video_urls: Optional[dict]            # Platform → URL mapping {youtube: ..., tiktok: ..., instagram: ...}
+    production_cost: Optional[float]      # Estimated cost in USD
+    production_started_at: Optional[str]  # ISO timestamp
 
 
 # ============================================================================
@@ -950,6 +963,273 @@ async def reviewer_node(state: VideoBriefState) -> dict:
     return new_state
 
 
+# ============================================================================
+# PRODUCTION HELPER FUNCTIONS
+# ============================================================================
+
+async def _call_production_api(
+    session_id: str,
+    brief: dict,
+    script: dict,
+    industry: str,
+    business_name: str,
+    style: str = "modern",
+    target_platforms: Optional[list] = None
+) -> dict:
+    """
+    Call the RAGNAROK production API to start video generation.
+
+    Args:
+        session_id: Session identifier
+        brief: Complete video brief with all 5 fields
+        script: Approved script from script_writer_node
+        industry: Inferred industry category
+        business_name: Business name for tracking
+        style: Visual style (modern, premium, dynamic, etc.)
+        target_platforms: List of platforms (default: youtube, tiktok, instagram)
+
+    Returns:
+        Dict with production_id on success, error message on failure
+    """
+    if target_platforms is None:
+        target_platforms = ["youtube", "tiktok", "instagram"]
+
+    payload = {
+        "brief": {
+            **brief,
+            "script": script,
+            "approved": True,
+            "approved_at": datetime.now(timezone.utc).isoformat()
+        },
+        "industry": industry,
+        "business_name": business_name,
+        "style": style,
+        "goals": brief.get("goals", ["brand_awareness"]),
+        "target_platforms": target_platforms
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{GENESIS_API_BASE}/api/production/start/{session_id}",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+
+            if response.status_code == 200:
+                return {"success": True, **response.json()}
+            else:
+                return {
+                    "success": False,
+                    "error": f"Production API returned {response.status_code}: {response.text}"
+                }
+    except httpx.TimeoutException:
+        return {"success": False, "error": "Production API timeout (30s exceeded)"}
+    except Exception as e:
+        logger.error(f"[ProductionAPI] Error: {e}")
+        return {"success": False, "error": f"Production API error: {str(e)}"}
+
+
+def _infer_industry(primary_offering: str, research_findings: dict) -> str:
+    """
+    Infer industry category from product/service description.
+    Used by RAGNAROK to select appropriate video templates.
+    """
+    offering_lower = (primary_offering or "").lower()
+
+    # Keyword matching for industry categories
+    industry_keywords = {
+        "technology": ["software", "app", "saas", "tech", "digital", "ai", "automation", "platform"],
+        "healthcare": ["health", "medical", "clinic", "doctor", "therapy", "wellness", "fitness"],
+        "finance": ["finance", "bank", "investment", "insurance", "loan", "mortgage", "crypto"],
+        "retail": ["shop", "store", "ecommerce", "product", "clothing", "fashion", "jewelry"],
+        "food": ["restaurant", "food", "cafe", "catering", "bakery", "coffee", "meal"],
+        "beauty": ["salon", "spa", "beauty", "hair", "skin", "cosmetic", "makeup", "nail"],
+        "real_estate": ["real estate", "property", "home", "apartment", "realtor", "housing"],
+        "education": ["school", "training", "course", "education", "tutoring", "academy"],
+        "automotive": ["car", "auto", "vehicle", "mechanic", "dealership", "automotive"],
+        "legal": ["law", "legal", "attorney", "lawyer", "court"],
+        "marketing": ["marketing", "advertising", "agency", "creative", "branding"],
+    }
+
+    for industry, keywords in industry_keywords.items():
+        if any(kw in offering_lower for kw in keywords):
+            return industry
+
+    # Check research findings for industry hints
+    if research_findings:
+        research_industry = research_findings.get("industry", "")
+        if research_industry:
+            return research_industry
+
+    return "general"  # Default fallback
+
+
+def _map_tone_to_style(tone: str) -> str:
+    """
+    Map conversational tone to RAGNAROK visual style engine.
+
+    Tone (from user) → Style (for video generation)
+    """
+    tone_style_map = {
+        "professional": "corporate",
+        "friendly": "modern",
+        "luxurious": "premium",
+        "elegant": "premium",
+        "energetic": "dynamic",
+        "playful": "fun",
+        "serious": "corporate",
+        "warm": "lifestyle",
+        "casual": "modern",
+        "sophisticated": "premium",
+        "bold": "dynamic",
+        "minimalist": "clean",
+    }
+
+    tone_lower = (tone or "").lower()
+    for key, style in tone_style_map.items():
+        if key in tone_lower:
+            return style
+
+    return "modern"  # Default fallback
+
+
+async def production_node(state: VideoBriefState) -> dict:
+    """
+    Production Node: Triggers RAGNAROK video generation.
+
+    Entry condition: script_status == "approved"
+
+    Workflow:
+    1. Validate script is approved and exists
+    2. Build production payload from state
+    3. Call RAGNAROK API (/api/production/start)
+    4. Store production_id for tracking
+    5. Return confirmation or error message
+
+    Exit: Always goes to END (terminal node)
+    """
+    logger.info(f"[ProductionNode] Starting for session {state.get('session_id', 'unknown')}")
+
+    new_state = dict(state)
+
+    # Validation: Script must be approved
+    if state.get("script_status") != "approved":
+        logger.warning(f"[ProductionNode] Script not approved: {state.get('script_status')}")
+        new_state["production_status"] = "failed"
+        new_state["production_error"] = "Script must be approved before production"
+        new_state["messages"] = list(state.get("messages", [])) + [{
+            "role": "assistant",
+            "content": "⚠️ The script needs to be approved before we can start video production. Please review and approve the script first."
+        }]
+        return new_state
+
+    # Validation: Script draft must exist
+    script_draft = state.get("script_draft")
+    if not script_draft:
+        logger.warning("[ProductionNode] No script draft found")
+        new_state["production_status"] = "failed"
+        new_state["production_error"] = "No script found"
+        new_state["messages"] = list(state.get("messages", [])) + [{
+            "role": "assistant",
+            "content": "⚠️ No script found. Please generate a script first."
+        }]
+        return new_state
+
+    # Extract required fields
+    business_name = state.get("business_name", "")
+    primary_offering = state.get("primary_offering", "")
+    target_demographic = state.get("target_demographic", "")
+    call_to_action = state.get("call_to_action", "")
+    tone = state.get("tone", "professional")
+    research_findings = state.get("research_findings", {})
+
+    # Build complete brief
+    brief = {
+        "business_name": business_name,
+        "primary_offering": primary_offering,
+        "target_demographic": target_demographic,
+        "call_to_action": call_to_action,
+        "tone": tone,
+        "research_data": research_findings,
+        "goals": ["brand_awareness", "lead_generation"]
+    }
+
+    # Infer industry for template selection
+    industry = _infer_industry(primary_offering, research_findings)
+    logger.info(f"[ProductionNode] Inferred industry: {industry}")
+
+    # Call RAGNAROK production API
+    result = await _call_production_api(
+        session_id=state.get("session_id", ""),
+        brief=brief,
+        script=script_draft,
+        industry=industry,
+        business_name=business_name,
+        style=_map_tone_to_style(tone),
+        target_platforms=["youtube", "tiktok", "instagram"]
+    )
+
+    # Handle API response
+    if result.get("success"):
+        production_id = result.get("production_id", result.get("id", ""))
+        logger.info(f"[ProductionNode] Production started: {production_id}")
+
+        new_state["production_id"] = production_id
+        new_state["production_status"] = "queued"
+        new_state["production_progress"] = 0.0
+        new_state["production_phase"] = "queued"
+        new_state["production_started_at"] = datetime.now(timezone.utc).isoformat()
+        new_state["current_phase"] = "production"
+
+        response_text = f'''🎬 **Production Started!**
+
+Your commercial for **{business_name}** is now in the RAGNAROK pipeline.
+
+**Production ID:** `{production_id}`
+
+**Pipeline stages:**
+1. 📝 Script finalization
+2. 🎙️ Voice synthesis (ElevenLabs)
+3. 🎥 Video generation
+4. 🎵 Music selection
+5. ✂️ Final assembly
+6. 📦 Multi-platform export
+
+**Estimated time:** 3-5 minutes
+
+You'll receive your commercial in **YouTube**, **TikTok**, and **Instagram** formats.
+
+I'll update you as each phase completes! 🚀'''
+
+    else:
+        error_msg = result.get("error", "Unknown error")
+        logger.error(f"[ProductionNode] Production failed: {error_msg}")
+
+        new_state["production_status"] = "failed"
+        new_state["production_error"] = error_msg
+
+        response_text = f'''❌ **Production Error**
+
+We encountered an issue starting your video production:
+
+> {error_msg}
+
+**What you can do:**
+1. Try again in a few moments
+2. Say "retry production" to attempt again
+3. Contact support if the issue persists
+
+Your script is still saved and approved, so we won't lose any progress!'''
+
+    new_state["messages"] = list(state.get("messages", [])) + [{
+        "role": "assistant",
+        "content": response_text
+    }]
+
+    return new_state
+
+
 def route_after_script_writer(state: VideoBriefState) -> Literal["reviewer", "script_writer"]:
     """
     After script writer generates a script, go to reviewer for user feedback.
@@ -1003,7 +1283,8 @@ def build_graph():
     workflow.add_node("intake", intake_node)
     workflow.add_node("researcher", researcher_node)
     workflow.add_node("script_writer", script_writer_node)
-    workflow.add_node("reviewer", reviewer_node)  # NEW
+    workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("production", production_node)  # PRODUCTION NODE
 
     # Entry point
     workflow.add_edge(START, "intake")
@@ -1038,16 +1319,19 @@ def build_graph():
         }
     )
 
-    # After reviewer: loop back to script_writer OR end
+    # After reviewer: loop back to script_writer OR go to production
     workflow.add_conditional_edges(
         "reviewer",
         route_after_reviewer,
         {
             "script_writer": "script_writer",  # Revision loop
-            "production": END,                  # Approved - END for now (production node later)
+            "production": "production",         # Approved → Production
             "end": END
         }
     )
+
+    # Production always goes to END (terminal node)
+    workflow.add_edge("production", END)
 
     return workflow.compile()
 
@@ -1083,6 +1367,15 @@ class CreativeDirectorV2:
             "script_status": None,
             "revision_feedback": None,
             "revision_count": 0,
+            # Production tracking (NEW)
+            "production_id": None,
+            "production_status": None,
+            "production_progress": None,
+            "production_phase": None,
+            "production_error": None,
+            "video_urls": None,
+            "production_cost": None,
+            "production_started_at": None,
             "messages": [],
             "missing_fields": [
                 "business_name", "primary_offering",
