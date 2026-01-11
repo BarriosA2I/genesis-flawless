@@ -24,6 +24,20 @@ from datetime import datetime, timezone
 # LangGraph
 from langgraph.graph import StateGraph, START, END
 
+# Production status tracking (for SSE)
+try:
+    from intake.video_brief_intake import (
+        create_production_status,
+        update_production_step,
+        ProductionStep,
+    )
+    PRODUCTION_TRACKING_AVAILABLE = True
+except ImportError:
+    PRODUCTION_TRACKING_AVAILABLE = False
+    create_production_status = None
+    update_production_step = None
+    ProductionStep = None
+
 # LangChain
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -1303,6 +1317,7 @@ async def production_node(state: VideoBriefState) -> dict:
     # Handle API response
     if result.get("success"):
         production_id = result.get("production_id", result.get("id", ""))
+        session_id = state.get("session_id", "")
         logger.info(f"[ProductionNode] Production started: {production_id}")
 
         new_state["production_id"] = production_id
@@ -1311,6 +1326,21 @@ async def production_node(state: VideoBriefState) -> dict:
         new_state["production_phase"] = "queued"
         new_state["production_started_at"] = datetime.now(timezone.utc).isoformat()
         new_state["current_phase"] = "production"
+
+        # Register with SSE tracking system
+        if PRODUCTION_TRACKING_AVAILABLE and create_production_status:
+            try:
+                create_production_status(session_id, {
+                    "business_name": business_name,
+                    "primary_offering": primary_offering,
+                    "target_demographic": target_demographic,
+                    "call_to_action": call_to_action,
+                    "tone": tone,
+                    "production_id": production_id,
+                })
+                logger.info(f"[ProductionNode] SSE tracking registered for session: {session_id}")
+            except Exception as e:
+                logger.warning(f"[ProductionNode] SSE tracking failed: {e}")
 
         response_text = f'''🎬 **Production Started!**
 
@@ -1601,8 +1631,12 @@ class CreativeDirectorV2:
             "script_status": result.get("script_status"),
             "revision_count": result.get("revision_count", 0),
             "version": "v2-langgraph",
+            # Production tracking (for SSE streaming)
+            "production_id": result.get("production_id"),
+            "production_status": result.get("production_status"),
             "metadata": {
                 "session_id": session_id,
+                "production_id": result.get("production_id"),
                 "extracted_data": {
                     "business_name": result.get("business_name"),
                     "product": result.get("primary_offering"),
