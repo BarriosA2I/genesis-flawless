@@ -2092,98 +2092,216 @@ class CreativeDirectorOrchestrator:
         import re
 
         extracted = {}
-        message_lower = user_message.lower()
+        message_lower = user_message.lower().strip()
 
-        # Business name patterns
+        # =========================================================================
+        # BUSINESS NAME EXTRACTION - Comprehensive patterns
+        # =========================================================================
         business_patterns = [
-            r"(?:i run|i own|my company is|we are|i'm from|i'm|called|named)\s+([A-Z][A-Za-z0-9\s]+?)(?:\s*[,.]|\s+and|\s+we|\s+selling|$)",
-            r"^([A-Z][A-Za-z0-9]+)\s*[-–]\s*",  # "TechStart - we sell..."
-            r"(?:at|for)\s+([A-Z][A-Za-z0-9\s]+?)(?:\s*[,.]|\s+and|$)",
+            # "My business name is X" / "My business is X"
+            r"(?:my |our )?business (?:name )?is ([A-Z][A-Za-z0-9\s&'.-]+)",
+            # "My salon/studio/shop is called X"
+            r"(?:my |our )?(?:salon|studio|shop|store|company|restaurant|clinic|pharmacy|bakery|gym|spa) (?:is )?(?:called |named )?([A-Z][A-Za-z0-9\s&'.-]+)",
+            # "I own X" / "I run X"
+            r"(?:i own |i run |we own |we run |we are |we're )([A-Z][A-Za-z0-9\s&'.-]+)",
+            # "X is my salon/business"
+            r"([A-Z][A-Za-z0-9\s&'.-]+) is (?:my |our )?(?:salon|studio|shop|store|company|business)",
+            # "It's called X" / "We're called X"
+            r"(?:it's called |its called |we're called |were called |named )([A-Z][A-Za-z0-9\s&'.-]+)",
+            # "called X" anywhere
+            r"called ([A-Z][A-Za-z0-9\s&'.-]+)",
+            # Just a capitalized name by itself
+            r"^([A-Z][A-Za-z0-9\s&'.-]+)$",
+            # Original patterns
+            r"(?:i run|i own|my company is|we are|i'm from|i'm)\s+([A-Z][A-Za-z0-9\s&'.-]+?)(?:\s*[,.]|\s+and|\s+we|\s+selling|$)",
+            r"^([A-Z][A-Za-z0-9]+)\s*[-–]\s*",
+            r"(?:at|for)\s+([A-Z][A-Za-z0-9\s&'.-]+?)(?:\s*[,.]|\s+and|$)",
         ]
+
         for pattern in business_patterns:
             match = re.search(pattern, user_message, re.IGNORECASE)
             if match:
                 name = match.group(1).strip()
-                # Filter out common words that aren't company names
-                if len(name) > 2 and len(name) < 50 and name.lower() not in ["we", "and", "the"]:
+                # Clean up
+                name = re.sub(r'\s+(?:and|for|to|the|a|in|on|is|are|we|i)$', '', name, flags=re.IGNORECASE)
+                name = name.strip(' .,')
+                # Filter false positives
+                skip_words = ['i', 'we', 'my', 'our', 'the', 'a', 'an', 'yes', 'no', 'ok', 'okay',
+                             'hello', 'hi', 'hey', 'sure', 'yeah', 'yep', 'nope', 'thanks']
+                if len(name) > 1 and len(name) < 50 and name.lower() not in skip_words:
                     extracted["business_name"] = name
                     break
 
-        # Product/offering patterns (enhanced with "specialize in")
+        # =========================================================================
+        # PRIMARY OFFERING EXTRACTION - Enhanced patterns
+        # =========================================================================
         product_patterns = [
-            r"(?:we sell|we make|we offer|we provide|selling|offering|provide)\s+(.+?)(?:\s+to\s+|\s+for\s+|\s*[,.]|$)",
-            r"(?:specialize in|specialize|focus on|specialized in)\s+(.+?)(?:\s+to\s+|\s+for\s+|\s*[,.]|$)",
+            r"(?:we |i )?(?:specialize|specialise) in ([^.!?,]+)",
+            r"(?:we |i )?focus on ([^.!?,]+)",
+            r"(?:we |i )?(?:offer|provide|do|make|create|sell) ([^.!?,]+)",
+            r"(?:our |my )?(?:main|primary|core|signature) (?:service|product|offering) is ([^.!?,]+)",
+            r"(?:known for|famous for|best at) ([^.!?,]+)",
+            r"(?:specialized in|focusing on) ([^.!?,]+)",
+            r"(?:hair |food |fitness |dental |legal |medical |cleaning |custom |handmade )([^.!?,]+)",
+            r"([A-Za-z\s]+) (?:services|products|solutions|treatments)",
             r"(?:saas|software|tools?|platform|app|service|product)s?\s+(?:for|that)\s+(.+?)(?:\s*[,.]|$)",
             r"(?:our|the|my)\s+(products?|services?)\s+(?:are|is)\s+(.+?)(?:\s*[,.]|$)",
         ]
+
         for pattern in product_patterns:
             match = re.search(pattern, user_message, re.IGNORECASE)
             if match:
-                # Get the last group (the actual product/service)
-                product = match.group(match.lastindex).strip() if match.lastindex else match.group(1).strip()
-                if len(product) > 3:
-                    extracted["primary_offering"] = product[:100]
+                offering = match.group(match.lastindex if match.lastindex else 1).strip()
+                offering = re.sub(r'\s+(?:and|for|to|the)$', '', offering, flags=re.IGNORECASE)
+                offering = offering.strip(' .,')
+                if len(offering) > 3 and offering.lower() not in ['it', 'that', 'this', 'them']:
+                    extracted["primary_offering"] = offering[:100]
                     break
 
-        # Also check for product keywords
+        # Keyword fallback
         if "primary_offering" not in extracted:
             product_keywords = ["saas", "software", "tools", "platform", "app", "automation", "service", "solution"]
             for keyword in product_keywords:
                 if keyword in message_lower:
-                    # Find context around keyword (3 words before and after)
                     match = re.search(rf"(\w+\s+)?(\w+\s+)?{keyword}(\s+\w+)?(\s+\w+)?", message_lower)
                     if match:
                         extracted["primary_offering"] = match.group(0).strip()
                         break
 
-        # Audience/demographic patterns (enhanced with "people who", "patients who")
-        audience_patterns = [
-            r"(?:to|for|targeting|target)\s+(.+?)(?:\s*[,.]|\s+and\s+|\s+cta|\s+sign|$)",
-            r"(?:customers?|clients?|audience)\s+(?:are|is)\s+(.+?)(?:\s*[,.]|$)",
+        # =========================================================================
+        # TARGET DEMOGRAPHIC EXTRACTION
+        # =========================================================================
+        demographic_patterns = [
+            r"((?:women|men|people|adults|seniors|teens|kids|children|families|parents|professionals|businesses) (?:aged?|ages?)? ?\d+[- to]+\d+[^.!?,]*)",
+            r"((?:women|men|people|customers|clients|patients) who [^.!?,]+)",
+            r"(?:our |my )?target (?:is |are |audience is |market is )([^.!?,]+)",
+            r"(?:trying to |want to |looking to )?reach ([^.!?,]+)",
+            r"^for ([^.!?,]+)",
+            r"([A-Za-z\s]+) (?:customers|clients|patients|audience)",
+            r"(?:aged?|ages?) ?(\d+[- to]+\d+)",
+            r"(local[s]?|local (?:customers|clients|people|community))",
             r"(?:patients?|people|folks|users|businesses|companies)\s+(?:who|that|needing|seeking)\s+(.+?)(?:\s*[,.]|$)",
-            r"(?:trying to reach|trying to target|want to reach)\s+(.+?)(?:\s*[,.]|$)",
             r"(?:reach|serving|helping)\s+(patients?|doctors?|businesses?|companies?|people|professionals?)\s*(?:who|that)?\s*(.+?)(?:\s*[,.]|$)",
         ]
-        for pattern in audience_patterns:
+
+        for pattern in demographic_patterns:
             match = re.search(pattern, user_message, re.IGNORECASE)
             if match:
-                # Get the last non-empty group
-                audience = None
+                demo = None
                 for group in reversed(match.groups()):
                     if group and group.strip():
-                        audience = group.strip()
+                        demo = group.strip()
                         break
-                if not audience:
-                    audience = match.group(1).strip()
+                if not demo:
+                    demo = match.group(1).strip()
 
-                # Avoid extracting CTAs as audience
-                if audience and len(audience) > 3 and "sign" not in audience.lower() and "buy" not in audience.lower():
-                    extracted["target_demographic"] = audience[:100]
+                demo = demo.strip(' .,')
+                if demo and len(demo) > 3 and "sign" not in demo.lower() and "buy" not in demo.lower():
+                    extracted["target_demographic"] = demo[:100]
                     break
 
-        # CTA patterns (enhanced with "call us", "visit", "contact")
-        cta_patterns = [
-            r"(?:cta|call to action)(?:\s+is)?\s*[:\-]?\s*(.+?)(?:\s*[,.]|$)",
-            r"(?:want them to|they should|viewers should|people should)\s+(.+?)(?:\s*[,.]|$)",
-            r"(sign up|buy now|learn more|get started|book|register|subscribe|download|try free|free trial|call us|call|visit|contact us|contact|schedule|come in)",
-        ]
-        for pattern in cta_patterns:
-            match = re.search(pattern, user_message, re.IGNORECASE)
-            if match:
-                if match.groups():
-                    extracted["call_to_action"] = match.group(1).strip()[:50]
-                else:
-                    extracted["call_to_action"] = match.group(0).strip()[:50]
+        # =========================================================================
+        # CALL TO ACTION EXTRACTION
+        # =========================================================================
+        cta_map = {
+            'book online': ['book online', 'book through', 'book via', 'book on'],
+            'book appointment': ['book appointment', 'schedule', 'make an appointment'],
+            'call us': ['call us', 'call', 'give us a call', 'phone us'],
+            'visit website': ['visit website', 'visit our website', 'check out our website'],
+            'visit store': ['visit store', 'come in', 'stop by', 'walk in', 'visit us'],
+            'order online': ['order online', 'order from', 'buy online', 'purchase online'],
+            'sign up': ['sign up', 'signup', 'register', 'subscribe'],
+            'contact us': ['contact us', 'get in touch'],
+        }
+
+        for cta_value, phrases in cta_map.items():
+            for phrase in phrases:
+                if phrase in message_lower:
+                    extracted["call_to_action"] = cta_value
+                    break
+            if 'call_to_action' in extracted:
                 break
 
-        # Tone extraction using enhanced fallback with pattern matching
-        # Handles phrases like "Keep it professional", "make it feel energetic", etc.
-        tone_result = extract_tone_fallback(user_message, extracted.get("tone"))
-        if tone_result:
-            extracted["tone"] = tone_result
+        # Pattern-based CTA extraction if not found
+        if "call_to_action" not in extracted:
+            cta_patterns = [
+                r"(?:cta|call to action)(?:\s+is)?\s*[:\-]?\s*(.+?)(?:\s*[,.]|$)",
+                r"(?:want them to|they should|viewers should|people should)\s+(.+?)(?:\s*[,.]|$)",
+                r"(sign up|buy now|learn more|get started|book|register|subscribe|download|contact|schedule)",
+            ]
+            for pattern in cta_patterns:
+                match = re.search(pattern, user_message, re.IGNORECASE)
+                if match:
+                    cta = match.group(1 if match.groups() else 0).strip()[:50]
+                    extracted["call_to_action"] = cta
+                    break
 
-        # Numbered list extraction (fast-track format)
-        # Pattern: "1. TechStart 2. SaaS tools 3. Founders 4. Sign up"
+        # =========================================================================
+        # TONE EXTRACTION - CRITICAL FIX with comprehensive keyword map
+        # =========================================================================
+        tone_map = {
+            # Luxury/Premium
+            'luxurious': 'luxurious', 'luxury': 'luxurious', 'upscale': 'luxurious and upscale',
+            'elegant': 'elegant', 'premium': 'premium', 'sophisticated': 'sophisticated',
+            'high-end': 'high-end', 'high end': 'high-end', 'exclusive': 'exclusive',
+            'classy': 'classy', 'refined': 'refined',
+
+            # Professional
+            'professional': 'professional', 'corporate': 'professional', 'formal': 'professional',
+            'business': 'professional', 'clinical': 'professional', 'serious': 'professional',
+            'polished': 'professional', 'authoritative': 'authoritative', 'trustworthy': 'trustworthy',
+
+            # Friendly/Warm
+            'friendly': 'friendly', 'warm': 'warm and friendly', 'welcoming': 'welcoming',
+            'approachable': 'approachable', 'casual': 'casual', 'relaxed': 'relaxed',
+            'conversational': 'conversational', 'personable': 'personable', 'inviting': 'inviting',
+
+            # Energetic/Fun
+            'energetic': 'energetic', 'exciting': 'exciting', 'dynamic': 'dynamic',
+            'upbeat': 'upbeat', 'fun': 'fun', 'playful': 'playful', 'lively': 'lively',
+            'vibrant': 'vibrant', 'enthusiastic': 'enthusiastic', 'bold': 'bold',
+
+            # Calm/Cozy
+            'cozy': 'cozy', 'calm': 'calm', 'soothing': 'soothing', 'peaceful': 'peaceful',
+            'serene': 'serene', 'tranquil': 'tranquil', 'gentle': 'gentle', 'soft': 'soft',
+
+            # Modern/Trendy
+            'modern': 'modern', 'trendy': 'trendy', 'edgy': 'edgy',
+            'cutting-edge': 'cutting-edge', 'cutting edge': 'cutting-edge',
+            'contemporary': 'contemporary', 'hip': 'trendy', 'cool': 'cool and modern',
+            'sleek': 'sleek', 'minimalist': 'minimalist',
+
+            # Urgent/Direct
+            'urgent': 'urgent', 'direct': 'direct', 'compelling': 'compelling',
+        }
+
+        # Check for tone keywords
+        for keyword, tone_value in tone_map.items():
+            if keyword in message_lower:
+                extracted["tone"] = tone_value
+                break
+
+        # Check for "X vibe/tone/feel/style" patterns
+        if 'tone' not in extracted:
+            vibe_match = re.search(r'(\w+)\s+(?:vibe|tone|feel|style|aesthetic|mood)', message_lower)
+            if vibe_match:
+                vibe_word = vibe_match.group(1)
+                if vibe_word in tone_map:
+                    extracted["tone"] = tone_map[vibe_word]
+                elif len(vibe_word) > 2:
+                    extracted["tone"] = vibe_word
+
+        # Check for "should be X" or "make it X" patterns
+        if 'tone' not in extracted:
+            should_match = re.search(r'(?:should be|make it|keep it|go with|want it) (\w+)', message_lower)
+            if should_match:
+                word = should_match.group(1)
+                if word in tone_map:
+                    extracted["tone"] = tone_map[word]
+
+        # =========================================================================
+        # NUMBERED LIST EXTRACTION (fast-track format)
+        # =========================================================================
         numbered_match = re.findall(r'(\d+)[.)]\s*([^0-9]+?)(?=\d+[.)]|$)', user_message)
         if len(numbered_match) >= 3:
             field_order = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
