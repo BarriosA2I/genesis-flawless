@@ -1085,6 +1085,88 @@ async def backfill_videos_to_preview(
         )
 
 
+@app.get("/api/admin/r2-contents", tags=["Admin"])
+async def list_r2_contents(
+    prefix: str = Query("", description="Prefix/folder to list"),
+    limit: int = Query(100, description="Max objects to return")
+):
+    """
+    List contents of R2 bucket for debugging.
+
+    Use this to inspect what's actually stored in R2.
+    """
+    try:
+        import boto3
+        from botocore.config import Config
+
+        account_id = os.getenv("R2_ACCOUNT_ID")
+        access_key_id = os.getenv("R2_ACCESS_KEY_ID")
+        secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
+        bucket_name = os.getenv("R2_BUCKET_NAME", "barrios-videos")
+        public_url = os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+
+        if not all([account_id, access_key_id, secret_access_key]):
+            return {
+                "error": "R2 not configured",
+                "configured": False,
+                "missing": [
+                    k for k, v in {
+                        "R2_ACCOUNT_ID": account_id,
+                        "R2_ACCESS_KEY_ID": access_key_id,
+                        "R2_SECRET_ACCESS_KEY": secret_access_key
+                    }.items() if not v
+                ]
+            }
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            config=Config(signature_version="s3v4")
+        )
+
+        # List prefixes (folders) at this level
+        prefixes_response = client.list_objects_v2(
+            Bucket=bucket_name,
+            Prefix=prefix,
+            Delimiter='/'
+        )
+
+        # List objects
+        objects_response = client.list_objects_v2(
+            Bucket=bucket_name,
+            Prefix=prefix,
+            MaxKeys=limit
+        )
+
+        prefixes = [p['Prefix'] for p in prefixes_response.get('CommonPrefixes', [])]
+        objects = [
+            {
+                "key": obj['Key'],
+                "size_mb": round(obj['Size'] / (1024 * 1024), 2),
+                "size_bytes": obj['Size'],
+                "modified": obj['LastModified'].isoformat(),
+                "url": f"{public_url}/{obj['Key']}"
+            }
+            for obj in objects_response.get('Contents', [])
+        ]
+
+        return {
+            "configured": True,
+            "bucket": bucket_name,
+            "prefix": prefix,
+            "prefixes": prefixes,
+            "objects": objects,
+            "total_objects": len(objects),
+            "public_url_base": public_url
+        }
+
+    except Exception as e:
+        logger.error(f"R2 listing failed: {e}")
+        return {"error": str(e), "configured": True}
+
+
 # =============================================================================
 # LEGENDARY AGENTS ENDPOINTS (7.5-15) - THE APEX TIER
 # =============================================================================
