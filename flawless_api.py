@@ -2138,6 +2138,18 @@ async def start_production_async(
         "target_platforms": request.target_platforms
     }
 
+    # Store initial state IMMEDIATELY so status endpoint returns something
+    # This ensures the frontend never gets 404 after triggering production
+    initial_state = ProductionState(
+        session_id=session_id,
+        phase=ProductionPhase.INTAKE,
+        status=ProductionStatus.IN_PROGRESS,
+        progress_percent=0,
+        message="Initializing RAGNAROK pipeline..."
+    )
+    nexus_bridge.productions[session_id] = initial_state
+    logger.info(f"[Production-Async] Stored initial state for {session_id}")
+
     async def run_production_background():
         """Run production in background, consuming the generator."""
         try:
@@ -2152,7 +2164,19 @@ async def start_production_async(
 
             logger.info(f"[Production-Async] Production completed for {session_id}")
         except Exception as e:
-            logger.error(f"[Production-Async] Production failed for {session_id}: {e}")
+            # Store error state so frontend can see what went wrong
+            import traceback
+            error_details = traceback.format_exc()
+            error_state = ProductionState(
+                session_id=session_id,
+                phase=ProductionPhase.INTAKE,
+                status=ProductionStatus.FAILED,
+                progress_percent=0,
+                message=f"Production failed: {str(e)}",
+                metadata={"error": str(e), "traceback": error_details[:2000]}
+            )
+            nexus_bridge.productions[session_id] = error_state
+            logger.error(f"[Production-Async] Production failed for {session_id}: {e}\n{error_details}")
 
     # Add to background tasks
     background_tasks.add_task(run_production_background)
