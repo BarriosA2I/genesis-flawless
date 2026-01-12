@@ -87,6 +87,9 @@ from nexus_bridge import (
 # Import NEXUS Brain concierge router (Landing Page AI)
 from nexus_router import router as nexus_brain_router
 
+# Import Creative Director V3 FSM (State Machine Architecture)
+from api.creative_director_routes import router as cd_v3_router
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -405,6 +408,10 @@ try:
     logger.info("Post-production routes loaded")
 except ImportError as e:
     logger.warning(f"Post-production routes not available: {e}")
+
+# Include Creative Director V3 FSM routes (State Machine Architecture)
+app.include_router(cd_v3_router)
+logger.info("Creative Director V3 FSM routes loaded")
 
 
 # =============================================================================
