@@ -440,13 +440,41 @@ def _detect_assets(message: str) -> List[dict]:
 
         assets.append({"type": asset_type, "url": url, "name": filename})
 
-    # 2. Check for "upload" intent keywords if no URL found
-    # This allows the AI to acknowledge the intent even if the file processing
-    # happened in a middleware layer we can't see here.
+    # 2. Detect frontend upload notifications: [User uploaded logo/image: filename.png]
+    # Frontend sends this pattern when user uploads a file
+    upload_pattern = r'\[User uploaded (?:logo/image|document): ([^\]]+)\]'
+    upload_match = re.search(upload_pattern, message)
+    if upload_match:
+        filename = upload_match.group(1)
+        lower_name = filename.lower()
+
+        if any(ext in lower_name for ext in ['.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif']):
+            asset_type = "logo"  # Treat uploaded images as logos
+        elif any(ext in lower_name for ext in ['.pdf', '.doc', '.docx', '.txt']):
+            asset_type = "document"
+        else:
+            asset_type = "image"
+
+        # Use placeholder URL since file is handled client-side
+        assets.append({
+            "type": asset_type,
+            "url": f"uploaded://{filename}",  # Placeholder - frontend has the actual file
+            "name": filename,
+            "source": "frontend_upload"
+        })
+        logger.info(f"[AssetDetection] Detected frontend upload: {filename} (type: {asset_type})")
+
+    # 3. Check for general upload intent keywords if no URL or pattern found
     if not assets and any(w in message.lower() for w in ["uploaded", "attached", "sending file", "here is the logo", "logo attached"]):
-        # We assume the frontend might have handled the upload and sent a message.
-        # In a full implementation, we'd check state["incoming_files"]
-        pass
+        # Generic upload acknowledgment - user mentioned uploading but we can't parse the filename
+        logger.info("[AssetDetection] Detected upload intent keywords but no specific file pattern")
+        # Still mark as having assets to proceed with the flow
+        assets.append({
+            "type": "unknown",
+            "url": "uploaded://user_asset",
+            "name": "user_uploaded_asset",
+            "source": "intent_detection"
+        })
 
     return assets
 
