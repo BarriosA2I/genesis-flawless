@@ -942,7 +942,7 @@ async def backfill_videos_to_preview(
         access_key_id = os.getenv("R2_ACCESS_KEY_ID")
         secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
         bucket_name = os.getenv("R2_BUCKET_NAME", "barrios-videos")
-        public_url = os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+        public_url = os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev")
 
         endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
 
@@ -1097,7 +1097,7 @@ async def storage_status():
     access_key_id = os.getenv("R2_ACCESS_KEY_ID")
     secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
     bucket_name = os.getenv("R2_BUCKET_NAME", "barrios-videos")
-    public_url = os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+    public_url = os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev")
 
     # Check which variables are configured
     config_status = {
@@ -1162,7 +1162,7 @@ async def list_r2_contents(
         access_key_id = os.getenv("R2_ACCESS_KEY_ID")
         secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
         bucket_name = os.getenv("R2_BUCKET_NAME", "barrios-videos")
-        public_url = os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+        public_url = os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev")
 
         if not all([account_id, access_key_id, secret_access_key]):
             return {

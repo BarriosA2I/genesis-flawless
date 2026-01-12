@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import httpx
 
 VIDEO_PREVIEW_API = "https://video-preview-theta.vercel.app/api/videos"
-R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev")
 
 
 def get_r2_client():

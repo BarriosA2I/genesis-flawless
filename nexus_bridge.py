@@ -205,6 +205,13 @@ except ImportError:
     logger.warning("Ralph System not available - single-pass mode only")
 
 # =============================================================================
+# VIDEO URL FALLBACK (Used when R2 upload fails or is not configured)
+# =============================================================================
+# NOTE: When R2 is not available, use the configured R2_PUBLIC_URL or a
+# production placeholder. NEVER use a non-existent domain like videos.barriosa2i.com
+R2_FALLBACK_URL = os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev")
+
+# =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
 
@@ -1112,7 +1119,7 @@ class NexusBridge:
 
                     # REAL AGENT: ElevenLabs voiceover generation
                     voiceover_result = await self._generate_voiceover(script, enriched_brief)
-                    voiceover_url = voiceover_result.get("audio_url", f"https://videos.barriosa2i.com/{production_id}/voiceover.mp3")
+                    voiceover_url = voiceover_result.get("audio_url", f"{R2_FALLBACK_URL}/{production_id}/voiceover.mp3")
 
                     yield self._update_state(
                         session_id, ProductionPhase.VOICE,
@@ -1343,9 +1350,9 @@ class NexusBridge:
 
             # Get video URLs from assembly result (real R2 URLs if available)
             video_urls = assembly_result.get("video_urls", {
-                "youtube_1080p": f"https://videos.barriosa2i.com/{production_id}/youtube.mp4",
-                "tiktok_vertical": f"https://videos.barriosa2i.com/{production_id}/tiktok.mp4",
-                "instagram_square": f"https://videos.barriosa2i.com/{production_id}/instagram.mp4"
+                "youtube_1080p": f"{R2_FALLBACK_URL}/{production_id}/youtube.mp4",
+                "tiktok_vertical": f"{R2_FALLBACK_URL}/{production_id}/tiktok.mp4",
+                "instagram_square": f"{R2_FALLBACK_URL}/{production_id}/instagram.mp4"
             })
 
             # Final state with artifacts
@@ -2105,11 +2112,11 @@ Return ONLY valid JSON array, no markdown."""
             logger.warning("VideoAssemblyAgent not available - returning mock URLs")
             return {
                 "video_urls": {
-                    "youtube_1080p": f"https://videos.barriosa2i.com/productions/{production_id}/youtube_1080p.mp4",
-                    "tiktok": f"https://videos.barriosa2i.com/productions/{production_id}/tiktok.mp4",
-                    "instagram_feed": f"https://videos.barriosa2i.com/productions/{production_id}/instagram_feed.mp4"
+                    "youtube_1080p": f"{R2_FALLBACK_URL}/productions/{production_id}/youtube_1080p.mp4",
+                    "tiktok": f"{R2_FALLBACK_URL}/productions/{production_id}/tiktok.mp4",
+                    "instagram_feed": f"{R2_FALLBACK_URL}/productions/{production_id}/instagram_feed.mp4"
                 },
-                "thumbnail_url": f"https://videos.barriosa2i.com/productions/{production_id}/thumbnail.jpg",
+                "thumbnail_url": f"{R2_FALLBACK_URL}/productions/{production_id}/thumbnail.jpg",
                 "cost": 0.0,
                 "render_time": 0.0,
                 "source": "mock"
@@ -2168,7 +2175,7 @@ Return ONLY valid JSON array, no markdown."""
                     logger.warning("No video clips available - returning mock URLs")
                     return {
                         "video_urls": {
-                            "youtube_1080p": f"https://videos.barriosa2i.com/productions/{production_id}/youtube_1080p.mp4"
+                            "youtube_1080p": f"{R2_FALLBACK_URL}/productions/{production_id}/youtube_1080p.mp4"
                         },
                         "thumbnail_url": None,
                         "cost": 0.0,
@@ -2290,7 +2297,7 @@ Return ONLY valid JSON array, no markdown."""
                                 logger.info(f"Uploaded {format_name} to R2: {url}")
                             except Exception as e:
                                 logger.error(f"R2 upload failed for {format_name}: {e}")
-                                video_urls[format_name] = f"https://videos.barriosa2i.com/productions/{production_id}/{format_name}.mp4"
+                                video_urls[format_name] = f"{R2_FALLBACK_URL}/productions/{production_id}/{format_name}.mp4"
 
                     # Upload thumbnail if generated
                     thumb_path = getattr(assembly_response, 'thumbnail_path', None) or assembly_response.get('thumbnail_path')
@@ -2304,7 +2311,7 @@ Return ONLY valid JSON array, no markdown."""
                     logger.warning("R2 not configured - using mock video URLs")
                     outputs = getattr(assembly_response, 'outputs', {}) or assembly_response.get('outputs', {})
                     for format_name in outputs.keys():
-                        video_urls[format_name] = f"https://videos.barriosa2i.com/productions/{production_id}/{format_name}.mp4"
+                        video_urls[format_name] = f"{R2_FALLBACK_URL}/productions/{production_id}/{format_name}.mp4"
 
                 return {
                     "video_urls": video_urls,
@@ -2318,7 +2325,7 @@ Return ONLY valid JSON array, no markdown."""
             logger.error(f"Assembly failed: {e}", exc_info=True)
             return {
                 "video_urls": {
-                    "youtube_1080p": f"https://videos.barriosa2i.com/productions/{production_id}/youtube_1080p.mp4"
+                    "youtube_1080p": f"{R2_FALLBACK_URL}/productions/{production_id}/youtube_1080p.mp4"
                 },
                 "thumbnail_url": None,
                 "cost": 0.0,
@@ -2684,7 +2691,7 @@ Return ONLY valid JSON."""
 
         if not video_url:
             logger.warning("[ENHANCEMENT] No video URL - using placeholder")
-            video_url = f"https://videos.barriosa2i.com/{production_id}/youtube.mp4"
+            video_url = f"{R2_FALLBACK_URL}/{production_id}/youtube.mp4"
 
         try:
             logger.info(f"[ENHANCEMENT] Running enhancement suite for {production_id}")

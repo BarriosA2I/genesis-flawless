@@ -10,7 +10,7 @@ Environment Variables Required:
 - R2_ACCESS_KEY_ID: R2 API access key
 - R2_SECRET_ACCESS_KEY: R2 API secret key
 - R2_BUCKET_NAME: Bucket name (e.g., "barrios-videos")
-- R2_PUBLIC_URL: Public CDN URL (e.g., "https://videos.barriosa2i.com")
+- R2_PUBLIC_URL: Public CDN URL (e.g., "https://pub-xxx.r2.dev")
 
 Author: Barrios A2I
 Version: 1.0.0
@@ -54,7 +54,7 @@ class R2VideoStorage:
         self.access_key_id = access_key_id or os.getenv("R2_ACCESS_KEY_ID")
         self.secret_access_key = secret_access_key or os.getenv("R2_SECRET_ACCESS_KEY")
         self.bucket_name = bucket_name or os.getenv("R2_BUCKET_NAME", "barrios-videos")
-        self.public_url = public_url or os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+        self.public_url = public_url or os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev")
 
         # Validate required config
         self._validate_config()
@@ -398,7 +398,7 @@ def create_r2_storage() -> R2VideoStorage:
 class MockVideoStorage:
     """Mock storage for testing without R2 credentials."""
 
-    def __init__(self, public_url: str = "https://videos.barriosa2i.com"):
+    def __init__(self, public_url: str = "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev"):
         self.public_url = public_url
         self.uploaded_files: Dict[str, str] = {}
         logger.info("[MockVideoStorage] Initialized (no actual uploads)")
