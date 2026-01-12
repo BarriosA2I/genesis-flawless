@@ -1920,6 +1920,76 @@ class CreativeDirectorV2:
         # Add user message
         state["messages"].append({"role": "user", "content": message})
 
+        # =========================================================================
+        # LOGO UPLOAD DETECTION - Handle at TOP before any routing
+        # =========================================================================
+        import re
+        upload_pattern = r'\[User uploaded (?:logo/image|document): ([^\]]+)\]'
+        upload_match = re.search(upload_pattern, message)
+
+        if upload_match:
+            filename = upload_match.group(1)
+            logger.info(f"[LOGO] Detected upload in process_message: {filename}")
+
+            # Store the logo in state
+            current_assets = state.get("uploaded_assets", [])
+            current_assets.append({
+                "type": "logo",
+                "url": f"uploaded://{filename}",
+                "name": filename,
+                "source": "frontend_upload"
+            })
+            state["uploaded_assets"] = current_assets
+
+            # Check if brief is already complete
+            required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
+            filled = sum(1 for f in required if state.get(f))
+            brief_complete = filled == len(required)
+
+            if brief_complete:
+                # Brief is done - acknowledge logo and prompt for production
+                logger.info(f"[LOGO] Brief complete - acknowledging logo and ready for production")
+                response_content = (
+                    f"✅ **Got your logo: {filename}!**\n\n"
+                    f"Your brief is complete with your brand assets. Ready to start video production?\n\n"
+                    f"Say **'yes'** or **'start production'** to begin!"
+                )
+                state["messages"].append({
+                    "role": "assistant",
+                    "content": response_content
+                })
+                self.sessions[session_id] = state
+
+                # Return early with properly formatted response
+                return {
+                    "response": response_content,
+                    "progress_percentage": 100,
+                    "missing_fields": [],
+                    "current_phase": state.get("current_phase", "intake"),
+                    "is_complete": True,
+                    "script_status": state.get("script_status"),
+                    "revision_count": state.get("revision_count", 0),
+                    "version": "v2-langgraph",
+                    "production_id": state.get("production_id"),
+                    "production_status": state.get("production_status"),
+                    "metadata": {
+                        "session_id": session_id,
+                        "logo_received": True,
+                        "logo_filename": filename,
+                        "extracted_data": {
+                            "business_name": state.get("business_name"),
+                            "product": state.get("primary_offering"),
+                            "audience": state.get("target_demographic"),
+                            "cta": state.get("call_to_action"),
+                            "tone": state.get("tone")
+                        }
+                    }
+                }
+            else:
+                # Brief not complete - logo stored, continue with normal flow
+                logger.info(f"[LOGO] Brief not complete - continuing intake with logo stored")
+                # Don't return early - let the normal flow handle the next field
+
         # Determine which node to invoke based on current state
         current_phase = state.get("current_phase", "intake")
         script_status = state.get("script_status")
