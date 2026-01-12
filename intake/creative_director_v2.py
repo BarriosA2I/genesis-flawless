@@ -68,18 +68,39 @@ VIDEO_PREVIEW_API = "https://video-preview-theta.vercel.app/api/videos"
 # ============================================================================
 # BARRIOS A2I COMMERCIAL SPECIFICATIONS
 # ============================================================================
-# Standard commercial: 64 seconds, 4 scenes (16 seconds each)
+# Standard commercial: 64 seconds, 8 scenes (8 seconds each)
 COMMERCIAL_CONFIG = {
     "duration_seconds": 64,
-    "scene_count": 4,
-    "scene_duration_seconds": 16,
+    "scene_count": 8,
+    "scene_duration_seconds": 8,
     "scenes": [
-        {"name": "HOOK", "duration": "0:00-0:16", "purpose": "Attention-grabbing opening"},
-        {"name": "PROBLEM", "duration": "0:16-0:32", "purpose": "Pain point identification"},
-        {"name": "SOLUTION", "duration": "0:32-0:48", "purpose": "Product/service showcase"},
-        {"name": "CTA", "duration": "0:48-1:04", "purpose": "Clear call to action"}
+        {"name": "SYSTEM_ONLINE", "duration": "0:00-0:08", "purpose": "Establish authority and brand presence"},
+        {"name": "PIPELINE", "duration": "0:08-0:16", "purpose": "Show the process/workflow"},
+        {"name": "AGENTS", "duration": "0:16-0:24", "purpose": "Demonstrate automation/AI capabilities"},
+        {"name": "PROOF", "duration": "0:24-0:32", "purpose": "Industry adaptability and versatility"},
+        {"name": "OUTPUTS", "duration": "0:32-0:40", "purpose": "Format variety and deliverables"},
+        {"name": "HUMAN_REMOVAL", "duration": "0:40-0:48", "purpose": "Speed and efficiency benefits"},
+        {"name": "ECOSYSTEM", "duration": "0:48-0:56", "purpose": "Scale potential and integration"},
+        {"name": "CTA", "duration": "0:56-1:04", "purpose": "Clear call to action with tagline"}
     ]
 }
+
+# Helper function to generate scene structure for prompt
+def generate_scene_structure() -> str:
+    """Generate the scene structure text for the script prompt based on COMMERCIAL_CONFIG."""
+    scenes = COMMERCIAL_CONFIG["scenes"]
+    scene_duration = COMMERCIAL_CONFIG["scene_duration_seconds"]
+
+    lines = []
+    for i, scene in enumerate(scenes):
+        start_sec = i * scene_duration
+        end_sec = (i + 1) * scene_duration
+        start_time = f"{start_sec // 60}:{start_sec % 60:02d}"
+        end_time = f"{end_sec // 60}:{end_sec % 60:02d}"
+        lines.append(f"{i + 1}. **{scene['name']}** ({start_time}-{end_time}): {scene['purpose']}")
+
+    return "\n".join(lines)
+
 
 # ============================================================================
 # VIDEO PREVIEW INTEGRATION
@@ -130,7 +151,7 @@ async def send_to_video_preview(video_url: str, state: dict) -> dict:
         return {"success": False, "preview_id": None, "preview_url": None}
 
 
-# Script Writer Prompt (Barrios A2I Standard: 64 seconds, 4 scenes)
+# Script Writer Prompt (Barrios A2I Standard: configurable scenes)
 SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for Barrios A2I video advertisements.
 
 ## VIDEO BRIEF
@@ -144,17 +165,14 @@ SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for Barr
 {research_summary}
 
 ## BARRIOS A2I COMMERCIAL SPECIFICATIONS
-Create a **64-second** commercial with exactly **4 scenes** (16 seconds each):
+Create a **{total_duration}-second** commercial with exactly **{scene_count} scenes** ({scene_duration} seconds each):
 
-1. **HOOK** (0:00-0:16): Attention-grabbing opening that stops the scroll
-2. **PROBLEM** (0:16-0:32): Pain point identification - show what's broken
-3. **SOLUTION** (0:32-0:48): Product/service showcase - how you fix it
-4. **CTA** (0:48-1:04): Clear call to action with contact info
+{scene_structure}
 
 ## CRITICAL TIMING CONSTRAINTS (MUST FOLLOW)
 - Speaking pace: 2.5 words per second
-- MAXIMUM 40 WORDS per scene narration
-- MAXIMUM 160 WORDS total voiceover script
+- MAXIMUM {words_per_scene} WORDS per scene narration
+- MAXIMUM {total_words} WORDS total voiceover script
 - If you exceed these limits, the audio will be CUT OFF mid-sentence!
 
 Count your words carefully for each narration field.
@@ -193,54 +211,29 @@ Your visual_description fields must describe HIGH-END COMMERCIAL B-ROLL footage.
 Return a JSON object with this exact structure:
 {{
     "title": "Commercial title",
-    "duration_seconds": 64,
+    "duration_seconds": {total_duration},
     "target_platform": "social_media",
     "scenes": [
         {{
             "scene_number": 1,
-            "timestamp": "0:00-0:16",
-            "type": "hook",
+            "timestamp": "0:00-0:08",
+            "type": "scene_type",
             "visual_description": "What viewers SEE (be specific and cinematic)",
-            "narration": "What viewers HEAR (MAX 40 WORDS - punchy, impactful)",
+            "narration": "What viewers HEAR (MAX {words_per_scene} WORDS - punchy, impactful)",
             "text_overlay": "Any on-screen text",
             "music_mood": "Music/sound direction"
         }},
-        {{
-            "scene_number": 2,
-            "timestamp": "0:16-0:32",
-            "type": "problem",
-            "visual_description": "Show the pain point visually",
-            "narration": "Describe the problem (MAX 40 WORDS)",
-            "text_overlay": "Key pain point text",
-            "music_mood": "Tension building"
-        }},
-        {{
-            "scene_number": 3,
-            "timestamp": "0:32-0:48",
-            "type": "solution",
-            "visual_description": "Showcase the product/service in action",
-            "narration": "How {business_name} solves it (MAX 40 WORDS)",
-            "text_overlay": "Key benefit",
-            "music_mood": "Uplifting"
-        }},
-        {{
-            "scene_number": 4,
-            "timestamp": "0:48-1:04",
-            "type": "cta",
-            "visual_description": "Strong call-to-action visual with logo",
-            "narration": "{call_to_action} (MAX 40 WORDS)",
-            "text_overlay": "CTA text + contact info",
-            "music_mood": "Confident closing"
-        }}
+        // ... Generate EXACTLY {scene_count} scenes following the structure above
+        // Each scene must have correct timestamp based on {scene_duration}-second intervals
     ],
-    "voiceover_full_script": "Complete narration (MUST be under 160 words total)",
+    "voiceover_full_script": "Complete narration (MUST be under {total_words} words total)",
     "visual_style_notes": "Overall visual direction",
     "key_messaging": ["Main message 1", "Main message 2", "Main message 3"],
     "estimated_production_complexity": "low|medium|high"
 }}
 
-REMEMBER: 40 words per scene MAX. 160 words total MAX. Count carefully!
-Create EXACTLY 4 scenes totaling 64 seconds. Make it cinematic and compelling for {business_name}.
+REMEMBER: {words_per_scene} words per scene MAX. {total_words} words total MAX. Count carefully!
+Create EXACTLY {scene_count} scenes totaling {total_duration} seconds. Make it cinematic and compelling for {business_name}.
 """
 
 # Reviewer Node - Approval/Revision detection patterns
@@ -1081,14 +1074,26 @@ async def script_writer_node(state: VideoBriefState) -> dict:
     revision_feedback = state.get("revision_feedback")
     is_revision = revision_feedback is not None and state.get("script_status") == "revision_requested"
 
-    # Build the prompt
+    # Build the prompt with configurable scene parameters
+    scene_count = COMMERCIAL_CONFIG["scene_count"]
+    scene_duration = COMMERCIAL_CONFIG["scene_duration_seconds"]
+    total_duration = COMMERCIAL_CONFIG["duration_seconds"]
+    words_per_scene = int(scene_duration * 2.5)  # 2.5 words per second
+    total_words = scene_count * words_per_scene
+
     base_prompt = SCRIPT_WRITER_PROMPT.format(
         business_name=state.get("business_name", "the business"),
         primary_offering=state.get("primary_offering", "their product/service"),
         target_demographic=state.get("target_demographic", "their target audience"),
         call_to_action=state.get("call_to_action", "take action"),
         tone=state.get("tone", "professional"),
-        research_summary=research_summary
+        research_summary=research_summary,
+        scene_count=scene_count,
+        scene_duration=scene_duration,
+        total_duration=total_duration,
+        words_per_scene=words_per_scene,
+        total_words=total_words,
+        scene_structure=generate_scene_structure()
     )
 
     # Add revision context if applicable
@@ -1102,7 +1107,7 @@ async def script_writer_node(state: VideoBriefState) -> dict:
             f"The previous script titled \"{previous_title}\" needs changes.\n"
             f"User feedback: \"{revision_feedback}\"\n\n"
             f"Please generate a NEW version that addresses this feedback while "
-            f"maintaining the core messaging and 4-scene structure (64 seconds total)."
+            f"maintaining the core messaging and {scene_count}-scene structure ({total_duration} seconds total)."
         )
         logger.info(f"[ScriptWriterAgent] Revision mode - feedback: {revision_feedback[:100]}")
     else:

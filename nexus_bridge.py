@@ -28,6 +28,7 @@ from enum import Enum
 from datetime import datetime
 
 import anthropic
+import httpx
 from prometheus_client import Counter, Histogram
 
 # Import ElevenLabs agent from flawless_orchestrator
@@ -782,8 +783,12 @@ class NexusBridge:
         self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         self.claude_client = None
         if self.anthropic_key:
-            self.claude_client = anthropic.Anthropic(api_key=self.anthropic_key)
-            logger.info("Claude client initialized for story/prompt generation")
+            # Set timeout: 60s total, 10s connect to prevent hanging
+            self.claude_client = anthropic.Anthropic(
+                api_key=self.anthropic_key,
+                timeout=httpx.Timeout(60.0, connect=10.0)
+            )
+            logger.info("Claude client initialized for story/prompt generation (60s timeout)")
         else:
             logger.warning("ANTHROPIC_API_KEY not set - story generation will use templates")
 
