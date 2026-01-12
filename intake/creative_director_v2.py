@@ -159,6 +159,36 @@ Create a **64-second** commercial with exactly **4 scenes** (16 seconds each):
 
 Count your words carefully for each narration field.
 
+## VISUAL STYLE: CINEMATIC B-ROLL ONLY (CRITICAL)
+Your visual_description fields must describe HIGH-END COMMERCIAL B-ROLL footage.
+
+**REQUIRED Visual Elements:**
+- Product close-ups and macro shots
+- Environment/location establishing shots
+- Abstract visualizations (data flow, particle effects, light trails)
+- Action sequences showing processes or results
+- Drone/aerial footage of locations
+- Cinematic camera movements (dolly, crane, steadicam, slow pan)
+
+**FORBIDDEN Visual Elements - NEVER describe these:**
+- People talking to camera ❌
+- Presenters or spokespersons explaining ❌
+- Talking heads or avatars ❌
+- Direct-to-camera dialogue ❌
+- Someone presenting in an office ❌
+- Interview-style footage ❌
+
+**GOOD visual_description examples:**
+- "Sleek drone shot over a modern data center at dawn, rows of servers glowing blue"
+- "Extreme macro of coffee beans being ground in slow motion, aromatic dust particles floating"
+- "Split-screen transformation: cluttered desk morphs into organized workspace, time-lapse style"
+- "Abstract visualization of AI neural networks processing data, neon pathways pulsing"
+
+**BAD visual_description examples (NEVER use):**
+- "CEO explains company benefits to camera" ❌
+- "A friendly presenter walks through features" ❌
+- "Business owner talks about their experience" ❌
+
 ## OUTPUT FORMAT
 Return a JSON object with this exact structure:
 {{

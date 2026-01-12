@@ -1336,18 +1336,36 @@ The goal is to score 85+ on the next evaluation.
         try:
             styles = brief.get("commercial_references", {}).get("visual_styles", [])
 
-            system_prompt = """You are a world-class video prompt engineer for AI video generation (Runway, Pika, Sora).
+            system_prompt = """You are a world-class video prompt engineer for AI video generation (Runway, Pika, Sora, KIE.ai VEO).
 
 Generate 8 video prompts for a 64-second commercial (8 seconds per scene). Each prompt should be highly detailed for AI video generation.
 
+## CRITICAL: COMMERCIAL B-ROLL STYLE ONLY
+You MUST generate prompts for CINEMATIC B-ROLL footage. This is a professional commercial, NOT a talking-head video.
+
+**REQUIRED in every prompt:**
+- Cinematic camera movements (dolly, crane, steadicam, slow pan, drone)
+- Professional lighting (dramatic, moody, natural, studio)
+- Product/environment focus (NOT people talking)
+- High-end production value descriptors
+
+**FORBIDDEN - NEVER include:**
+- People talking to camera
+- Presenters or spokespersons
+- Talking heads or avatars
+- Direct-to-camera dialogue
+- Interview-style shots
+
+**Prefix EVERY prompt with:** "Professional commercial B-roll, cinematic 4K, no talking heads, "
+
 Output JSON array with this exact structure:
 [
-  {"scene": 1, "prompt": "Detailed video prompt...", "duration": 5, "camera": "camera movement", "mood": "emotional tone"},
+  {"scene": 1, "prompt": "Professional commercial B-roll, cinematic 4K, no talking heads, [detailed scene]", "duration": 8, "camera": "camera movement", "mood": "emotional tone"},
   ...
 ]
 
-Focus on: cinematography, lighting, camera movement, subject actions, environment, color grading.
-Prompts should be 50-100 words each, vivid and specific."""
+Focus on: cinematography, lighting, camera movement, product showcase, environment, color grading.
+Prompts should be 50-100 words each, vivid and specific. NO PEOPLE TALKING."""
 
             user_prompt = f"""Create 5 video scene prompts for this commercial:
 
@@ -1378,24 +1396,91 @@ Return ONLY valid JSON array, no markdown."""
                     content = content[4:]
 
             prompts = json.loads(content)
-            logger.info(f"Claude generated {len(prompts)} video prompts")
+
+            # Sanitize all prompts to ensure B-roll compliance
+            for prompt_obj in prompts:
+                if "prompt" in prompt_obj:
+                    prompt_obj["prompt"] = self._sanitize_visual_prompt(prompt_obj["prompt"])
+
+            logger.info(f"Claude generated {len(prompts)} video prompts (sanitized for B-roll)")
             return prompts
 
         except Exception as e:
             logger.error(f"Claude prompt generation failed: {e}")
             return self._generate_prompts_template(script, brief)
 
+    def _sanitize_visual_prompt(self, prompt: str) -> str:
+        """Remove any talking-head or presenter language from visual prompts.
+
+        Ensures all prompts produce B-roll footage, not talking heads.
+        """
+        # Forbidden phrases that indicate talking heads
+        forbidden_phrases = [
+            "person talking", "talking to camera", "presenter", "spokesperson",
+            "explaining", "speaking directly", "host", "narrator visible",
+            "talking head", "interview", "direct address", "person speaks",
+            "man talking", "woman talking", "people talking", "expert explains",
+            "person explaining", "face to camera", "looking at camera",
+            "avatar", "AI presenter", "virtual host"
+        ]
+
+        sanitized = prompt.lower()
+        for phrase in forbidden_phrases:
+            if phrase in sanitized:
+                # Replace with B-roll alternative
+                sanitized = sanitized.replace(phrase, "dynamic product showcase")
+
+        # Restore original case where possible, add B-roll prefix if not present
+        if not prompt.lower().startswith("professional commercial b-roll"):
+            prompt = f"Professional commercial B-roll, cinematic 4K, no talking heads, {prompt}"
+
+        return prompt
+
     def _generate_prompts_template(self, script: Dict[str, Any], brief: Dict[str, Any]) -> List[Dict[str, str]]:
-        """Fallback template-based prompt generation"""
+        """Fallback template-based prompt generation with B-roll enforcement"""
         styles = brief.get("commercial_references", {}).get("visual_styles", [])
         style = styles[0] if styles else "Cinematic, modern"
 
+        # B-roll prefix for all prompts
+        BROLL_PREFIX = "Professional commercial B-roll, cinematic 4K, no talking heads, "
+
+        # Template prompts focused on product/environment visuals, NOT people talking
         return [
-            {"scene": 1, "prompt": f"{style}: {script['hook']}", "duration": 5, "camera": "slow zoom in", "mood": "intriguing"},
-            {"scene": 2, "prompt": f"{style}: {script['problem']}", "duration": 8, "camera": "handheld", "mood": "frustrated"},
-            {"scene": 3, "prompt": f"{style}: {script['solution']}", "duration": 10, "camera": "smooth dolly", "mood": "hopeful"},
-            {"scene": 4, "prompt": f"{style}: {script['proof']}", "duration": 4, "camera": "static", "mood": "confident"},
-            {"scene": 5, "prompt": f"{style}: {script['cta']}", "duration": 3, "camera": "zoom out", "mood": "energetic"}
+            {
+                "scene": 1,
+                "prompt": f"{BROLL_PREFIX}{style}, dramatic establishing shot, sweeping camera movement, atmospheric lighting, product teaser reveal",
+                "duration": 5,
+                "camera": "slow zoom in with parallax",
+                "mood": "intriguing"
+            },
+            {
+                "scene": 2,
+                "prompt": f"{BROLL_PREFIX}{style}, abstract visualization of pain point, fragmented imagery, tension-building montage, moody lighting",
+                "duration": 8,
+                "camera": "handheld with shallow depth of field",
+                "mood": "frustrated"
+            },
+            {
+                "scene": 3,
+                "prompt": f"{BROLL_PREFIX}{style}, hero product reveal, golden hour lighting, smooth dolly around subject, premium quality showcase",
+                "duration": 10,
+                "camera": "smooth dolly with crane movement",
+                "mood": "hopeful"
+            },
+            {
+                "scene": 4,
+                "prompt": f"{BROLL_PREFIX}{style}, results visualization, data particles flowing, success imagery, clean modern aesthetic",
+                "duration": 4,
+                "camera": "static with subtle drift",
+                "mood": "confident"
+            },
+            {
+                "scene": 5,
+                "prompt": f"{BROLL_PREFIX}{style}, brand logo reveal, dynamic light rays, call to action graphics, energetic motion design",
+                "duration": 3,
+                "camera": "zoom out to wide with particle effects",
+                "mood": "energetic"
+            }
         ]
 
     async def _generate_voiceover(self, script: Dict[str, Any], brief: Dict[str, Any]) -> Dict[str, Any]:
