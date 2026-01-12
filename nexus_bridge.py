@@ -1639,7 +1639,7 @@ Output JSON array with this exact structure:
 Focus on: cinematography, lighting, camera movement, product showcase, environment, color grading.
 Prompts should be 50-100 words each, vivid and specific. NO PEOPLE TALKING."""
 
-            user_prompt = f"""Create 5 video scene prompts for this commercial:
+            user_prompt = f"""Create 8 video scene prompts for this commercial (64 seconds total, 8 seconds per scene):
 
 Script:
 - Hook: {script.get('hook', '')}
