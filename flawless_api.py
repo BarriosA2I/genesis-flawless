@@ -1167,6 +1167,81 @@ async def list_r2_contents(
         return {"error": str(e), "configured": True}
 
 
+@app.get("/api/admin/redis-sessions", tags=["Admin"])
+async def list_redis_sessions(
+    pattern: str = Query("*", description="Redis key pattern to search"),
+    limit: int = Query(50, description="Max keys to return")
+):
+    """
+    List Redis keys for debugging production/session history.
+
+    Patterns:
+    - commercial:review:* - Commercial review records
+    - production:* - Production status records
+    - session:* - Chat sessions
+    """
+    try:
+        import redis.asyncio as redis_async
+
+        redis_url = os.getenv("REDIS_URL")
+        if not redis_url:
+            return {"error": "REDIS_URL not configured", "configured": False}
+
+        client = redis_async.from_url(redis_url, decode_responses=True)
+
+        # Scan for keys matching pattern
+        keys = []
+        async for key in client.scan_iter(match=pattern, count=100):
+            if len(keys) >= limit:
+                break
+            keys.append(key)
+
+        # Get data for each key
+        results = []
+        for key in keys:
+            try:
+                key_type = await client.type(key)
+                ttl = await client.ttl(key)
+
+                item = {
+                    "key": key,
+                    "type": key_type,
+                    "ttl_seconds": ttl if ttl > 0 else "no expiry"
+                }
+
+                # Get value preview for string keys
+                if key_type == "string":
+                    value = await client.get(key)
+                    if value:
+                        try:
+                            data = json.loads(value)
+                            item["preview"] = {
+                                "session_id": data.get("session_id"),
+                                "video_url": data.get("video_url"),
+                                "status": data.get("status"),
+                                "created_at": data.get("created_at"),
+                                "business_name": data.get("business_name")
+                            }
+                        except:
+                            item["preview"] = value[:200] if len(value) > 200 else value
+
+                results.append(item)
+            except Exception as e:
+                results.append({"key": key, "error": str(e)})
+
+        await client.close()
+
+        return {
+            "pattern": pattern,
+            "total_found": len(results),
+            "keys": results
+        }
+
+    except Exception as e:
+        logger.error(f"Redis listing failed: {e}")
+        return {"error": str(e)}
+
+
 # =============================================================================
 # LEGENDARY AGENTS ENDPOINTS (7.5-15) - THE APEX TIER
 # =============================================================================
