@@ -397,17 +397,19 @@ INTAKE_PROMPT = """You are a Creative Director gathering information for a video
 - Target Audience: {target_demographic}
 - Call to Action: {call_to_action}
 - Tone: {tone}
+- Uploaded Assets: {uploaded_assets}
 - Still need: {missing_fields}
 
 ## RULES
-1. Acknowledge what the user told you warmly and concisely
-2. Ask for the NEXT missing field specifically
+1. If user just uploaded a file (check "Uploaded Assets"), acknowledge it warmly FIRST with "Got your logo!" or similar
+2. Then ask for the NEXT missing field specifically
 3. Keep responses short (2-3 sentences)
 4. NEVER say "Ready to create" until ALL 5 fields are filled
 5. If user says "ready" but fields missing, explain what you still need
 
-## RESPONSE
-Acknowledge their input → Ask for next missing field"""
+## RESPONSE FORMAT
+If asset was just uploaded → "Got your [logo/image]! Now, [ask for next field]..."
+Otherwise → Acknowledge their input → Ask for next missing field"""
 
 
 # ============================================================================
@@ -594,6 +596,15 @@ Extract ONLY what user explicitly stated. Do not guess."""
             # CASE A: Still gathering basic info
             new_state["is_complete"] = False
 
+            # Build uploaded assets description for prompt
+            uploaded_assets_desc = "None"
+            if new_assets:
+                asset_names = [a.get('name', 'unknown') for a in new_assets]
+                uploaded_assets_desc = f"Just uploaded: {', '.join(asset_names)}"
+            elif new_state.get("uploaded_assets"):
+                asset_names = [a.get('name', 'unknown') for a in new_state.get("uploaded_assets", [])]
+                uploaded_assets_desc = f"Previously uploaded: {', '.join(asset_names)}"
+
             # Build context-aware prompt
             prompt = INTAKE_PROMPT.format(
                 business_name=new_state.get("business_name") or "[not yet provided]",
@@ -601,6 +612,7 @@ Extract ONLY what user explicitly stated. Do not guess."""
                 target_demographic=new_state.get("target_demographic") or "[not yet provided]",
                 call_to_action=new_state.get("call_to_action") or "[not yet provided]",
                 tone=new_state.get("tone") or "[not yet provided]",
+                uploaded_assets=uploaded_assets_desc,
                 missing_fields=", ".join(missing)
             )
 
