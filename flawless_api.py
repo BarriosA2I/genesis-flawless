@@ -1242,6 +1242,113 @@ async def list_redis_sessions(
         return {"error": str(e)}
 
 
+@app.post("/api/admin/seed-commercials", tags=["Admin"])
+async def seed_commercial_training_data(
+    force_recreate: bool = Query(False, description="Force recreate collection"),
+    verify: bool = Query(True, description="Run verification query after seeding")
+):
+    """
+    Initialize and seed the commercial_styles Qdrant collection.
+
+    This populates the commercial training data used by RAGNAROK to generate
+    cinematic B-roll video prompts instead of generic talking-head videos.
+
+    Seed data includes 5 high-quality commercial examples:
+    - Apple (technology) - Product hero, dramatic lighting
+    - Nike (sports) - Fast cuts, slow-mo impact
+    - Tesla (automotive) - Environment + vehicle beauty
+    - Airbnb (travel) - Spaces not faces, warm color grading
+    - Barrios A2I (ai_automation) - Abstract visualizations
+    """
+    import sys
+    from pathlib import Path
+
+    # Add tools to path
+    sys.path.insert(0, str(Path(__file__).parent / "tools"))
+
+    try:
+        from tools.init_qdrant_commercials import init_qdrant_collection
+        from tools.ingest_commercials import CommercialIngester
+        import json
+
+        # Step 1: Initialize collection
+        logger.info("Initializing Qdrant commercial_styles collection...")
+        client = init_qdrant_collection(force_recreate=force_recreate)
+
+        # Step 2: Load seed data
+        seed_file = Path(__file__).parent / "data" / "seed_commercials.json"
+        if not seed_file.exists():
+            return {"error": f"Seed file not found: {seed_file}", "success": False}
+
+        with open(seed_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        commercials = data.get("commercials", [])
+        logger.info(f"Found {len(commercials)} commercial examples to seed")
+
+        # Step 3: Ingest commercials
+        ingester = CommercialIngester()
+        results = []
+        success_count = 0
+
+        for commercial in commercials:
+            try:
+                point_id = await ingester.ingest_commercial(**commercial)
+                results.append({
+                    "brand": commercial.get("brand"),
+                    "industry": commercial.get("manual_data", {}).get("title", "Unknown"),
+                    "status": "success",
+                    "point_id": point_id
+                })
+                success_count += 1
+            except Exception as e:
+                results.append({
+                    "brand": commercial.get("brand"),
+                    "status": "error",
+                    "error": str(e)
+                })
+
+        # Step 4: Verify
+        collection_info = client.get_collection("commercial_styles")
+        verification = {
+            "collection": "commercial_styles",
+            "points_count": collection_info.points_count,
+            "vectors_config": str(collection_info.config.params.vectors)
+        }
+
+        # Optional: Run test query
+        if verify and success_count > 0:
+            try:
+                test_results = ingester.query_similar(
+                    query="cinematic technology commercial with dramatic lighting",
+                    min_quality=8.0,
+                    top_k=3
+                )
+                verification["test_query_results"] = len(test_results)
+                verification["test_query_brands"] = [r.get("brand") for r in test_results]
+            except Exception as e:
+                verification["test_query_error"] = str(e)
+
+        logger.info(f"Commercial seeding complete: {success_count}/{len(commercials)} succeeded")
+
+        return {
+            "success": True,
+            "seeded": success_count,
+            "failed": len(commercials) - success_count,
+            "results": results,
+            "verification": verification
+        }
+
+    except Exception as e:
+        logger.error(f"Commercial seeding failed: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 # =============================================================================
 # LEGENDARY AGENTS ENDPOINTS (7.5-15) - THE APEX TIER
 # =============================================================================

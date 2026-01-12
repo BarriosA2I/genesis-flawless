@@ -443,24 +443,236 @@ class TrinityConnector:
 
 class CommercialReferencesRAG:
     """
-    RAG interface to THE CURATOR's commercial patterns.
-    Retrieves hooks, CTAs, and visual styles from Qdrant.
+    RAG interface for commercial style references from Qdrant.
+
+    Queries the commercial_styles collection to retrieve:
+    - Visual styles and camera movements from successful commercials
+    - Scene description examples for B-roll generation
+    - Key learnings to inform video prompt engineering
     """
 
     def __init__(self, curator=None):
         self.curator = curator
+        self._qdrant_client = None
+        self._openai_client = None
+
+    def _get_qdrant(self):
+        """Lazy init Qdrant client."""
+        if self._qdrant_client is None:
+            try:
+                from qdrant_client import QdrantClient
+                qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+                qdrant_api_key = os.getenv("QDRANT_API_KEY")
+                self._qdrant_client = QdrantClient(
+                    url=qdrant_url,
+                    api_key=qdrant_api_key if qdrant_api_key else None,
+                )
+            except Exception as e:
+                logger.warning(f"Qdrant client init failed: {e}")
+        return self._qdrant_client
+
+    def _get_openai(self):
+        """Lazy init OpenAI client."""
+        if self._openai_client is None:
+            try:
+                from openai import OpenAI
+                self._openai_client = OpenAI()
+            except Exception as e:
+                logger.warning(f"OpenAI client init failed: {e}")
+        return self._openai_client
+
+    def _get_embedding(self, text: str) -> List[float]:
+        """Get embedding for query text."""
+        openai = self._get_openai()
+        if not openai:
+            return []
+        try:
+            response = openai.embeddings.create(
+                model="text-embedding-3-small",
+                input=text[:8000],
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.warning(f"Embedding generation failed: {e}")
+            return []
+
+    def get_style_references(
+        self,
+        brand_description: str,
+        industry: str,
+        target_audience: str = "",
+        top_k: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Get commercial style references for video generation.
+
+        Args:
+            brand_description: Description of the brand/business
+            industry: Industry category
+            target_audience: Target audience description
+            top_k: Number of reference commercials to retrieve
+
+        Returns:
+            Dictionary with visual_styles, scene_examples, camera_movements,
+            color_palettes, key_learnings
+        """
+        qdrant = self._get_qdrant()
+        if not qdrant:
+            return self._fallback_style_references()
+
+        try:
+            # Build query from context
+            query = f"""
+            Brand: {brand_description}
+            Industry: {industry}
+            Target audience: {target_audience}
+            Looking for: Cinematic B-roll commercial style references
+            """
+
+            # Get embedding
+            query_embedding = self._get_embedding(query)
+            if not query_embedding:
+                return self._fallback_style_references()
+
+            # Build filter
+            from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
+
+            filter_conditions = []
+
+            # Filter by industry if not generic
+            if industry and industry.lower() not in ["general", "other", ""]:
+                filter_conditions.append(
+                    FieldCondition(key="industry", match=MatchValue(value=industry))
+                )
+
+            # Only high-quality references
+            filter_conditions.append(
+                FieldCondition(key="quality_score", range=Range(gte=7.5))
+            )
+
+            query_filter = Filter(must=filter_conditions) if filter_conditions else None
+
+            # Search Qdrant
+            results = qdrant.search(
+                collection_name="commercial_styles",
+                query_vector=("visual", query_embedding),
+                query_filter=query_filter,
+                limit=top_k,
+                with_payload=True,
+            )
+
+            # If no results with industry filter, try without
+            if not results and industry:
+                results = qdrant.search(
+                    collection_name="commercial_styles",
+                    query_vector=("visual", query_embedding),
+                    query_filter=Filter(must=[
+                        FieldCondition(key="quality_score", range=Range(gte=7.5))
+                    ]),
+                    limit=top_k,
+                    with_payload=True,
+                )
+
+            if not results:
+                logger.info("No Qdrant results, using fallback")
+                return self._fallback_style_references()
+
+            # Extract style information from results
+            visual_styles = []
+            scene_examples = []
+            camera_movements = set()
+            color_palettes = []
+            key_learnings = []
+            sources = []
+
+            for r in results:
+                payload = r.payload
+                visual_styles.append(payload.get("visual_style", "cinematic"))
+                scene_examples.extend(payload.get("scene_descriptions", [])[:3])
+                camera_movements.update(payload.get("camera_movements", []))
+                color_palettes.extend(payload.get("color_palette", []))
+                key_learnings.extend(payload.get("key_learnings", []))
+                sources.append(payload.get("brand", "Unknown"))
+
+            logger.info(f"Retrieved {len(results)} commercial references from Qdrant")
+
+            return {
+                "visual_styles": list(set(visual_styles)),
+                "scene_examples": scene_examples[:8],  # Top 8 examples
+                "camera_movements": list(camera_movements),
+                "color_palettes": list(set(color_palettes))[:10],
+                "key_learnings": list(set(key_learnings))[:6],
+                "reference_count": len(results),
+                "sources": sources,
+                "source": "qdrant",
+            }
+
+        except Exception as e:
+            logger.warning(f"Qdrant query failed: {e}")
+            return self._fallback_style_references()
+
+    def _fallback_style_references(self) -> Dict[str, Any]:
+        """Fallback style references when Qdrant is unavailable."""
+        return {
+            "visual_styles": ["cinematic", "documentary"],
+            "scene_examples": [
+                "Dramatic establishing shot with sweeping camera movement, atmospheric lighting, product teaser reveal",
+                "Slow 360-degree dolly around product floating in void, dramatic rim lighting, particle effects",
+                "Abstract visualization of data flow, neon pathways pulsing, futuristic aesthetic",
+                "Hero product reveal with golden hour lighting, smooth dolly around subject",
+            ],
+            "camera_movements": ["dolly", "crane", "tracking", "slow_pan", "drone", "orbit"],
+            "color_palettes": ["#00CED1", "#D4AF37", "#0A0A0F", "#FFFFFF", "#1A1A2E"],
+            "key_learnings": [
+                "Product as hero - never show people talking to camera",
+                "Dramatic lighting creates premium perception",
+                "Abstract visualizations for intangible services",
+                "No talking heads - let visuals tell the story",
+            ],
+            "reference_count": 0,
+            "sources": [],
+            "source": "fallback",
+        }
 
     async def get_references(
         self,
         industry: str,
         style: str = "modern",
         top_k: int = 5
-    ) -> List[Dict[str, Any]]:
-        """Retrieve commercial references for the industry."""
+    ) -> Dict[str, Any]:
+        """
+        Legacy method - retrieve commercial references for the industry.
+        Now delegates to get_style_references for Qdrant-backed retrieval.
+        """
+        # Try Qdrant-based retrieval first
+        style_refs = self.get_style_references(
+            brand_description="",
+            industry=industry,
+            top_k=top_k,
+        )
 
+        if style_refs.get("source") == "qdrant":
+            return {
+                "hooks": [
+                    "Stop scrolling. This changes everything.",
+                    "What if I told you...",
+                    "Here's something they don't want you to know"
+                ],
+                "ctas": [
+                    "Get started free today",
+                    "Book your demo now",
+                    "Join 10,000+ businesses"
+                ],
+                "visual_styles": style_refs.get("visual_styles", []),
+                "scene_examples": style_refs.get("scene_examples", []),
+                "camera_movements": style_refs.get("camera_movements", []),
+                "key_learnings": style_refs.get("key_learnings", []),
+                "source": "qdrant"
+            }
+
+        # Fallback to curator if available
         if self.curator:
             try:
-                # Get hooks, CTAs, and styles from curator
                 hooks = await self.curator.pattern_indexer.get_top_patterns(
                     pattern_type="hook",
                     industry=industry,
@@ -486,7 +698,7 @@ class CommercialReferencesRAG:
             except Exception as e:
                 logger.warning(f"Curator references failed: {e}")
 
-        # Fallback mock references
+        # Final fallback mock references
         return {
             "hooks": [
                 "Stop scrolling. This changes everything.",
@@ -501,7 +713,7 @@ class CommercialReferencesRAG:
             "visual_styles": [
                 "Cinematic with dramatic lighting",
                 "Fast-paced montage with text overlays",
-                "Documentary-style testimonials"
+                "Documentary-style B-roll"
             ],
             "source": "mock"
         }
@@ -1336,13 +1548,46 @@ The goal is to score 85+ on the next evaluation.
         try:
             styles = brief.get("commercial_references", {}).get("visual_styles", [])
 
-            system_prompt = """You are a world-class video prompt engineer for AI video generation (Runway, Pika, Sora, KIE.ai VEO).
+            # Get commercial style references from Qdrant
+            style_refs = self.commercial_rag.get_style_references(
+                brand_description=brief.get("business_name", ""),
+                industry=brief.get("industry", "technology"),
+                target_audience=brief.get("target_audience", ""),
+                top_k=3,
+            )
+
+            # Build scene examples section from commercial references
+            scene_examples_text = ""
+            if style_refs.get("scene_examples"):
+                scene_examples_text = "\n## SCENE EXAMPLES FROM AWARD-WINNING COMMERCIALS:\n"
+                for i, ex in enumerate(style_refs["scene_examples"][:6], 1):
+                    scene_examples_text += f"{i}. {ex}\n"
+
+            # Build key learnings section
+            key_learnings_text = ""
+            if style_refs.get("key_learnings"):
+                key_learnings_text = "\n## KEY LEARNINGS FROM TOP COMMERCIALS:\n"
+                for learning in style_refs["key_learnings"][:4]:
+                    key_learnings_text += f"- {learning}\n"
+
+            # Build camera movements reference
+            camera_ref = ", ".join(style_refs.get("camera_movements", ["dolly", "crane", "tracking"]))
+
+            logger.info(f"Using {style_refs.get('reference_count', 0)} commercial references from {style_refs.get('source', 'unknown')}")
+
+            system_prompt = f"""You are a world-class video prompt engineer for AI video generation (Runway, Pika, Sora, KIE.ai VEO).
 
 Generate 8 video prompts for a 64-second commercial (8 seconds per scene). Each prompt should be highly detailed for AI video generation.
 
 ## CRITICAL: COMMERCIAL B-ROLL STYLE ONLY
 You MUST generate prompts for CINEMATIC B-ROLL footage. This is a professional commercial, NOT a talking-head video.
 
+## COMMERCIAL STYLE REFERENCES (from successful ads):
+- Visual styles to emulate: {', '.join(style_refs.get('visual_styles', ['cinematic']))}
+- Camera movements to use: {camera_ref}
+- Reference brands: {', '.join(style_refs.get('sources', ['Apple', 'Nike'])[:3])}
+{scene_examples_text}
+{key_learnings_text}
 **REQUIRED in every prompt:**
 - Cinematic camera movements (dolly, crane, steadicam, slow pan, drone)
 - Professional lighting (dramatic, moody, natural, studio)
@@ -1360,7 +1605,7 @@ You MUST generate prompts for CINEMATIC B-ROLL footage. This is a professional c
 
 Output JSON array with this exact structure:
 [
-  {"scene": 1, "prompt": "Professional commercial B-roll, cinematic 4K, no talking heads, [detailed scene]", "duration": 8, "camera": "camera movement", "mood": "emotional tone"},
+  {{"scene": 1, "prompt": "Professional commercial B-roll, cinematic 4K, no talking heads, [detailed scene]", "duration": 8, "camera": "camera movement", "mood": "emotional tone"}},
   ...
 ]
 

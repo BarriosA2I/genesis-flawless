@@ -1,0 +1,328 @@
+{
+  "commercials": [
+    {
+      "brand": "Apple",
+      "industry": "technology",
+      "description": "iPhone Pro cinematic mode commercial - dramatic lighting, product focus",
+      "manual_data": {
+        "title": "iPhone Pro - Cinematic Mode",
+        "visual_style": "cinematic",
+        "color_palette": ["#000000", "#1D1D1F", "#0066CC", "#FFFFFF", "#86868B"],
+        "camera_movements": ["dolly", "slow_pan", "rack_focus", "360_orbit", "macro"],
+        "lighting_style": "dramatic",
+        "pacing": "slow",
+        "duration_seconds": 60,
+        "scene_count": 8,
+        "scenes": [
+          {
+            "scene_number": 1,
+            "duration_seconds": 8,
+            "visual_description": "Extreme close-up of iPhone camera lens, light refracting through sapphire glass, rack focus reveals sleek titanium body emerging from shadow, moody dark background with subtle blue rim lighting",
+            "camera": "macro with rack focus",
+            "mood": "mysterious"
+          },
+          {
+            "scene_number": 2,
+            "duration_seconds": 8,
+            "visual_description": "Slow 360-degree dolly around iPhone floating in void, dramatic rim lighting creates halo effect, particle dust catches light, reflections dance across screen surface",
+            "camera": "360 dolly orbit",
+            "mood": "premium"
+          },
+          {
+            "scene_number": 3,
+            "duration_seconds": 8,
+            "visual_description": "Macro shot of titanium edges catching light at different angles, shallow depth of field, abstract bokeh background shifts colors, metal texture visible",
+            "camera": "macro dolly",
+            "mood": "craftsmanship"
+          },
+          {
+            "scene_number": 4,
+            "duration_seconds": 8,
+            "visual_description": "Screen illuminates showing cinematic footage playback, camera pulls back smoothly to reveal full device, blue accent lighting pulses subtly",
+            "camera": "pull back reveal",
+            "mood": "capability"
+          }
+        ],
+        "hook_type": "visual_shock",
+        "cta_type": "visit_website",
+        "emotional_tone": "inspirational",
+        "voiceover_style": "none",
+        "music_genre": "electronic",
+        "quality_score": 9.5,
+        "key_learnings": [
+          "Product as hero - never show people talking to camera",
+          "Dramatic rim lighting creates premium perception",
+          "Slow pacing builds anticipation and luxury feel",
+          "Abstract dark backgrounds focus attention on product",
+          "Macro details showcase craftsmanship and quality"
+        ],
+        "scene_descriptions": [
+          "Extreme close-up of iPhone camera lens, light refracting through sapphire glass, rack focus reveals sleek titanium body emerging from shadow, moody dark background with subtle blue rim lighting",
+          "Slow 360-degree dolly around iPhone floating in void, dramatic rim lighting creates halo effect, particle dust catches light, reflections dance across screen surface",
+          "Macro shot of titanium edges catching light at different angles, shallow depth of field, abstract bokeh background shifts colors, metal texture visible",
+          "Screen illuminates showing cinematic footage playback, camera pulls back smoothly to reveal full device, blue accent lighting pulses subtly",
+          "Split screen transformation showing before/after image quality, smooth morphing transition effect",
+          "Aerial view of iPhone on reflective black surface, ripple effects emanate outward, lens flares streak across frame",
+          "Quick montage of feature icons - camera, chip, battery - all rendered as 3D product shots floating in space",
+          "Final hero shot with Apple logo fade-in, minimal white text on black, product centered with dramatic lighting"
+        ],
+        "tags": ["product-hero", "tech", "premium", "cinematic", "no-talking-heads"]
+      }
+    },
+    {
+      "brand": "Nike",
+      "industry": "sports_apparel",
+      "description": "Just Do It campaign - high energy, athletic B-roll montage",
+      "manual_data": {
+        "title": "Nike - Just Do It Athletic Montage",
+        "visual_style": "documentary",
+        "color_palette": ["#000000", "#FF5722", "#FFFFFF", "#1A1A1A", "#F5F5F5"],
+        "camera_movements": ["handheld", "tracking", "crane", "slow_motion", "drone", "steadicam"],
+        "lighting_style": "natural",
+        "pacing": "fast",
+        "duration_seconds": 30,
+        "scene_count": 12,
+        "scenes": [
+          {
+            "scene_number": 1,
+            "duration_seconds": 2,
+            "visual_description": "Extreme slow motion of running shoes hitting wet pavement, water droplets exploding outward in perfect detail, dramatic golden hour backlighting through morning fog",
+            "camera": "low angle tracking",
+            "mood": "powerful"
+          },
+          {
+            "scene_number": 2,
+            "duration_seconds": 3,
+            "visual_description": "Wide crane shot rising over empty stadium at dawn, single runner silhouette in distance, golden hour rays streaming through stands",
+            "camera": "crane rise",
+            "mood": "epic"
+          },
+          {
+            "scene_number": 3,
+            "duration_seconds": 2,
+            "visual_description": "Close-up of athletic hands gripping barbell, chalk dust floating in beam of gym light, texture of calluses and determination visible",
+            "camera": "macro static",
+            "mood": "grit"
+          }
+        ],
+        "hook_type": "visual_shock",
+        "cta_type": "none",
+        "emotional_tone": "inspirational",
+        "voiceover_style": "none",
+        "music_genre": "electronic",
+        "quality_score": 9.0,
+        "key_learnings": [
+          "Fast cuts create energy and excitement",
+          "Slow motion reserved for impact moments only",
+          "Product shown in action context, never static",
+          "No dialogue needed - let visuals tell the story",
+          "Natural lighting adds authenticity to athletic footage",
+          "Quick montage rhythm matches music beat"
+        ],
+        "scene_descriptions": [
+          "Extreme slow motion of running shoes hitting wet pavement, water droplets exploding outward in perfect detail, dramatic golden hour backlighting through morning fog",
+          "Wide crane shot rising over empty stadium at dawn, single runner silhouette in distance, golden hour rays streaming through stands",
+          "Close-up of athletic hands gripping barbell, chalk dust floating in beam of gym light, texture of calluses visible",
+          "Tracking shot following basketball mid-dribble, Nike swoosh visible on shoe, court lights reflecting off polished floor",
+          "Aerial drone sweeping over mountain trail, lone runner moving through misty forest, epic landscape scale",
+          "Macro of shoe technology cross-section, animated fibers and air cushioning visible, materials exploding apart",
+          "Quick montage: punch bag impact, weights dropping, sprinter in blocks - 0.5 second cuts synced to beat",
+          "Final Nike swoosh animation emerging from particle effects, Just Do It tagline, black background"
+        ],
+        "tags": ["athletic", "fast-cuts", "slow-motion", "b-roll", "no-talking-heads"]
+      }
+    },
+    {
+      "brand": "Tesla",
+      "industry": "automotive",
+      "description": "Model S Plaid launch - futuristic, clean aesthetic, performance showcase",
+      "manual_data": {
+        "title": "Tesla Model S Plaid - Pure Performance",
+        "visual_style": "cinematic",
+        "color_palette": ["#FFFFFF", "#CC0000", "#1A1A1A", "#0066FF", "#E82127"],
+        "camera_movements": ["dolly", "drone", "crane", "tracking", "gimbal", "car_rig"],
+        "lighting_style": "bright",
+        "pacing": "medium",
+        "duration_seconds": 45,
+        "scene_count": 6,
+        "scenes": [
+          {
+            "scene_number": 1,
+            "duration_seconds": 8,
+            "visual_description": "Wide establishing shot of empty desert highway stretching to horizon at sunrise, heat shimmer distorts air, red Tesla approaches as distant speck, dust trail visible",
+            "camera": "static wide",
+            "mood": "anticipation"
+          },
+          {
+            "scene_number": 2,
+            "duration_seconds": 8,
+            "visual_description": "Tracking shot alongside car at high speed, camera mounted to chase vehicle, wheels spinning blur, landscape streaks past, aerodynamic body lines emphasized",
+            "camera": "car rig tracking",
+            "mood": "speed"
+          },
+          {
+            "scene_number": 3,
+            "duration_seconds": 7,
+            "visual_description": "Interior POV of empty cockpit, camera pans slowly across minimalist dashboard, 17-inch touchscreen glows with interface, yoke steering wheel catches light",
+            "camera": "interior gimbal pan",
+            "mood": "futuristic"
+          }
+        ],
+        "hook_type": "visual_shock",
+        "cta_type": "visit_website",
+        "emotional_tone": "inspirational",
+        "voiceover_style": "professional",
+        "music_genre": "orchestral",
+        "quality_score": 9.2,
+        "key_learnings": [
+          "Automotive commercials: environment + vehicle beauty shots only",
+          "Never show people talking - voiceover only if needed",
+          "Show performance through visual action, not spoken specs",
+          "Clean backgrounds highlight design language",
+          "Interior shots should be empty - focus on technology",
+          "Drone shots establish scale and environment"
+        ],
+        "scene_descriptions": [
+          "Wide establishing shot of empty desert highway stretching to horizon at sunrise, heat shimmer distorts air, red Tesla approaches as distant speck, dust trail visible",
+          "Tracking shot alongside car at high speed, camera mounted to chase vehicle, wheels spinning blur, landscape streaks past, aerodynamic body lines emphasized",
+          "Interior POV of empty cockpit, camera pans slowly across minimalist dashboard, 17-inch touchscreen glows with interface, yoke steering wheel catches light",
+          "Slow motion acceleration launch from standstill, rear tires emit slight smoke, car rockets forward, camera shake conveys G-force, frame rate ramps",
+          "Drone shot spiraling down from height to car parked at scenic overlook, sunset colors reflect off metallic paint, mountains in background",
+          "Final product shot on black turntable, 360-degree slow rotation, Tesla logo illuminated, minimal text overlay with specs"
+        ],
+        "tags": ["automotive", "performance", "futuristic", "cinematic", "no-talking-heads"]
+      }
+    },
+    {
+      "brand": "Airbnb",
+      "industry": "travel",
+      "description": "Belong Anywhere - lifestyle travel montage showcasing unique spaces",
+      "manual_data": {
+        "title": "Airbnb - Belong Anywhere",
+        "visual_style": "lifestyle",
+        "color_palette": ["#FF5A5F", "#00A699", "#FFB400", "#484848", "#FFFFFF"],
+        "camera_movements": ["handheld", "gimbal", "drone", "pan", "tilt", "push_in"],
+        "lighting_style": "natural",
+        "pacing": "medium",
+        "duration_seconds": 60,
+        "scene_count": 10,
+        "scenes": [
+          {
+            "scene_number": 1,
+            "duration_seconds": 6,
+            "visual_description": "Golden hour light streaming through large cabin window, mountain vista visible outside, warm interior glow on wooden surfaces, empty inviting armchair by fireplace",
+            "camera": "slow push in",
+            "mood": "warm"
+          },
+          {
+            "scene_number": 2,
+            "duration_seconds": 6,
+            "visual_description": "Drone rising smoothly over Tuscan villa at dawn, cypress trees lining gravel driveway, morning mist filling valley below, terracotta roof tiles catching first light",
+            "camera": "drone rise",
+            "mood": "discovery"
+          },
+          {
+            "scene_number": 3,
+            "duration_seconds": 6,
+            "visual_description": "Macro detail of breakfast spread on rustic wooden table, steam rising from coffee cup, fresh croissants, jam jars, morning light through linen curtains",
+            "camera": "tabletop dolly",
+            "mood": "comfort"
+          }
+        ],
+        "hook_type": "emotional",
+        "cta_type": "download",
+        "emotional_tone": "trustworthy",
+        "voiceover_style": "conversational",
+        "music_genre": "acoustic",
+        "quality_score": 8.8,
+        "key_learnings": [
+          "Show SPACES, not people talking about spaces",
+          "Natural lighting creates authenticity and warmth",
+          "Montage of diverse locations shows variety and possibility",
+          "Warm color grading enhances emotional connection",
+          "Details (food, textures, views) make spaces feel real",
+          "Empty spaces invite viewer to imagine themselves there"
+        ],
+        "scene_descriptions": [
+          "Golden hour light streaming through large cabin window, mountain vista visible outside, warm interior glow on wooden surfaces, empty inviting armchair by fireplace",
+          "Drone rising smoothly over Tuscan villa at dawn, cypress trees lining gravel driveway, morning mist filling valley below, terracotta roof tiles catching first light",
+          "Macro detail of breakfast spread on rustic wooden table, steam rising from coffee cup, fresh croissants, jam jars, morning light through linen curtains",
+          "Gimbal walk-through of modern city loft, floor-to-ceiling windows reveal skyline, afternoon light casting long shadows, minimalist furniture",
+          "Time-lapse of sunset from beach house deck, waves rolling in rhythm, palm tree silhouettes sway, sky transitions through orange to purple",
+          "Cozy reading nook detail - stacked books, cashmere throw blanket draped over chair, warm lamp glow, rain visible on nearby window",
+          "Aerial of tropical treehouse nestled in jungle canopy, rope bridge visible, morning birds flying past, exotic foliage",
+          "Night exterior of tiny house with string lights, Milky Way visible above, small campfire smoke drifting, warm interior glow through windows",
+          "Morning coffee on Amsterdam balcony, canal boats gliding below, bicycles parked on bridge, church bells suggested",
+          "Final Airbnb logo over animated globe, location dots pulsing across continents, Belong Anywhere tagline"
+        ],
+        "tags": ["travel", "lifestyle", "spaces", "warm", "no-talking-heads"]
+      }
+    },
+    {
+      "brand": "Barrios A2I",
+      "industry": "ai_automation",
+      "description": "AI automation consultancy commercial - cyberpunk aesthetic, abstract visualizations",
+      "manual_data": {
+        "title": "Barrios A2I - Transform Your Business",
+        "visual_style": "cinematic",
+        "color_palette": ["#00CED1", "#D4AF37", "#0A0A0F", "#1A1A2E", "#22D3EE"],
+        "camera_movements": ["dolly", "drone", "crane", "tracking", "orbit", "push_in"],
+        "lighting_style": "dramatic",
+        "pacing": "medium",
+        "duration_seconds": 64,
+        "scene_count": 4,
+        "scenes": [
+          {
+            "scene_number": 1,
+            "duration_seconds": 16,
+            "visual_description": "Dark futuristic control room with curved monitor walls, flowing data visualizations in teal and gold, volumetric light rays cutting through atmosphere, camera slowly dollies through the space, holographic AI interfaces hover and pulse",
+            "camera": "slow dolly forward",
+            "mood": "intrigue"
+          },
+          {
+            "scene_number": 2,
+            "duration_seconds": 16,
+            "visual_description": "Split screen transformation sequence: left side shows chaos (papers flying, cluttered desk, endless loading bars, frustrated iconography) morphing through digital dissolve into right side order (clean minimal workspace, instant results, smooth flowing automation, satisfaction iconography), time-lapse energy",
+            "camera": "static split to dynamic merge",
+            "mood": "tension to relief"
+          },
+          {
+            "scene_number": 3,
+            "duration_seconds": 16,
+            "visual_description": "Abstract 3D visualization of AI neural network in deep space, data nodes as crystalline structures connecting with golden light trails, camera cranes upward through the network, particles coalesce into dashboard graphs showing exponential growth curves",
+            "camera": "crane up through CG environment",
+            "mood": "wonder"
+          },
+          {
+            "scene_number": 4,
+            "duration_seconds": 16,
+            "visual_description": "Hero shot of sleek laptop displaying Barrios A2I interface, crystalline teal glow emanating from screen casting light on dark environment, camera orbits 360 degrees, golden accent particles float around device, logo reveals with subtle pulse animation",
+            "camera": "360 orbit",
+            "mood": "premium confidence"
+          }
+        ],
+        "hook_type": "visual_shock",
+        "cta_type": "visit_website",
+        "emotional_tone": "inspirational",
+        "voiceover_style": "professional",
+        "music_genre": "electronic",
+        "quality_score": 9.0,
+        "key_learnings": [
+          "Tech/service commercials: show TRANSFORMATION, not explanation",
+          "Abstract visualizations represent intangible services effectively",
+          "Brand colors (teal + gold) should be consistent throughout",
+          "No talking heads - let visuals tell the story",
+          "Cyberpunk/futuristic aesthetic conveys cutting-edge capability",
+          "Before/after visual storytelling is powerful for services"
+        ],
+        "scene_descriptions": [
+          "Dark futuristic control room with curved monitor walls, flowing data visualizations in teal and gold, volumetric light rays cutting through atmosphere, camera slowly dollies through the space, holographic AI interfaces hover and pulse",
+          "Split screen transformation sequence: left side shows chaos (papers flying, cluttered desk, endless loading bars) morphing into right side order (clean workspace, instant results, smooth automation), time-lapse energy",
+          "Abstract 3D visualization of AI neural network in deep space, data nodes as crystalline structures connecting with golden light trails, camera cranes upward through the network, particles coalesce into dashboard graphs showing growth",
+          "Hero shot of sleek laptop displaying Barrios A2I interface, crystalline teal glow emanating from screen, camera orbits 360 degrees, golden accent particles float around device, logo reveals with subtle pulse animation"
+        ],
+        "tags": ["ai", "technology", "cyberpunk", "abstract", "transformation", "no-talking-heads"]
+      }
+    }
+  ]
+}
