@@ -39,6 +39,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from starlette.responses import Response
+import httpx
 
 # Import orchestrator and components
 from flawless_orchestrator import (
@@ -1943,6 +1944,54 @@ async def curator_stop():
 
 
 # =============================================================================
+# VIDEO GALLERY PUBLICATION
+# =============================================================================
+
+VIDEO_GALLERY_API = "https://video-preview-theta.vercel.app/api/videos"
+
+
+async def publish_to_video_gallery(session_id: str, state, brief: dict):
+    """
+    Publish completed video to video-preview-theta.vercel.app gallery.
+    Called when RAGNAROK production completes successfully.
+    """
+    try:
+        # Extract video URL from artifacts
+        video_url = (
+            state.artifacts.get("youtube_1080p") or
+            state.artifacts.get("r2_url") or
+            (list(state.artifacts.values())[0] if state.artifacts else None)
+        )
+
+        if not video_url:
+            logger.warning(f"[VideoGallery] No video URL for session {session_id}")
+            return
+
+        payload = {
+            "url": video_url,
+            "title": f"{brief.get('business_name', 'Commercial')} Commercial",
+            "description": f"AI-generated commercial for {brief.get('business_name', 'client')}",
+            "duration": "1:04",
+            "tags": ["commercial", "ai-generated", "barrios-a2i", brief.get("industry", "general")],
+            "business_name": brief.get("business_name", ""),
+            "industry": brief.get("industry", "general"),
+            "session_id": session_id,
+            "created": datetime.now().isoformat().split("T")[0]
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(VIDEO_GALLERY_API, json=payload)
+            if response.status_code in [200, 201]:
+                result = response.json()
+                video_id = result.get("video", {}).get("id", session_id)
+                logger.info(f"[VideoGallery] Published: https://video-preview-theta.vercel.app/gallery.html#{video_id}")
+            else:
+                logger.warning(f"[VideoGallery] Failed: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"[VideoGallery] Error publishing: {e}")
+
+
+# =============================================================================
 # COMMERCIAL_LAB PRODUCTION ENDPOINTS
 # =============================================================================
 
@@ -1978,6 +2027,11 @@ async def start_production(session_id: str, request: ProductionStartRequest):
     async def generate():
         async for state in nexus_bridge.start_production(session_id, approved_brief):
             yield f"data: {json.dumps(state.to_dict())}\n\n"
+
+            # Publish to video gallery when production completes successfully
+            if state.status == ProductionStatus.COMPLETED:
+                logger.info(f"[Production] Completed - publishing to video gallery")
+                await publish_to_video_gallery(session_id, state, approved_brief)
 
     return StreamingResponse(
         generate(),
