@@ -1086,6 +1086,64 @@ async def backfill_videos_to_preview(
         )
 
 
+@app.get("/api/storage/status", tags=["Admin"])
+async def storage_status():
+    """
+    Check R2 storage configuration status.
+
+    Use this to verify R2 credentials are properly configured.
+    """
+    account_id = os.getenv("R2_ACCOUNT_ID")
+    access_key_id = os.getenv("R2_ACCESS_KEY_ID")
+    secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
+    bucket_name = os.getenv("R2_BUCKET_NAME", "barrios-videos")
+    public_url = os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+
+    # Check which variables are configured
+    config_status = {
+        "R2_ACCOUNT_ID": bool(account_id),
+        "R2_ACCESS_KEY_ID": bool(access_key_id),
+        "R2_SECRET_ACCESS_KEY": bool(secret_access_key),
+        "R2_BUCKET_NAME": bucket_name,
+        "R2_PUBLIC_URL": public_url
+    }
+
+    is_configured = all([account_id, access_key_id, secret_access_key])
+
+    result = {
+        "configured": is_configured,
+        "config_status": config_status,
+        "bucket": bucket_name,
+        "public_url": public_url,
+        "status": "ready" if is_configured else "missing_credentials"
+    }
+
+    # Test connection if configured
+    if is_configured:
+        try:
+            import boto3
+            from botocore.config import Config
+
+            client = boto3.client(
+                "s3",
+                endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+                aws_access_key_id=access_key_id,
+                aws_secret_access_key=secret_access_key,
+                config=Config(signature_version="s3v4")
+            )
+
+            # Try to list buckets to verify credentials
+            client.head_bucket(Bucket=bucket_name)
+            result["connection"] = "success"
+            result["bucket_exists"] = True
+
+        except Exception as e:
+            result["connection"] = "failed"
+            result["error"] = str(e)
+
+    return result
+
+
 @app.get("/api/admin/r2-contents", tags=["Admin"])
 async def list_r2_contents(
     prefix: str = Query("", description="Prefix/folder to list"),
