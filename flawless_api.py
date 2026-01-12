@@ -2110,6 +2110,62 @@ async def start_production(session_id: str, request: ProductionStartRequest):
     )
 
 
+@app.post("/api/production/start-async/{session_id}", tags=["Commercial_Lab"])
+async def start_production_async(
+    session_id: str,
+    request: ProductionStartRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Start Commercial_Lab video production (fire-and-forget).
+
+    Unlike /api/production/start, this endpoint returns immediately
+    and runs production in a background task. Use /api/production/status
+    to poll for progress updates.
+
+    This is the preferred endpoint for V3 FSM integration.
+    """
+    if not nexus_bridge:
+        raise HTTPException(status_code=503, detail="Production pipeline not initialized")
+
+    # Build full brief
+    approved_brief = {
+        **request.brief,
+        "business_name": request.business_name,
+        "industry": request.industry,
+        "style": request.style,
+        "goals": request.goals,
+        "target_platforms": request.target_platforms
+    }
+
+    async def run_production_background():
+        """Run production in background, consuming the generator."""
+        try:
+            logger.info(f"[Production-Async] Starting background production for {session_id}")
+            async for state in nexus_bridge.start_production(session_id, approved_brief):
+                logger.debug(f"[Production-Async] {session_id}: {state.phase.value} - {state.progress}%")
+
+                # Publish to video gallery when FINAL production completes
+                if state.status == ProductionStatus.COMPLETED and state.progress == 100:
+                    logger.info(f"[Production-Async] FINAL completion - publishing to video gallery")
+                    await publish_to_video_gallery(session_id, state, approved_brief)
+
+            logger.info(f"[Production-Async] Production completed for {session_id}")
+        except Exception as e:
+            logger.error(f"[Production-Async] Production failed for {session_id}: {e}")
+
+    # Add to background tasks
+    background_tasks.add_task(run_production_background)
+
+    logger.info(f"[Production-Async] Queued production for {session_id}")
+
+    return {
+        "success": True,
+        "session_id": session_id,
+        "message": "Production started in background. Poll /api/production/status for updates."
+    }
+
+
 @app.get("/api/production/status/{session_id}", tags=["Commercial_Lab"])
 async def get_production_status(session_id: str):
     """Get current production status for a session."""

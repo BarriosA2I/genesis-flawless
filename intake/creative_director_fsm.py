@@ -14,7 +14,8 @@ State Flow:
 START -> BUSINESS_NAME -> PRODUCT -> AUDIENCE -> CTA -> TONE -> LOGO -> CONFIRM -> PRODUCTION -> COMPLETE
 
 V3.1 Changes:
-- Production trigger now calls RAGNAROK /api/production/start/{session_id}
+- Production trigger now calls RAGNAROK /api/production/start-async/{session_id}
+- Uses fire-and-forget async endpoint (fixes SSE stream consumption issue)
 - Industry inferred from product description
 - Tone mapped to RAGNAROK visual style
 - process_message is now async
@@ -594,9 +595,12 @@ class CreativeDirectorFSM:
         logger.info(f"[V3-FSM] Brief: {brief.business_name} - {brief.product}")
 
         try:
+            # Use async endpoint that runs production in background
+            # The -async endpoint returns immediately and runs production
+            # in a background task, avoiding SSE stream consumption issues.
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{GENESIS_API_BASE}/api/production/start/{session_id}",
+                    f"{GENESIS_API_BASE}/api/production/start-async/{session_id}",
                     json=payload,
                     headers={"Content-Type": "application/json"}
                 )
