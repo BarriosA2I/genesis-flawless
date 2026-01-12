@@ -87,9 +87,6 @@ from nexus_bridge import (
 # Import NEXUS Brain concierge router (Landing Page AI)
 from nexus_router import router as nexus_brain_router
 
-# Import Creative Director V3 FSM (State Machine Architecture)
-from api.creative_director_routes import router as cd_v3_router
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -408,10 +405,6 @@ try:
     logger.info("Post-production routes loaded")
 except ImportError as e:
     logger.warning(f"Post-production routes not available: {e}")
-
-# Include Creative Director V3 FSM routes (State Machine Architecture)
-app.include_router(cd_v3_router)
-logger.info("Creative Director V3 FSM routes loaded")
 
 
 # =============================================================================
@@ -2110,131 +2103,15 @@ async def start_production(session_id: str, request: ProductionStartRequest):
     )
 
 
-@app.post("/api/production/start-async/{session_id}", tags=["Commercial_Lab"])
-async def start_production_async(
-    session_id: str,
-    request: ProductionStartRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    Start Commercial_Lab video production (fire-and-forget).
-
-    Unlike /api/production/start, this endpoint returns immediately
-    and runs production in a background task. Use /api/production/status
-    to poll for progress updates.
-
-    This is the preferred endpoint for V3 FSM integration.
-    """
-    if not nexus_bridge:
-        raise HTTPException(status_code=503, detail="Production pipeline not initialized")
-
-    # Build full brief
-    approved_brief = {
-        **request.brief,
-        "business_name": request.business_name,
-        "industry": request.industry,
-        "style": request.style,
-        "goals": request.goals,
-        "target_platforms": request.target_platforms
-    }
-
-    # Store initial state IMMEDIATELY so status endpoint returns something
-    # This ensures the frontend never gets 404 after triggering production
-    # CRITICAL: Store in BOTH memory AND Redis for multi-worker deployments
-    initial_state = ProductionState(
-        session_id=session_id,
-        phase=ProductionPhase.INTAKE,
-        status=ProductionStatus.IN_PROGRESS,
-        progress_percent=0,
-        message="Initializing RAGNAROK pipeline..."
-    )
-    nexus_bridge.productions[session_id] = initial_state
-    # Also store to Redis for cross-worker visibility
-    if nexus_bridge.redis:
-        try:
-            nexus_bridge.redis.setex(
-                f"production:{session_id}",
-                3600,  # 1 hour TTL
-                json.dumps(initial_state.to_dict())
-            )
-            logger.info(f"[Production-Async] Stored initial state for {session_id} (memory + Redis)")
-        except Exception as e:
-            logger.warning(f"[Production-Async] Redis storage failed: {e}")
-    else:
-        logger.info(f"[Production-Async] Stored initial state for {session_id} (memory only)")
-
-    async def run_production_background():
-        """Run production in background, consuming the generator."""
-        try:
-            logger.info(f"[Production-Async] Starting background production for {session_id}")
-            async for state in nexus_bridge.start_production(session_id, approved_brief):
-                logger.debug(f"[Production-Async] {session_id}: {state.phase.value} - {state.progress_percent}%")
-
-                # Publish to video gallery when FINAL production completes
-                if state.status == ProductionStatus.COMPLETED and state.progress_percent == 100:
-                    logger.info(f"[Production-Async] FINAL completion - publishing to video gallery")
-                    await publish_to_video_gallery(session_id, state, approved_brief)
-
-            logger.info(f"[Production-Async] Production completed for {session_id}")
-        except Exception as e:
-            # Store error state so frontend can see what went wrong
-            import traceback
-            error_details = traceback.format_exc()
-            error_state = ProductionState(
-                session_id=session_id,
-                phase=ProductionPhase.INTAKE,
-                status=ProductionStatus.FAILED,
-                progress_percent=0,
-                message=f"Production failed: {str(e)}",
-                metadata={"error": str(e), "traceback": error_details[:2000]}
-            )
-            nexus_bridge.productions[session_id] = error_state
-            # Also store error to Redis for cross-worker visibility
-            if nexus_bridge.redis:
-                try:
-                    nexus_bridge.redis.setex(
-                        f"production:{session_id}",
-                        3600,
-                        json.dumps(error_state.to_dict())
-                    )
-                except Exception as redis_err:
-                    logger.warning(f"[Production-Async] Redis error state storage failed: {redis_err}")
-            logger.error(f"[Production-Async] Production failed for {session_id}: {e}\n{error_details}")
-
-    # Add to background tasks
-    background_tasks.add_task(run_production_background)
-
-    logger.info(f"[Production-Async] Queued production for {session_id}")
-
-    return {
-        "success": True,
-        "session_id": session_id,
-        "message": "Production started in background. Poll /api/production/status for updates."
-    }
-
-
 @app.get("/api/production/status/{session_id}", tags=["Commercial_Lab"])
 async def get_production_status(session_id: str):
     """Get current production status for a session."""
     if not nexus_bridge:
         raise HTTPException(status_code=503, detail="Production pipeline not initialized")
 
-    # First check memory
     state = nexus_bridge.get_production_status(session_id)
-
-    # If not in memory, check Redis (cross-worker support)
-    if not state and nexus_bridge.redis:
-        try:
-            redis_data = nexus_bridge.redis.get(f"production:{session_id}")
-            if redis_data:
-                state_dict = json.loads(redis_data)
-                # Return directly from Redis dict (already serialized format)
-                return state_dict
-        except Exception as e:
-            logger.warning(f"Redis status lookup failed: {e}")
-
     if not state:
-        raise HTTPException(status_code=404, detail="No production found for this session")
+        raise HTTPException(status_code=404, detail="Production not found")
 
     return state.to_dict()
 

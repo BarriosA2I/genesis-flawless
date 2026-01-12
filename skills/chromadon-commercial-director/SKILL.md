@@ -1,443 +1,301 @@
-# CHROMADON SKILL v2: Commercial Director AI Testing
-## WITH CONVERSATION STATE MACHINE
+# CHROMADON SKILL: Commercial Director AI Testing
 
 ## Overview
-This skill enables automated testing of the Barrios A2I Commercial Director AI.
-**CRITICAL**: This version includes explicit conversation handling - Claude Code must follow the state machine exactly.
+This skill enables automated testing of the Barrios A2I Commercial Director AI assistant located at https://barriosa2i.com/creative-director
 
 ## Target URL
 ```
 https://barriosa2i.com/creative-director
 ```
 
----
-
-## CONVERSATION STATE MACHINE
-
-### THE CORE PROBLEM THIS SOLVES
-Previous versions failed because Claude Code would:
-- Type all answers at once instead of waiting for questions
-- Not detect which question was being asked
-- Click random elements instead of the chat input
-- Not wait for AI responses before continuing
-
-### THE SOLUTION: Explicit Turn-Taking Protocol
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    CONVERSATION FLOW                            │
-├───────┘
-```
+## Purpose
+Test the AI assistant as a client would - answering questions naturally, uploading assets, reviewing scripts, and approving video production.
 
 ---
 
-## QUESTION DETECTION PATTERNS
+## UI ELEMENT SELECTORS
 
-Claude Code MUST detect questions by matching these patterns in the AI's message:
-
+### Chat Interface
 ```javascript
-const QUESTION_PATTERNS = {
-  "business_name": [
-    "business name",
-    "company name",
-    "what.*business",
-    "what.*company",
-    "who are you",
-    "tell me about your business"
-  ],
+// Chat input field
+const chatInput = 'input[placeholder*="command"], textarea, [contenteditable="true"]';
 
-  "product_service": [
-    "product",
-    "service",
-    "what do you offer",
-    "what does.*do",
-    "primary offering",
-    "what.*sell"
-  ],
+// Send button
+const sendButton = 'button[type="submit"], button svg[class*="send"], button[aria-label*="send"]';
 
-  "target_audience": [
-    "target audience",
-    "who are your customers",
-    "who do you serve",
-    "ideal customer",
-    "target market",
-    "who.*trying to reach"
-  ],
+// File upload button (attachment/paperclip icon)
+const fileUpload = 'input[type="file"], button[aria-label*="attach"], button[aria-label*="upload"], .attachment-btn';
 
-  "campaign_goal": [
-    "goal",
-    "objective",
-    "what.*trying to achieve",
-    "campaign.*about",
-    "purpose"
-  ],
+// AI response messages
+const aiMessage = '[class*="assistant"], [class*="response"], [class*="sys_override"], [class*="message"]';
 
-  "cta": [
-    "call to action",
-    "cta",
-    "what.*want.*do",
-    "action.*take"
-  ],
+// Progress indicator
+const progressBar = '[class*="progress"], [class*="complete"]';
+```
 
-  "tone_style": [
-    "tone",
-    "style",
-    "vibe",
-    "aesthetic",
-    "look and feel",
-    "mood"
-  ],
-
-  "logo_assets": [
-    "logo",
-    "image",
-    "asset",
-    "brand.*material",
-    "upload",
-    "visual"
-  ],
-
-  "confirmation": [
-    "ready to create",
-    "start production",
-    "looks good",
-    "confirm",
-    "approve",
-    "proceed"
-  ],
-
-  "voice_selection": [
-    "voice",
-    "narrator",
-    "voiceover",
-    "select.*voice",
-    "choose.*voice"
-  ]
+### Navigation
+```javascript
+// Main nav items
+const navItems = {
+  pricing: 'a[href*="pricing"]',
+  nexus: 'a[href*="nexus"]',
+  commercialLab: 'a[href*="commercial"]',
+  founder: 'a[href*="founder"]',
+  command: 'a[href*="command"]'
 };
 ```
 
 ---
 
-## ANSWER MAP
+## INTERACTION FLOW
 
-When a question pattern is detected, respond with EXACTLY this answer:
+### Phase 1: Navigate & Initialize
+```
+1. Navigate to https://barriosa2i.com/creative-director
+2. Wait for page load (networkidle)
+3. Screenshot to verify Neural Interface is visible
+4. Look for chat input field
+```
+
+### Phase 2: Answer AI Questions
+The AI assistant asks questions in this order. Answer ONLY what is asked:
+
+| Question | Answer |
+|----------|--------|
+| Business name? | `Barrios A2I` |
+| Product/service? | `Commercial Director AI - an autonomous system that generates production-ready video commercials for any business using AI agents and the RAGNAROK pipeline` |
+| Target audience? | `Marketing directors at B2B SaaS companies, agency owners who want to scale video production, e-commerce managers needing constant ad creative, enterprise teams seeking AI automation infrastructure` |
+| Campaign goal? | `Launch video announcing Commercial Director AI - positioning Barrios A2I as enterprise-grade AI infrastructure for autonomous video generation` |
+| CTA? | `BEGIN INTAKE (primary) and BOOK A DEMO (secondary). Tagline: Barrios A2I — Alienation → Innovation` |
+| Tone/style? | `Enterprise tech giant launch - confident, inevitable, autonomous. Like Apple keynote meets Bloomberg terminal. Obsidian/deep navy gradients, neon cyan particles, glassmorphism UI, amber highlights. NO talking heads - all B-roll.` |
+| Logo/images? | `YES` - then UPLOAD the logo file |
+
+### Phase 3: Upload Logo
+**CRITICAL: Always upload the logo when asked**
+
+```
+1. When AI asks about logo/images, answer: "Yes, I have the Barrios A2I logo"
+2. Click file upload button
+3. Upload: Barrios_a2i_logo-removebg-preview__1_.png
+4. After upload, provide logo placement instructions (see LOGO_INSTRUCTIONS below)
+```
+
+### Phase 4: Review Script
+```
+1. Wait for script generation (30-60 seconds)
+2. Read the generated script
+3. Verify it matches the creative brief
+4. If revisions needed, specify exact changes
+5. If approved, say: "Looks good" or "Approved"
+```
+
+### Phase 5: Production
+```
+1. Wait for video production to start
+2. Monitor progress
+3. Download/retrieve final video when complete
+```
+
+---
+
+## LOGO_INSTRUCTIONS
+
+When uploading the logo, provide these placement rules:
+
+```
+This is the Barrios A2I logo. It MUST appear in EVERY scene:
+
+Scene 1 (0-8s): Logo fades in crisply inside holographic orb, centered
+Scene 2 (8-16s): Logo docks top-left as system insignia
+Scene 3 (16-24s): Logo etched faintly into system grid beneath agents
+Scene 4 (24-32s): Logo locks above output frame as certification seal
+Scene 5 (32-40s): Logo as subtle watermark on preview screens
+Scene 6 (40-48s): Logo pulses once at center as chaos disappears
+Scene 7 (48-56s): Network converges INTO the logo at center
+Scene 8 (56-64s): Logo centered and dominant on final end card
+
+LOGO RULES:
+- Always flat, readable, undistorted
+- Never warp, bend, melt, glitch, or spin
+- Treat as system authority mark
+- Use soft cyan rim light with faint amber highlights
+- Never overpower the scene
+```
+
+---
+
+## CREATIVE BRIEF REFERENCE
+
+### Video Specs
+- **Duration:** 64 seconds
+- **Structure:** 8 scenes × 8 seconds each
+- **Aspect:** 9:16 (primary)
+- **Model:** Veo 3.1
+
+### Global Style (ALL scenes)
+- Obsidian / deep navy gradient environment
+- Neon cyan particle fields (controlled, elegant)
+- Glassmorphism UI panels
+- Subtle amber highlights
+- Smooth dolly or gimbal motion only (NO handheld)
+- High-end studio lighting with volumetric glow
+
+### Negative Prompt (inject into every scene)
+```
+no misspelled text, no gibberish UI, no warped logos, no jitter, no cheap glitch, no cartoon style, no messy typography, no creepy faces, no extra fingers, no low-res artifacts, no talking heads, no presenters
+```
+
+### Scene Breakdown
+
+**Scene 1 (0-8s) - SYSTEM ONLINE**
+Dark obsidian command-center. Neon cyan particles drift. Holographic orb stabilizes. Barrios A2I logo fades in inside orb. Glass UI panels lock into place. Slow camera push-in.
+TEXT: "COMMERCIAL DIRECTOR AI | 0% HUMAN INTERVENTION | Any business. Any offer."
+
+**Scene 2 (8-16s) - RAGNAROK PIPELINE**
+Logo docks top-left. Glowing glass pipeline animates: INTAKE → RESEARCH → SCRIPT → STORYBOARD → GENERATE → QC → EXPORT. Green confirmations.
+TEXT: "RAGNAROK PIPELINE | Industry-agnostic automation"
+
+**Scene 3 (16-24s) - AGENTIC SYSTEM**
+Multiple autonomous agents operate in parallel. Logo etched into system grid.
+TEXT: "Autonomous agents | No handoffs. No delays."
+
+**Scene 4 (24-32s) - ANY BUSINESS PROOF**
+Glass tiles representing industries collapse into Commercial Output. Logo as certification seal.
+TEXT: "Works for any business | Templates that auto-adapt"
+
+**Scene 5 (32-40s) - OUTPUTS**
+Three floating glass screens with format chips: 9:16 • 16:9 • 1:1. Logo as watermark.
+TEXT: "Launch • Offer • UGC • Testimonial"
+
+**Scene 6 (40-48s) - HUMAN REMOVAL**
+Manual workflows dissolve. Automated pipeline completes. Logo pulses.
+TEXT: "From weeks → minutes | Machine-consistent output"
+
+**Scene 7 (48-56s) - ECOSYSTEM SCALE**
+Systems interconnect: Commercial Director AI, RAGNAROK Core, Ad Forge, NEXUS Brain. Network converges into logo.
+TEXT: "One ecosystem | Built to scale"
+
+**Scene 8 (56-64s) - CTA LOCK-IN**
+Final glassmorphism end card. Logo centered. Two glass buttons.
+TEXT: "SYSTEM_CONNECTED | BEGIN INTAKE | BOOK A DEMO | Barrios A2I — Alienation → Innovation"
+
+---
+
+## CHROMADON COMMAND SEQUENCE
 
 ```javascript
-const ANSWER_MAP = {
-  "business_name": "Barrios A2I",
+// 1. Navigate
+chrome-devtools: navigate
+  url: "https://barriosa2i.com/creative-director"
 
-  "product_service": "Commercial Director AI - an autonomous system that generates production-ready video commercials for any business using AI agents and the RAGNAROK pipeline. It handles intake, research, scriptwriting, storyboarding, video generation, QC, and export with zero human intervention.",
+// 2. Wait for load
+chrome-devtools: wait_for_load_state
+  state: "networkidle"
 
-  "target_audience": "Marketing directors at B2B SaaS companies, agency owners who want to scale video production, e-commerce managers needing constant ad creative, and enterprise teams seeking AI automation infrastructure.",
+// 3. Screenshot initial state
+chrome-devtools: screenshot
+  name: "commercial-director-loaded"
 
-  "campaign_goal": "Launch video announcing Commercial Director AI to position Barrios A2I as enterprise-grade AI infrastructure - not an agency, but a product company building autonomous systems.",
+// 4. Find chat input and type
+chrome-devtools: type_text
+  selector: "input, textarea"
+  text: "[answer to current question]"
 
-  "cta": "Two CTAs: BEGIN INTAKE (primary) and BOOK A DEMO (secondary). Final tagline: Barrios A2I — Alienation → Innovation.",
+// 5. Press Enter to send
+chrome-devtools: press_key
+  key: "Enter"
 
-  "tone_style": "Enterprise tech giant launch aesthetic - confident, inevitable, autonomous. Like Apple keynote meets Bloomberg terminal. Obsidian/deep navy gradients, neon cyan particle fields, glassmorphism UI panels, amber highlights. Smooth camera movements only. NO talking heads - all cinematic B-roll.",
+// 6. Wait for response
+chrome-devtools: wait_for_selector
+  selector: "[class*='sys_override'], [class*='response']"
+  timeout: 30000
 
-  "logo_assets": ">>> SPECIAL CASE: DO NOT TYPE - USE upload_file COMMAND <<<",
+// 7. For file upload
+chrome-devtools: click
+  selector: "input[type='file'], button[aria-label*='attach']"
 
-  "confirmation": "Yes, let's start production!",
+chrome-devtools: upload_file
+  selector: "input[type='file']"
+  path: "/path/to/Barrios_a2i_logo.png"
 
-  "voice_selection": "Daniel"
-};
+// 8. Screenshot progress
+chrome-devtools: screenshot
+  name: "script-generated"
 ```
 
 ---
 
-## LOGO UPLOAD PROCEDURE (CRITICAL - READ THIS)
+## ERROR HANDLING
 
-### THE PROBLEM THIS SOLVES
-Claude Code keeps typing "YES" or "No logo needed" instead of actually uploading the logo file.
-
-### WHAT NOT TO DO
-```
-WRONG: Type "yes" in chat
-WRONG: Type "Yes, I have a logo"
-WRONG: Type "No logo needed"
-WRONG: Skip the logo upload
-WRONG: Describe the logo in text
-```
-
-### WHAT TO DO - EXACT STEPS
-
-**When AI asks about logo/images (matches: "logo", "image", "asset", "upload"):**
-
-```
-STEP 1: DO NOT TYPE ANYTHING IN CHAT YET
-
-STEP 2: Take a screenshot to see the page state
-        mcp__chrome-devtools__take_screenshot()
-
-STEP 3: Take a snapshot to find the file input element
-        mcp__chrome-devtools__take_snapshot()
-
-STEP 4: Look for file upload element in snapshot:
-        - input[type="file"]
-        - button with paperclip icon
-        - button with "attach" or "upload" label
-        - The UID will look like: uid=XXX_YY
-
-STEP 5: Use upload_file with the EXACT logo path:
-        mcp__chrome-devtools__upload_file(
-            uid="<the file input uid from snapshot>",
-            filePath="C:\\Users\\gary\\python-genesis-flawless\\skills\\chromadon-commercial-director\\barrios-a2i-logo.png"
-        )
-
-STEP 6: Wait 2 seconds for upload to process
-
-STEP 7: THEN type the logo placement instructions in chat:
-        "This is the Barrios A2I logo. Use it in every scene:
-        - Scene 1: Logo fades in inside holographic orb, centered
-        - Scene 2: Logo docks top-left as system insignia
-        - Scene 3: Logo etched into system grid beneath agents
-        - Scene 4: Logo locks above output as certification seal
-        - Scene 5: Logo as watermark on preview screens
-        - Scene 6: Logo pulses once at center
-        - Scene 7: Network converges INTO the logo
-        - Scene 8: Logo centered and dominant on end card"
-
-STEP 8: Press Enter to send
-```
-
-### LOGO FILE LOCATION
-```
-ABSOLUTE PATH: C:\Users\gary\python-genesis-flawless\skills\chromadon-commercial-director\barrios-a2i-logo.png
-
-ESCAPED FOR JSON: C:\\Users\\gary\\python-genesis-flawless\\skills\\chromadon-commercial-director\\barrios-a2i-logo.png
-```
-
-### IF FILE INPUT NOT FOUND
-If you cannot find a file input element:
-1. Look for a button that might trigger file selection
-2. Try clicking it first, then look for the file input
-3. If still not found, take a screenshot and report the issue
-4. DO NOT fall back to typing "no logo" - the logo upload is REQUIRED
-
----
-
-## EXPLICIT STEP-BY-STEP INSTRUCTIONS
-
-### STEP 1: Navigate and Wait
-```
-ACTION: Navigate to https://barriosa2i.com/creative-director
-WAIT: Until page fully loads (networkidle)
-WAIT: 3 additional seconds for JavaScript initialization
-SCREENSHOT: Capture initial state
-```
-
-### STEP 2: Wait for Welcome Message
-```
-WAIT: Look for AI welcome message containing "Welcome" or "Creative Director" or "Let's create"
-DO NOT: Type anything until you see the AI's first message
-SCREENSHOT: Capture welcome message
-```
-
-### STEP 3: Conversation Loop
-```
-REPEAT UNTIL production starts:
-
-  A. READ the most recent AI message
-     - Find element: [class*="sys_override"], [class*="message"], [class*="assistant"]
-     - Extract the text content
-     - Log: "AI said: [message text]"
-
-  B. DETECT the question type
-     - Match message text against QUESTION_PATTERNS
-     - Log: "Detected question type: [type]"
-     - If no match, log warning and wait 5 seconds
-
-  C. GET the answer
-     - Lookup from ANSWER_MAP
-     - Log: "Will answer: [answer]"
-     - **IF question type is "logo_assets": STOP - Go to LOGO UPLOAD PROCEDURE section**
-
-  D. TYPE the answer (SKIP THIS FOR LOGO - use upload_file instead)
-     - Find chat input: input[placeholder*="command"], textarea, input[type="text"]
-     - Clear any existing text
-     - Type the answer
-     - WAIT 500ms
-
-  E. SEND the message
-     - Press Enter key
-     - OR click send button if Enter doesn't work
-     - Log: "Sent answer"
-
-  F. WAIT for AI response
-     - Wait for new message to appear (different from last)
-     - Timeout: 30 seconds
-     - If timeout, screenshot and log error
-
-  G. CHECK for special UI elements
-     - Voice selector: If visible, click "Daniel" option
-     - Production status: If "Production complete" visible, exit loop
-     - Error message: If visible, screenshot and report
-```
-
-### STEP 4: Voice Selection (if applicable)
-```
-DETECT: Voice selector UI visible (cards with voice names)
-ACTION: Click on "Daniel" voice card
-WAIT: For "Continue" button to appear
-ACTION: Click "Continue with Daniel" button
-WAIT: For confirmation
-```
-
-### STEP 5: Production Monitoring
-```
-WAIT: For production to complete
-- Look for "Production complete" text
-- Look for progress bar at 100%
-- Timeout: 5 minutes
-
-SCREENSHOT: Final state
-LOG: Production status
-```
-
-### STEP 6: Verify Gallery
-```
-ACTION: Navigate to https://video-preview-theta.vercel.app/gallery.html
-WAIT: Page load
-SCREENSHOT: Gallery page
-VERIFY: New video appears in gallery
-```
-
----
-
-## CRITICAL RULES FOR CLAUDE CODE
-
-1. **NEVER type multiple answers at once** - One answer per turn
-2. **ALWAYS wait for AI response** before typing next answer
-3. **ALWAYS detect which question** is being asked before answering
-4. **NEVER click random elements** - Only interact with chat input and specific buttons
-5. **ALWAYS screenshot** at each major step for debugging
-6. **LOG everything** - Question detected, answer being sent, response received
-7. **If confused, WAIT** - Don't guess, wait 5 seconds and re-read the page
-8. **Voice selector is a special case** - It's a card grid, not chat input
-
----
-
-## SELECTOR REFERENCE
-
-### Chat Input (try in order)
+### Chat Input Not Found
 ```javascript
-const chatInputSelectors = [
-  'input[placeholder*="command"]',
-  'input[placeholder*="Enter"]',
+// Try alternative selectors
+const alternatives = [
   'textarea',
-  'input[type="text"]:not([type="hidden"])',
-  '[contenteditable="true"]'
+  'input[type="text"]',
+  '[contenteditable="true"]',
+  '.chat-input',
+  '[data-testid="chat-input"]'
 ];
 ```
 
-### AI Messages
-```javascript
-const aiMessageSelectors = [
-  '[class*="sys_override"]',
-  '[class*="SYS_OVERRIDE"]',
-  '[class*="assistant"]',
-  '[class*="response"]',
-  '[class*="message"]:not([class*="user"])'
-];
+### File Upload Not Working
+If file upload fails, describe the logo in chat:
+```
+The Barrios A2I logo features crystalline teal/cyan wings with gold accents, spelling out BARRIOS above A2I. It should be treated as a system authority mark - always flat, never warped.
 ```
 
-### Voice Selector
+### Response Timeout
 ```javascript
-const voiceSelectors = {
-  voiceCard: '[class*="voice-card"], [class*="VoiceCard"]',
-  danielOption: 'text=Daniel, button:has-text("Daniel")',
-  continueButton: 'button:has-text("Continue"), button:has-text("Select")'
-};
-```
-
-### Production Status
-```javascript
-const productionSelectors = {
-  complete: 'text=Production complete, text=complete, [class*="complete"]',
-  progress: '[class*="progress"], progress',
-  error: '[class*="error"], text=error'
-};
+// Increase wait time for script generation
+chrome-devtools: wait_for_selector
+  timeout: 90000  // 90 seconds for complex operations
 ```
 
 ---
 
-## EXAMPLE CONVERSATION TRACE
+## VALIDATION CHECKLIST
 
-```
-[CHROMADON] Navigated to https://barriosa2i.com/creative-director
-[CHROMADON] Waiting for page load...
-[CHROMADON] Page loaded, waiting for welcome message...
-[CHROMADON] AI MESSAGE: "Welcome to the A2I Commercial Lab! I'm your AI Creative Director..."
-[CHROMADON] Detected: welcome/intro message (no question yet)
-[CHROMADON] Waiting for first question...
-[CHROMADON] AI MESSAGE: "What's your business name?"
-[CHROMADON] DETECTED: business_name
-[CHROMADON] ANSWERING: "Barrios A2I"
-[CHROMADON] Typed in chat input, pressing Enter...
-[CHROMADON] Waiting for AI response...
-[CHROMADON] AI MESSAGE: "Great! What product or service does Barrios A2I offer?"
-[CHROMADON] DETECTED: product_service
-[CHROMADON] ANSWERING: "Commercial Director AI - an autonomous system..."
-[CHROMADON] Typed in chat input, pressing Enter...
-... continues through tone_style ...
-[CHROMADON] AI MESSAGE: "Do you have a logo or product images to include?"
-[CHROMADON] DETECTED: logo_assets >>> SPECIAL CASE - FILE UPLOAD <<<
-[CHROMADON] NOT typing in chat - using upload_file instead
-[CHROMADON] Taking snapshot to find file input...
-[CHROMADON] Found file input: uid=123_45
-[CHROMADON] Uploading: C:\Users\gary\python-genesis-flawless\skills\chromadon-commercial-director\barrios-a2i-logo.png
-[CHROMADON] Upload complete, now typing placement instructions...
-[CHROMADON] Typed logo instructions, pressing Enter...
-[CHROMADON] Waiting for AI response...
-[CHROMADON] AI MESSAGE: "Select a voice for your commercial"
-[CHROMADON] DETECTED: voice_selection (SPECIAL UI)
-[CHROMADON] Looking for voice selector cards...
-[CHROMADON] Found voice grid, clicking "Daniel"...
-[CHROMADON] Clicked Continue button...
-[CHROMADON] AI MESSAGE: "Starting production..."
-[CHROMADON] Production in progress, monitoring...
-[CHROMADON] Production complete! Verifying gallery...
-[CHROMADON] SUCCESS: Video appears in gallery
-```
+Before approving any generated script, verify:
+
+- [ ] Logo appears in ALL 8 scenes
+- [ ] NO talking heads or presenters
+- [ ] Duration is 64 seconds (8 × 8s)
+- [ ] Visual style matches brief (obsidian, cyan, glassmorphism)
+- [ ] Text overlays match specified copy
+- [ ] CTAs are correct (BEGIN INTAKE, BOOK A DEMO)
+- [ ] Tagline included (Alienation → Innovation)
+- [ ] Camera motion is smooth (no handheld)
 
 ---
 
-## TROUBLESHOOTING
+## QUICK REFERENCE
 
-### "Claude Code types YES instead of uploading logo"
-CAUSE: Following old instructions that said "No logo needed"
-FIX: When logo question detected, DO NOT TYPE - use mcp__chrome-devtools__upload_file command
-See: LOGO UPLOAD PROCEDURE section above
+### Essential Files
+- Logo: `Barrios_a2i_logo-removebg-preview__1_.png`
+- Creative Brief: See CREATIVE BRIEF REFERENCE above
 
-### "Claude Code types everything at once"
-CAUSE: Not waiting for AI responses
-FIX: After every Enter press, WAIT for new AI message before continuing
+### Key URLs
+- Test Page: https://barriosa2i.com/creative-director
+- Production API: https://barrios-genesis-flawless.onrender.com
 
-### "Claude Code answers wrong question"
-CAUSE: Not detecting question patterns
-FIX: Log the AI message text, match against QUESTION_PATTERNS
-
-### "Voice selector not working"
-CAUSE: Trying to type in chat instead of clicking cards
-FIX: Voice selection is a click interaction, not a type interaction
-
-### "Production never completes"
-CAUSE: May have answered questions wrong or skipped confirmation
-FIX: Check screenshots at each step to verify flow
+### AI Question Flow
+1. Business name → Barrios A2I
+2. Product → Commercial Director AI (autonomous video generation)
+3. Audience → Marketing directors, agency owners, e-commerce managers
+4. Goal → Launch video for enterprise positioning
+5. CTA → BEGIN INTAKE / BOOK A DEMO
+6. Tone → Enterprise tech giant launch
+7. Logo → YES + UPLOAD FILE + placement instructions
 
 ---
 
-## USAGE FOR CLAUDE CODE
+## USAGE
+
+To use this skill in Claude Code:
 
 ```
-CHROMADON TEST INSTRUCTIONS:
-
-1. Read this skill file completely
-2. Navigate to https://barriosa2i.com/creative-director
-3. Follow the EXPLICIT STEP-BY-STEP INSTRUCTIONS exactly
-4. Use QUESTION_PATTERNS to detect what's being asked
-5. Use ANSWER_MAP to get the correct response
-6. Take screenshots at every step
-7. Report success or failure with evidence
+Read the SKILL.md at /mnt/skills/user/chromadon-commercial-director/SKILL.md
+Then navigate to https://barriosa2i.com/creative-director and test the AI assistant.
+Answer questions as specified in the skill. Always upload the logo when asked.
 ```
