@@ -2086,9 +2086,10 @@ async def start_production(session_id: str, request: ProductionStartRequest):
         async for state in nexus_bridge.start_production(session_id, approved_brief):
             yield f"data: {json.dumps(state.to_dict())}\n\n"
 
-            # Publish to video gallery when production completes successfully
-            if state.status == ProductionStatus.COMPLETED:
-                logger.info(f"[Production] Completed - publishing to video gallery")
+            # Publish to video gallery ONLY when FINAL production completes (100%)
+            # Note: COMPLETED status is also used for individual phase completions
+            if state.status == ProductionStatus.COMPLETED and state.progress == 100:
+                logger.info(f"[Production] FINAL completion - publishing to video gallery")
                 await publish_to_video_gallery(session_id, state, approved_brief)
 
     return StreamingResponse(
