@@ -62,6 +62,9 @@ TRINITY_TIMEOUT = 60.0  # Trinity research can take time
 # RAGNAROK Production API Configuration
 GENESIS_API_BASE = "https://barrios-genesis-flawless.onrender.com"
 
+# Video Preview Integration - Auto-publish completed commercials
+VIDEO_PREVIEW_API = "https://video-preview-theta.vercel.app/api/videos"
+
 # ============================================================================
 # BARRIOS A2I COMMERCIAL SPECIFICATIONS
 # ============================================================================
@@ -77,6 +80,55 @@ COMMERCIAL_CONFIG = {
         {"name": "CTA", "duration": "0:48-1:04", "purpose": "Clear call to action"}
     ]
 }
+
+# ============================================================================
+# VIDEO PREVIEW INTEGRATION
+# ============================================================================
+
+async def send_to_video_preview(video_url: str, state: dict) -> dict:
+    """
+    Send completed commercial to video-preview-theta.vercel.app
+    Creates a shareable preview link for the client.
+
+    Returns: {"success": bool, "preview_id": str, "preview_url": str}
+    """
+    try:
+        # Generate unique ID for this commercial
+        video_id = f"genesis_{state.get('session_id', 'unknown')}_{int(time.time())}"
+
+        payload = {
+            "id": video_id,
+            "url": video_url,
+            "title": f"{state.get('business_name', 'Commercial')} - AI Generated",
+            "description": f"64-second commercial for {state.get('business_name', 'client')}. {state.get('primary_offering', '')}",
+            "duration": "1:04",
+            "tags": ["commercial", "ai-generated", "barrios-a2i", "64-seconds"],
+            "business_name": state.get("business_name", ""),
+            "industry": _infer_industry(state.get("primary_offering", ""))
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(VIDEO_PREVIEW_API, json=payload)
+
+            if response.status_code in [200, 201]:
+                result = response.json()
+                preview_id = result.get("video", {}).get("id", video_id)
+                preview_url = f"https://video-preview-theta.vercel.app?v={preview_id}"
+
+                logger.info(f"[VideoPreview] ✅ Published: {preview_id}")
+                return {
+                    "success": True,
+                    "preview_id": preview_id,
+                    "preview_url": preview_url
+                }
+            else:
+                logger.warning(f"[VideoPreview] API returned {response.status_code}: {response.text}")
+                return {"success": False, "preview_id": None, "preview_url": None}
+
+    except Exception as e:
+        logger.error(f"[VideoPreview] Failed to send: {e}")
+        return {"success": False, "preview_id": None, "preview_url": None}
+
 
 # Script Writer Prompt (Barrios A2I Standard: 64 seconds, 4 scenes)
 SCRIPT_WRITER_PROMPT = """You are a world-class commercial scriptwriter for Barrios A2I video advertisements.
@@ -230,6 +282,10 @@ class VideoBriefState(TypedDict):
     # Asset Upload (NEW)
     uploaded_assets: Optional[List[dict]]  # List of {type, url, name}
     assets_reviewed: bool                  # Gate flag to ensure we asked
+
+    # Video Preview Integration
+    preview_url: Optional[str]             # Shareable preview link
+    preview_id: Optional[str]              # Video preview gallery ID
 
 
 # ============================================================================
@@ -1416,6 +1472,25 @@ async def production_node(state: VideoBriefState) -> dict:
             except Exception as e:
                 logger.warning(f"[ProductionNode] SSE tracking failed: {e}")
 
+        # ========================================
+        # AUTO-PUBLISH TO VIDEO PREVIEW
+        # ========================================
+        # Check if video_url is immediately available (sync production)
+        video_url = result.get("video_url") or result.get("url")
+        preview_section = ""
+
+        if video_url:
+            preview_result = await send_to_video_preview(video_url, new_state)
+            if preview_result["success"]:
+                new_state["preview_url"] = preview_result["preview_url"]
+                new_state["preview_id"] = preview_result["preview_id"]
+                logger.info(f"[Production] Commercial published to preview: {preview_result['preview_url']}")
+                preview_section = f"""
+
+🔗 **Shareable Preview:** {preview_result['preview_url']}
+
+Share this link with your team or clients to preview the commercial!"""
+
         response_text = f'''🎬 **Production Started!**
 
 Your commercial for **{business_name}** is now in the RAGNAROK pipeline.
@@ -1433,7 +1508,7 @@ Your commercial for **{business_name}** is now in the RAGNAROK pipeline.
 **Estimated time:** 3-5 minutes
 
 You'll receive your commercial in **YouTube**, **TikTok**, and **Instagram** formats.
-
+{preview_section}
 I'll update you as each phase completes! 🚀'''
 
     else:
@@ -1613,6 +1688,9 @@ class CreativeDirectorV2:
             # Asset Upload (NEW)
             "uploaded_assets": [],
             "assets_reviewed": False,
+            # Video Preview Integration
+            "preview_url": None,
+            "preview_id": None,
             "messages": [],
             "missing_fields": [
                 "business_name", "primary_offering",
@@ -1742,6 +1820,8 @@ class CreativeDirectorV2:
             "metadata": {
                 "session_id": session_id,
                 "production_id": result.get("production_id"),
+                "preview_url": result.get("preview_url"),
+                "preview_id": result.get("preview_id"),
                 "extracted_data": {
                     "business_name": result.get("business_name"),
                     "product": result.get("primary_offering"),
