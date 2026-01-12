@@ -481,20 +481,42 @@ class CommercialReferencesRAG:
                 logger.warning(f"OpenAI client init failed: {e}")
         return self._openai_client
 
+    def _get_deterministic_embedding(self, text: str, seed: int = 42) -> List[float]:
+        """
+        Generate a deterministic pseudo-embedding from text.
+
+        Used as fallback when OpenAI is unavailable. Creates consistent
+        embeddings based on text content hash.
+        """
+        import random
+        import hashlib
+
+        # Create seed from text content
+        text_hash = int(hashlib.sha256(text.encode()).hexdigest(), 16)
+        rng = random.Random(text_hash + seed)
+
+        # Generate 1536-dim embedding
+        embedding = [rng.gauss(0, 0.1) for _ in range(1536)]
+
+        # Normalize to unit length
+        magnitude = sum(x**2 for x in embedding) ** 0.5
+        return [x / magnitude for x in embedding]
+
     def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding for query text."""
+        """Get embedding for query text, with deterministic fallback."""
         openai = self._get_openai()
-        if not openai:
-            return []
-        try:
-            response = openai.embeddings.create(
-                model="text-embedding-3-small",
-                input=text[:8000],
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            logger.warning(f"Embedding generation failed: {e}")
-            return []
+        if openai:
+            try:
+                response = openai.embeddings.create(
+                    model="text-embedding-3-small",
+                    input=text[:8000],
+                )
+                return response.data[0].embedding
+            except Exception as e:
+                logger.warning(f"OpenAI embedding failed: {e}, using deterministic fallback")
+
+        # Fallback to deterministic embedding
+        return self._get_deterministic_embedding(text)
 
     def get_style_references(
         self,
