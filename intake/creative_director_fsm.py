@@ -1,18 +1,25 @@
 """
 ============================================================================
-CREATIVE DIRECTOR V3 - STATE MACHINE IMPLEMENTATION
+CREATIVE DIRECTOR V3.1 - STATE MACHINE IMPLEMENTATION
 ============================================================================
 
 File: intake/creative_director_fsm.py
 
-Architecture: State Machine + LLM Hybrid
+Architecture: State Machine + LLM Hybrid + RAGNAROK Integration
 - CODE controls conversation flow (deterministic)
 - CLAUDE only generates natural language responses
+- RAGNAROK triggered on confirmation for video generation
 
 State Flow:
 START -> BUSINESS_NAME -> PRODUCT -> AUDIENCE -> CTA -> TONE -> LOGO -> CONFIRM -> PRODUCTION -> COMPLETE
 
-Author: Barrios A2I | Version: 3.0.0 | January 2026
+V3.1 Changes:
+- Production trigger now calls RAGNAROK /api/production/start/{session_id}
+- Industry inferred from product description
+- Tone mapped to RAGNAROK visual style
+- process_message is now async
+
+Author: Barrios A2I | Version: 3.1.0 | January 2026
 ============================================================================
 """
 
@@ -23,8 +30,41 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 import anthropic
+import httpx
 
 logger = logging.getLogger("creative_director_v3")
+
+# ============================================================================
+# PRODUCTION API CONFIGURATION
+# ============================================================================
+
+GENESIS_API_BASE = "https://barrios-genesis-flawless.onrender.com"
+
+# Industry keyword mapping for RAGNAROK
+INDUSTRY_KEYWORDS = {
+    "technology": ["software", "app", "saas", "tech", "digital", "ai", "automation", "platform", "api"],
+    "healthcare": ["health", "medical", "clinic", "therapy", "wellness", "fitness", "doctor"],
+    "finance": ["finance", "bank", "investment", "insurance", "crypto", "trading"],
+    "retail": ["shop", "store", "ecommerce", "product", "clothing", "fashion", "jewelry"],
+    "food": ["restaurant", "food", "cafe", "catering", "bakery", "coffee", "meal"],
+    "marketing": ["marketing", "advertising", "agency", "creative", "branding", "video"],
+    "education": ["school", "training", "course", "education", "tutoring", "academy"],
+    "real_estate": ["real estate", "property", "home", "apartment", "realtor"],
+}
+
+# Tone to RAGNAROK visual style mapping
+TONE_STYLE_MAP = {
+    "professional": "corporate",
+    "friendly": "modern",
+    "luxurious": "premium",
+    "elegant": "premium",
+    "energetic": "dynamic",
+    "bold": "dynamic",
+    "confident": "corporate",
+    "playful": "modern",
+    "minimalist": "minimal",
+    "cinematic": "cinematic",
+}
 
 # ============================================================================
 # STATE DEFINITIONS
@@ -358,7 +398,7 @@ class CreativeDirectorFSM:
             "production_triggered": False
         }
 
-    def process_message(self, session_id: str, user_message: str) -> Dict[str, Any]:
+    async def process_message(self, session_id: str, user_message: str) -> Dict[str, Any]:
         """
         Process user message and return response.
 
@@ -369,6 +409,7 @@ class CreativeDirectorFSM:
         4. Handle special cases (LOGO, CONFIRM)
         5. Transition to next state
         6. Generate response
+        7. Trigger RAGNAROK production if confirmed
         """
 
         session = self.sessions.get(session_id)
@@ -412,6 +453,13 @@ class CreativeDirectorFSM:
                 session.state = next_state
                 session.production_triggered = True
 
+                # Actually trigger RAGNAROK production
+                production_result = await self._trigger_production(session)
+                if production_result.get("success"):
+                    logger.info(f"[V3-FSM] RAGNAROK production started for {session_id}")
+                else:
+                    logger.error(f"[V3-FSM] RAGNAROK production failed: {production_result.get('error')}")
+
                 response = self.generator.generate(session.state, session.brief, session.history)
                 session.history.append({"role": "assistant", "content": response})
 
@@ -421,6 +469,7 @@ class CreativeDirectorFSM:
                     "state": session.state.value,
                     "progress": 100,
                     "production_triggered": True,
+                    "production_result": production_result,
                     "brief": session.brief.to_dict()
                 }
 
@@ -487,6 +536,87 @@ class CreativeDirectorFSM:
             ConvState.COMPLETE: 100
         }
         return state_progress.get(session.state, 0)
+
+    def _infer_industry(self, product: str) -> str:
+        """Infer industry from product description for RAGNAROK."""
+        if not product:
+            return "general"
+        product_lower = product.lower()
+        for industry, keywords in INDUSTRY_KEYWORDS.items():
+            if any(kw in product_lower for kw in keywords):
+                return industry
+        return "general"
+
+    def _map_tone_to_style(self, tone: str) -> str:
+        """Map tone to RAGNAROK visual style."""
+        if not tone:
+            return "modern"
+        tone_lower = tone.lower()
+        for tone_key, style in TONE_STYLE_MAP.items():
+            if tone_key in tone_lower:
+                return style
+        return "modern"
+
+    async def _trigger_production(self, session: Session) -> Dict[str, Any]:
+        """
+        Trigger RAGNAROK video production.
+
+        Maps V3 Brief to approved_brief format and calls /api/production/start.
+        This is the critical integration point that actually generates videos.
+        """
+        brief = session.brief
+        session_id = session.session_id
+
+        # Infer industry and style from brief
+        industry = self._infer_industry(brief.product)
+        style = self._map_tone_to_style(brief.tone)
+
+        # Build approved_brief in RAGNAROK format
+        payload = {
+            "brief": {
+                "business_name": brief.business_name,
+                "product": brief.product,
+                "audience": brief.audience,
+                "cta": brief.cta,
+                "tone": brief.tone,
+                "logo_url": brief.logo_url,
+                "logo_instructions": brief.logo_instructions,
+            },
+            "industry": industry,
+            "business_name": brief.business_name,
+            "style": style,
+            "goals": [brief.cta] if brief.cta else ["brand_awareness"],
+            "target_platforms": ["youtube", "tiktok", "instagram"]
+        }
+
+        logger.info(f"[V3-FSM] Triggering RAGNAROK production for {session_id}")
+        logger.info(f"[V3-FSM] Industry: {industry}, Style: {style}")
+        logger.info(f"[V3-FSM] Brief: {brief.business_name} - {brief.product}")
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{GENESIS_API_BASE}/api/production/start/{session_id}",
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+
+                if response.status_code == 200:
+                    logger.info(f"[V3-FSM] Production started successfully for {session_id}")
+                    return {"success": True, "session_id": session_id}
+                else:
+                    error_msg = f"Production API returned {response.status_code}: {response.text}"
+                    logger.error(f"[V3-FSM] {error_msg}")
+                    return {"success": False, "error": error_msg}
+
+        except httpx.TimeoutException:
+            error_msg = "Production API timeout (30s exceeded)"
+            logger.error(f"[V3-FSM] {error_msg} for {session_id}")
+            return {"success": False, "error": error_msg}
+        except Exception as e:
+            error_msg = f"Production trigger error: {str(e)}"
+            logger.error(f"[V3-FSM] {error_msg}")
+            return {"success": False, "error": error_msg}
 
 
 # ============================================================================
