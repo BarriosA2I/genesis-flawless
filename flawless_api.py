@@ -2155,10 +2155,10 @@ async def start_production_async(
         try:
             logger.info(f"[Production-Async] Starting background production for {session_id}")
             async for state in nexus_bridge.start_production(session_id, approved_brief):
-                logger.debug(f"[Production-Async] {session_id}: {state.phase.value} - {state.progress}%")
+                logger.debug(f"[Production-Async] {session_id}: {state.phase.value} - {state.progress_percent}%")
 
                 # Publish to video gallery when FINAL production completes
-                if state.status == ProductionStatus.COMPLETED and state.progress == 100:
+                if state.status == ProductionStatus.COMPLETED and state.progress_percent == 100:
                     logger.info(f"[Production-Async] FINAL completion - publishing to video gallery")
                     await publish_to_video_gallery(session_id, state, approved_brief)
 
