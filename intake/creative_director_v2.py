@@ -17,6 +17,7 @@ import os
 import json
 import logging
 import time
+import traceback
 import httpx
 from typing import TypedDict, List, Optional, Literal
 from datetime import datetime, timezone
@@ -360,12 +361,28 @@ class ExtractionSchema(BaseModel):
 # ============================================================================
 
 def get_llm():
-    return ChatAnthropic(
-        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
-        temperature=0.3,
-        max_tokens=1024,
-        api_key=os.getenv("ANTHROPIC_API_KEY")
-    )
+    """Create ChatAnthropic client with explicit error logging."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
+    logger.info(f"[LLM] Creating ChatAnthropic: model={model}, api_key_exists={bool(api_key)}, api_key_prefix={api_key[:10] if api_key else 'NONE'}...")
+
+    if not api_key:
+        logger.error("[LLM] ANTHROPIC_API_KEY is not set!")
+        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+
+    try:
+        llm = ChatAnthropic(
+            model=model,
+            temperature=0.3,
+            max_tokens=1024,
+            api_key=api_key
+        )
+        logger.info(f"[LLM] ChatAnthropic created successfully")
+        return llm
+    except Exception as e:
+        logger.error(f"[LLM] Failed to create ChatAnthropic: {type(e).__name__}: {e}")
+        raise
 
 
 # ============================================================================
@@ -476,7 +493,8 @@ Extract ONLY what user explicitly stated. Do not guess."""
         logger.info(f"[IntakeAgent] Extracted: {extracted_dict}")
 
     except Exception as e:
-        logger.error(f"[IntakeAgent] Extraction error: {e}")
+        logger.error(f"[IntakeAgent] Extraction error: {type(e).__name__}: {e}")
+        logger.error(f"[IntakeAgent] Extraction traceback:\n{traceback.format_exc()}")
         extracted_dict = {}
 
     # =========================================================================
@@ -620,8 +638,10 @@ Extract ONLY what user explicitly stated. Do not guess."""
                 logger.info(f"[IntakeAgent] CASE C: Catch-all response, transitioning to research")
 
     except Exception as e:
-        # Error handling for asset transition
-        logger.error(f"[IntakeAgent] Asset transition error: {e}")
+        # Error handling for LLM/intake errors
+        logger.error(f"[IntakeAgent] LLM call failed: {type(e).__name__}: {e}")
+        logger.error(f"[IntakeAgent] Full traceback:\n{traceback.format_exc()}")
+        logger.error(f"[IntakeAgent] State at failure: missing={missing}, phase={new_state.get('current_phase')}, assets_reviewed={new_state.get('assets_reviewed')}")
         response_text = (
             "I hit a snag processing that. Let me try again - "
             "do you have any brand assets to include, or shall we proceed?"
