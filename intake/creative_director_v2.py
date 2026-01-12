@@ -151,6 +151,14 @@ Create a **64-second** commercial with exactly **4 scenes** (16 seconds each):
 3. **SOLUTION** (0:32-0:48): Product/service showcase - how you fix it
 4. **CTA** (0:48-1:04): Clear call to action with contact info
 
+## CRITICAL TIMING CONSTRAINTS (MUST FOLLOW)
+- Speaking pace: 2.5 words per second
+- MAXIMUM 40 WORDS per scene narration
+- MAXIMUM 160 WORDS total voiceover script
+- If you exceed these limits, the audio will be CUT OFF mid-sentence!
+
+Count your words carefully for each narration field.
+
 ## OUTPUT FORMAT
 Return a JSON object with this exact structure:
 {{
@@ -163,7 +171,7 @@ Return a JSON object with this exact structure:
             "timestamp": "0:00-0:16",
             "type": "hook",
             "visual_description": "What viewers SEE (be specific and cinematic)",
-            "narration": "What viewers HEAR (voiceover text, 3-4 sentences)",
+            "narration": "What viewers HEAR (MAX 40 WORDS - punchy, impactful)",
             "text_overlay": "Any on-screen text",
             "music_mood": "Music/sound direction"
         }},
@@ -172,7 +180,7 @@ Return a JSON object with this exact structure:
             "timestamp": "0:16-0:32",
             "type": "problem",
             "visual_description": "Show the pain point visually",
-            "narration": "Describe the problem they face",
+            "narration": "Describe the problem (MAX 40 WORDS)",
             "text_overlay": "Key pain point text",
             "music_mood": "Tension building"
         }},
@@ -181,7 +189,7 @@ Return a JSON object with this exact structure:
             "timestamp": "0:32-0:48",
             "type": "solution",
             "visual_description": "Showcase the product/service in action",
-            "narration": "How {business_name} solves the problem",
+            "narration": "How {business_name} solves it (MAX 40 WORDS)",
             "text_overlay": "Key benefit",
             "music_mood": "Uplifting"
         }},
@@ -190,17 +198,18 @@ Return a JSON object with this exact structure:
             "timestamp": "0:48-1:04",
             "type": "cta",
             "visual_description": "Strong call-to-action visual with logo",
-            "narration": "{call_to_action}",
+            "narration": "{call_to_action} (MAX 40 WORDS)",
             "text_overlay": "CTA text + contact info",
             "music_mood": "Confident closing"
         }}
     ],
-    "voiceover_full_script": "Complete 64-second narration script for voice recording",
+    "voiceover_full_script": "Complete narration (MUST be under 160 words total)",
     "visual_style_notes": "Overall visual direction",
     "key_messaging": ["Main message 1", "Main message 2", "Main message 3"],
     "estimated_production_complexity": "low|medium|high"
 }}
 
+REMEMBER: 40 words per scene MAX. 160 words total MAX. Count carefully!
 Create EXACTLY 4 scenes totaling 64 seconds. Make it cinematic and compelling for {business_name}.
 """
 
@@ -940,6 +949,82 @@ def _format_script_preview(script_data: dict) -> str:
     return "Script generated - see details below."
 
 
+def _validate_script_word_count(script_data: dict) -> dict:
+    """
+    Validate that script narration fits within 64-second duration.
+
+    At 2.5 words/second:
+    - 16 seconds per scene = 40 words max
+    - 64 seconds total = 160 words max
+
+    Returns validation result with warnings and optionally truncated text.
+    """
+    MAX_WORDS_PER_SCENE = 40
+    MAX_TOTAL_WORDS = 160
+
+    result = {
+        "valid": True,
+        "warnings": [],
+        "scene_word_counts": [],
+        "total_words": 0,
+        "recommended_cuts": []
+    }
+
+    total_words = 0
+    scenes = script_data.get("scenes", [])
+
+    for i, scene in enumerate(scenes):
+        narration = scene.get("narration", "")
+        word_count = len(narration.split())
+        result["scene_word_counts"].append({
+            "scene": i + 1,
+            "type": scene.get("type", "unknown"),
+            "word_count": word_count,
+            "over_limit": word_count > MAX_WORDS_PER_SCENE
+        })
+
+        if word_count > MAX_WORDS_PER_SCENE:
+            over_by = word_count - MAX_WORDS_PER_SCENE
+            result["warnings"].append(
+                f"Scene {i+1} ({scene.get('type', 'unknown')}): {word_count} words "
+                f"(OVER by {over_by} words - will be cut off!)"
+            )
+            result["valid"] = False
+
+        total_words += word_count
+
+    result["total_words"] = total_words
+
+    # Also check voiceover_full_script if present
+    voiceover = script_data.get("voiceover_full_script", "")
+    if voiceover:
+        vo_word_count = len(voiceover.split())
+        result["voiceover_word_count"] = vo_word_count
+        if vo_word_count > MAX_TOTAL_WORDS:
+            over_by = vo_word_count - MAX_TOTAL_WORDS
+            result["warnings"].append(
+                f"Full voiceover: {vo_word_count} words "
+                f"(OVER by {over_by} words - audio will be truncated!)"
+            )
+            result["valid"] = False
+
+    if total_words > MAX_TOTAL_WORDS:
+        over_by = total_words - MAX_TOTAL_WORDS
+        result["warnings"].append(
+            f"Total narration: {total_words} words "
+            f"(OVER by {over_by} words - reduce by ~{over_by} words)"
+        )
+        result["valid"] = False
+
+    # Log validation result
+    if result["warnings"]:
+        logger.warning(f"[ScriptValidation] Word count issues: {result['warnings']}")
+    else:
+        logger.info(f"[ScriptValidation] OK - {total_words} words (max {MAX_TOTAL_WORDS})")
+
+    return result
+
+
 async def script_writer_node(state: VideoBriefState) -> dict:
     """
     Script Writer Agent - Generates commercial scripts using brief + research.
@@ -1009,6 +1094,11 @@ async def script_writer_node(state: VideoBriefState) -> dict:
 
         if script_data:
             logger.info(f"[ScriptWriterAgent] Script generated: {script_data.get('title', 'Untitled')}")
+
+            # Validate word count for 64-second video
+            word_validation = _validate_script_word_count(script_data)
+            new_state["script_word_validation"] = word_validation
+
             new_state["script_draft"] = script_data
             new_state["script_status"] = "pending_review"
 
@@ -1024,12 +1114,24 @@ async def script_writer_node(state: VideoBriefState) -> dict:
                 revision_count = state.get("revision_count", 1)
                 revision_note = f"**Revision #{revision_count}** - Updated based on your feedback.\n\n"
 
+            # Add word count warning if over limit
+            word_count_warning = ""
+            if not word_validation["valid"]:
+                word_count_warning = (
+                    f"\n\n⚠️ **TIMING WARNING:**\n"
+                    f"Word count: {word_validation['total_words']}/160 words\n"
+                    f"Issues: {'; '.join(word_validation['warnings'][:2])}\n"
+                    f"*Consider shortening to fit 64-second duration.*\n"
+                )
+
             response_message = (
                 f"✍️ **Script {'Revised' if is_revision else 'Draft Complete'}!**\n\n"
                 f"{revision_note}"
                 f"**Title:** {script_data.get('title', 'Untitled Commercial')}\n"
                 f"**Duration:** {script_data.get('duration_seconds', 30)} seconds\n"
-                f"**Scenes:** {len(script_data.get('scenes', []))}\n\n"
+                f"**Scenes:** {len(script_data.get('scenes', []))}\n"
+                f"**Word Count:** {word_validation['total_words']}/160 ({'✅' if word_validation['valid'] else '⚠️ OVER'})\n"
+                f"{word_count_warning}\n"
                 f"---\n\n"
                 f"{script_preview}\n\n"
                 f"---\n\n"

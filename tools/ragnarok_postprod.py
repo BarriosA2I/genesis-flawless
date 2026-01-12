@@ -293,9 +293,39 @@ class VoiceoverAgent:
         self,
         script: str,
         voice_style: str = "professional",
-        output_path: Path = None
+        output_path: Path = None,
+        max_duration_seconds: float = 64.0
     ) -> Path:
-        """Generate voiceover audio from script"""
+        """Generate voiceover audio from script
+
+        Args:
+            script: The voiceover script text
+            voice_style: Voice style from VOICE_MAPPINGS
+            output_path: Optional output file path
+            max_duration_seconds: Maximum duration for the voiceover (default 64s)
+        """
+        # Validate and truncate script if too long for target duration
+        # At 2.5 words/second, 64 seconds = 160 words max
+        words_per_second = 2.5
+        max_words = int(max_duration_seconds * words_per_second)
+
+        words = script.split()
+        original_word_count = len(words)
+
+        if original_word_count > max_words:
+            print(f"    ⚠️  Script too long: {original_word_count} words > {max_words} max for {max_duration_seconds}s")
+            print(f"    ⚠️  Truncating script to {max_words} words...")
+
+            # Truncate to max words
+            script = " ".join(words[:max_words])
+
+            # Try to end on a complete sentence
+            if not script.endswith((".", "!", "?")):
+                script = script.rstrip(",;:") + "..."
+
+            print(f"    ✅ Script truncated: {original_word_count} → {max_words} words")
+        else:
+            print(f"    ✅ Script word count OK: {original_word_count}/{max_words} words")
 
         voice_info = VOICE_MAPPINGS.get(voice_style, VOICE_MAPPINGS["professional"])
 

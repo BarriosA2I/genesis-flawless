@@ -2088,11 +2088,40 @@ class ElevenLabsVoiceoverAgent:
         self,
         script: str,
         brand_personality: Optional[str] = None,
-        speaking_rate: float = 1.0
+        speaking_rate: float = 1.0,
+        max_duration_seconds: float = 64.0
     ) -> VoiceoverResult:
-        """Generate voiceover from script using ElevenLabs API"""
+        """Generate voiceover from script using ElevenLabs API
+
+        Args:
+            script: Text to convert to speech
+            brand_personality: Optional personality to select voice
+            speaking_rate: Speech rate multiplier (default 1.0)
+            max_duration_seconds: Maximum duration (default 64 seconds for Barrios A2I)
+        """
         if not self.api_key:
             raise ValueError("ELEVENLABS_API_KEY required for voiceover generation")
+
+        # Validate and truncate script if too long for target duration
+        # At 2.5 words/second, 64 seconds = 160 words max
+        words_per_second = 2.5
+        max_words = int(max_duration_seconds * words_per_second)
+
+        words = script.split()
+        original_word_count = len(words)
+
+        if original_word_count > max_words:
+            logger.warning(
+                f"[Voiceover] Script too long: {original_word_count} words "
+                f"(max {max_words} for {max_duration_seconds}s). Truncating..."
+            )
+            # Truncate and add ellipsis to indicate cut
+            script = " ".join(words[:max_words])
+            if not script.endswith((".", "!", "?")):
+                script = script.rstrip(",;:") + "..."
+            logger.info(f"[Voiceover] Truncated to {len(script.split())} words")
+        else:
+            logger.info(f"[Voiceover] Word count OK: {original_word_count}/{max_words} words")
 
         start_time = time.time()
         voice_info = self._select_voice(brand_personality)
