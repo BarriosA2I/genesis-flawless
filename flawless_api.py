@@ -2140,6 +2140,7 @@ async def start_production_async(
 
     # Store initial state IMMEDIATELY so status endpoint returns something
     # This ensures the frontend never gets 404 after triggering production
+    # CRITICAL: Store in BOTH memory AND Redis for multi-worker deployments
     initial_state = ProductionState(
         session_id=session_id,
         phase=ProductionPhase.INTAKE,
@@ -2148,7 +2149,19 @@ async def start_production_async(
         message="Initializing RAGNAROK pipeline..."
     )
     nexus_bridge.productions[session_id] = initial_state
-    logger.info(f"[Production-Async] Stored initial state for {session_id}")
+    # Also store to Redis for cross-worker visibility
+    if nexus_bridge.redis:
+        try:
+            nexus_bridge.redis.setex(
+                f"production:{session_id}",
+                3600,  # 1 hour TTL
+                json.dumps(initial_state.to_dict())
+            )
+            logger.info(f"[Production-Async] Stored initial state for {session_id} (memory + Redis)")
+        except Exception as e:
+            logger.warning(f"[Production-Async] Redis storage failed: {e}")
+    else:
+        logger.info(f"[Production-Async] Stored initial state for {session_id} (memory only)")
 
     async def run_production_background():
         """Run production in background, consuming the generator."""
@@ -2176,6 +2189,16 @@ async def start_production_async(
                 metadata={"error": str(e), "traceback": error_details[:2000]}
             )
             nexus_bridge.productions[session_id] = error_state
+            # Also store error to Redis for cross-worker visibility
+            if nexus_bridge.redis:
+                try:
+                    nexus_bridge.redis.setex(
+                        f"production:{session_id}",
+                        3600,
+                        json.dumps(error_state.to_dict())
+                    )
+                except Exception as redis_err:
+                    logger.warning(f"[Production-Async] Redis error state storage failed: {redis_err}")
             logger.error(f"[Production-Async] Production failed for {session_id}: {e}\n{error_details}")
 
     # Add to background tasks
@@ -2196,9 +2219,22 @@ async def get_production_status(session_id: str):
     if not nexus_bridge:
         raise HTTPException(status_code=503, detail="Production pipeline not initialized")
 
+    # First check memory
     state = nexus_bridge.get_production_status(session_id)
+
+    # If not in memory, check Redis (cross-worker support)
+    if not state and nexus_bridge.redis:
+        try:
+            redis_data = nexus_bridge.redis.get(f"production:{session_id}")
+            if redis_data:
+                state_dict = json.loads(redis_data)
+                # Return directly from Redis dict (already serialized format)
+                return state_dict
+        except Exception as e:
+            logger.warning(f"Redis status lookup failed: {e}")
+
     if not state:
-        raise HTTPException(status_code=404, detail="Production not found")
+        raise HTTPException(status_code=404, detail="No production found for this session")
 
     return state.to_dict()
 
