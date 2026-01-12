@@ -906,6 +906,185 @@ async def get_website_knowledge_stats():
         )
 
 
+@app.get("/api/admin/backfill-videos", tags=["Admin"])
+async def backfill_videos_to_preview(
+    execute: bool = Query(False, description="Set to true to actually upload"),
+    limit: int = Query(0, description="Limit number of videos (0 = all)")
+):
+    """
+    Backfill historical videos from R2 to video-preview gallery.
+
+    This scans the R2 bucket for all production videos and sends them
+    to the video-preview gallery API.
+
+    Use execute=false (default) for dry run.
+    """
+    try:
+        from storage.r2_storage import get_video_storage
+        import httpx
+
+        VIDEO_PREVIEW_API = "https://video-preview-theta.vercel.app/api/videos"
+
+        storage = get_video_storage()
+        if not storage.is_configured:
+            return {
+                "status": "error",
+                "error": "R2 storage not configured",
+                "message": "Missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY"
+            }
+
+        # List all objects in R2 bucket
+        import boto3
+        from botocore.config import Config
+
+        account_id = os.getenv("R2_ACCOUNT_ID")
+        access_key_id = os.getenv("R2_ACCESS_KEY_ID")
+        secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
+        bucket_name = os.getenv("R2_BUCKET_NAME", "barrios-videos")
+        public_url = os.getenv("R2_PUBLIC_URL", "https://videos.barriosa2i.com")
+
+        endpoint_url = f"https://{account_id}.r2.cloudflarestorage.com"
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            config=Config(signature_version="s3v4")
+        )
+
+        # Scan for videos
+        sessions = {}
+        paginator = client.get_paginator("list_objects_v2")
+
+        for page in paginator.paginate(Bucket=bucket_name, Prefix="productions/"):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                parts = key.split("/")
+                if len(parts) >= 3:
+                    session_id = parts[1]
+                    filename = parts[2]
+
+                    if session_id not in sessions:
+                        sessions[session_id] = {
+                            "videos": [],
+                            "thumbnail": None,
+                            "created_at": obj["LastModified"].isoformat()
+                        }
+
+                    if filename.endswith(".mp4"):
+                        sessions[session_id]["videos"].append({
+                            "format": filename.replace(".mp4", ""),
+                            "url": f"{public_url}/{key}",
+                            "size": obj["Size"]
+                        })
+                    elif filename.endswith((".jpg", ".png")):
+                        sessions[session_id]["thumbnail"] = f"{public_url}/{key}"
+
+        # Build video list (prefer youtube_1080p or 1080p formats)
+        videos = []
+        for session_id, data in sessions.items():
+            if data["videos"]:
+                video = None
+                for v in data["videos"]:
+                    if "youtube_1080p" in v["format"]:
+                        video = v
+                        break
+                    elif "1080p" in v["format"]:
+                        video = v
+                if not video:
+                    video = data["videos"][0]
+
+                videos.append({
+                    "session_id": session_id,
+                    "video_url": video["url"],
+                    "format": video["format"],
+                    "size_mb": round(video["size"] / (1024 * 1024), 2),
+                    "thumbnail": data["thumbnail"],
+                    "created_at": data["created_at"],
+                    "formats_available": [v["format"] for v in data["videos"]]
+                })
+
+        # Sort by created_at (newest first)
+        videos.sort(key=lambda x: x["created_at"], reverse=True)
+
+        # Apply limit
+        if limit > 0:
+            videos = videos[:limit]
+
+        if not execute:
+            return {
+                "status": "dry_run",
+                "total_videos": len(videos),
+                "videos": videos[:50],  # Show first 50 in response
+                "message": f"Found {len(videos)} videos. Use execute=true to upload.",
+                "execute_url": f"/api/admin/backfill-videos?execute=true&limit={limit if limit else ''}"
+            }
+
+        # Execute upload
+        results = {"created": 0, "updated": 0, "failed": 0, "details": []}
+
+        async with httpx.AsyncClient(timeout=30) as http_client:
+            for video in videos:
+                video_id = f"genesis_{video['session_id']}"
+                payload = {
+                    "id": video_id,
+                    "url": video["video_url"],
+                    "title": f"AI Commercial - {video['format']}",
+                    "description": f"64-second AI commercial. Format: {video['format']}. Size: {video['size_mb']}MB",
+                    "thumbnail": video.get("thumbnail"),
+                    "duration": "1:04",
+                    "tags": ["commercial", "ai-generated", "barrios-a2i", "backfill"],
+                    "created": video["created_at"].split("T")[0]
+                }
+
+                try:
+                    response = await http_client.post(VIDEO_PREVIEW_API, json=payload)
+                    if response.status_code in [200, 201]:
+                        result = response.json()
+                        action = result.get("action", "created")
+                        if action == "updated":
+                            results["updated"] += 1
+                        else:
+                            results["created"] += 1
+                        results["details"].append({
+                            "session_id": video["session_id"],
+                            "action": action,
+                            "preview_url": f"https://video-preview-theta.vercel.app?v={video_id}"
+                        })
+                    else:
+                        results["failed"] += 1
+                        results["details"].append({
+                            "session_id": video["session_id"],
+                            "error": f"HTTP {response.status_code}"
+                        })
+                except Exception as e:
+                    results["failed"] += 1
+                    results["details"].append({
+                        "session_id": video["session_id"],
+                        "error": str(e)
+                    })
+
+                await asyncio.sleep(0.5)  # Rate limit
+
+        return {
+            "status": "complete",
+            "created": results["created"],
+            "updated": results["updated"],
+            "failed": results["failed"],
+            "total_processed": len(videos),
+            "details": results["details"][:50],  # Limit details in response
+            "gallery_url": "https://video-preview-theta.vercel.app"
+        }
+
+    except Exception as e:
+        logger.error(f"Video backfill failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to backfill videos: {str(e)}"
+        )
+
+
 # =============================================================================
 # LEGENDARY AGENTS ENDPOINTS (7.5-15) - THE APEX TIER
 # =============================================================================
