@@ -830,8 +830,8 @@ class QualityCheckNode(PipelineNode):
                     logger.warning(f"[{state.job_id}] {format_name}: {issue}")
 
         if all_passed:
-            new_phase = PipelinePhase.COMPLETED
-            logger.info(f"[{state.job_id}] Quality check PASSED")
+            new_phase = PipelinePhase.UPLOAD  # Upload to catbox after quality check
+            logger.info(f"[{state.job_id}] Quality check PASSED - proceeding to upload")
         else:
             new_phase = PipelinePhase.QUALITY_CHECK
             # Add warnings but don't fail
@@ -849,6 +849,74 @@ class QualityCheckNode(PipelineNode):
         if all_passed:
             new_state = new_state.create_checkpoint()
 
+        return new_state
+
+
+# =============================================================================
+# UPLOAD NODE - Upload final videos to catbox.moe
+# =============================================================================
+
+class UploadNode(PipelineNode):
+    """
+    Uploads final rendered videos to catbox.moe for public hosting.
+    Replaces local file paths with public catbox URLs.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._storage = None
+
+    async def _get_storage(self):
+        """Lazy load catbox storage to avoid import issues."""
+        if self._storage is None:
+            try:
+                from storage.catbox_storage import get_catbox_storage
+                self._storage = get_catbox_storage()
+            except ImportError:
+                logger.warning("[UploadNode] Catbox storage not available, using local paths")
+                self._storage = None
+        return self._storage
+
+    async def execute(self, state: GlobalState) -> GlobalState:
+        logger.info(f"[{state.job_id}] UploadNode: Uploading {len(state.final_output_paths)} files to catbox")
+
+        storage = await self._get_storage()
+
+        if not storage:
+            # No storage available, keep local paths
+            logger.warning(f"[{state.job_id}] No upload storage configured, keeping local paths")
+            return state.transition_to(PipelinePhase.COMPLETED)
+
+        uploaded_paths = {}
+        errors = []
+
+        for format_name, local_path in state.final_output_paths.items():
+            try:
+                # Upload to catbox
+                catbox_url = await storage.upload_video(
+                    local_path=local_path,
+                    session_id=state.job_id,
+                    format_name=format_name
+                )
+                uploaded_paths[format_name] = catbox_url
+                logger.info(f"[{state.job_id}] Uploaded {format_name}: {catbox_url}")
+
+            except Exception as e:
+                logger.error(f"[{state.job_id}] Upload failed for {format_name}: {e}")
+                errors.append(f"{format_name}: {str(e)}")
+                # Keep local path as fallback
+                uploaded_paths[format_name] = local_path
+
+        if errors:
+            logger.warning(f"[{state.job_id}] Upload completed with {len(errors)} errors")
+
+        # Replace local paths with catbox URLs
+        new_state = state.transition_to(
+            PipelinePhase.COMPLETED,
+            final_output_paths=uploaded_paths
+        )
+
+        logger.info(f"[{state.job_id}] Upload complete - {len(uploaded_paths)} files uploaded")
         return new_state
 
 
@@ -871,6 +939,7 @@ class VortexPipeline:
             PipelinePhase.CLIP_ASSEMBLY: AudioSyncNode(),
             PipelinePhase.AUDIO_SYNC: FormatRenderNode(),
             PipelinePhase.FORMAT_RENDER: QualityCheckNode(),
+            PipelinePhase.QUALITY_CHECK: UploadNode(),  # Upload to catbox after QA
         }
 
     def get_next_node(self, phase: PipelinePhase) -> Optional[PipelineNode]:
@@ -915,6 +984,7 @@ class VortexPipeline:
             {"id": "audio", "label": "Sync Audio", "type": "process"},
             {"id": "render", "label": "Render Formats", "type": "process"},
             {"id": "quality", "label": "Quality Check", "type": "process"},
+            {"id": "upload", "label": "Upload to Catbox", "type": "process"},
             {"id": "completed", "label": "Completed", "type": "end"},
             {"id": "failed", "label": "Failed", "type": "error"},
         ]
@@ -928,8 +998,9 @@ class VortexPipeline:
             {"from": "assembly", "to": "audio"},
             {"from": "audio", "to": "render"},
             {"from": "render", "to": "quality"},
-            {"from": "quality", "to": "completed", "label": "pass"},
+            {"from": "quality", "to": "upload", "label": "pass"},
             {"from": "quality", "to": "failed", "label": "fail"},
+            {"from": "upload", "to": "completed"},
         ]
 
         return {"nodes": nodes, "edges": edges}

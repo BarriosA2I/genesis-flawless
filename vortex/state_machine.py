@@ -40,6 +40,7 @@ class PipelinePhase(str, Enum):
     AUDIO_SYNC = "audio_sync"
     FORMAT_RENDER = "format_render"
     QUALITY_CHECK = "quality_check"
+    UPLOAD = "upload"  # Upload to catbox.moe
     COMPLETED = "completed"
     FAILED = "failed"
 
