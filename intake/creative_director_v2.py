@@ -1528,29 +1528,19 @@ async def _call_production_api(
     }
 
     try:
-        # Generate production_id - the SSE endpoint won't return JSON
-        production_id = f"prod_{session_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Note: /api/production/start returns SSE stream, not JSON
-            # We just need to verify the request was accepted
+            # Use /api/production/trigger for fire-and-forget background execution
+            # This returns JSON and starts the RAGNAROK pipeline in the background
             response = await client.post(
-                f"{GENESIS_API_BASE}/api/production/start/{session_id}",
+                f"{GENESIS_API_BASE}/api/production/trigger/{session_id}",
                 json=payload,
                 headers={"Content-Type": "application/json"}
             )
 
             if response.status_code == 200:
-                # SSE stream started successfully
-                # The actual streaming will be handled by the frontend connecting to the SSE endpoint
-                logger.info(f"[ProductionAPI] Production stream started for session {session_id}")
-                return {
-                    "success": True,
-                    "production_id": production_id,
-                    "session_id": session_id,
-                    "status": "streaming_started",
-                    "message": "Production pipeline initiated. Connect to SSE for real-time updates."
-                }
+                result = response.json()
+                logger.info(f"[ProductionAPI] Production triggered for session {session_id}: {result.get('production_id')}")
+                return result
             else:
                 return {
                     "success": False,

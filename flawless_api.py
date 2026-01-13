@@ -2103,6 +2103,62 @@ async def start_production(session_id: str, request: ProductionStartRequest):
     )
 
 
+@app.post("/api/production/trigger/{session_id}", tags=["Commercial_Lab"])
+async def trigger_production(session_id: str, request: ProductionStartRequest, background_tasks: BackgroundTasks):
+    """
+    Trigger Commercial_Lab video production (fire-and-forget).
+
+    Unlike /api/production/start which returns SSE stream, this endpoint:
+    1. Immediately returns success with production_id
+    2. Runs the RAGNAROK pipeline in the background
+    3. Frontend can poll /api/production/status/{session_id} for updates
+
+    This is used by Creative Director V2 internal API calls.
+    """
+    if not nexus_bridge:
+        raise HTTPException(status_code=503, detail="Production pipeline not initialized")
+
+    # Build full brief
+    approved_brief = {
+        **request.brief,
+        "business_name": request.business_name,
+        "industry": request.industry,
+        "style": request.style,
+        "goals": request.goals,
+        "target_platforms": request.target_platforms
+    }
+
+    production_id = f"prod_{session_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    async def run_production():
+        """Background task to run the full RAGNAROK pipeline."""
+        try:
+            logger.info(f"[Production] Starting background pipeline for {session_id}")
+            async for state in nexus_bridge.start_production(session_id, approved_brief):
+                # Log progress
+                logger.info(f"[Production] {session_id}: {state.phase.value} - {state.progress}%")
+
+                # Publish to video gallery ONLY when FINAL production completes (100%)
+                if state.status == ProductionStatus.COMPLETED and state.progress == 100:
+                    logger.info(f"[Production] FINAL completion - publishing to video gallery")
+                    await publish_to_video_gallery(session_id, state, approved_brief)
+
+            logger.info(f"[Production] Pipeline completed for {session_id}")
+        except Exception as e:
+            logger.error(f"[Production] Pipeline failed for {session_id}: {e}")
+
+    # Start production in background
+    background_tasks.add_task(run_production)
+
+    return {
+        "success": True,
+        "production_id": production_id,
+        "session_id": session_id,
+        "status": "pipeline_started",
+        "message": "Production pipeline started in background. Poll /api/production/status for updates."
+    }
+
+
 @app.get("/api/production/status/{session_id}", tags=["Commercial_Lab"])
 async def get_production_status(session_id: str):
     """Get current production status for a session."""
