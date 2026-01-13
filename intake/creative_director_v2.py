@@ -298,9 +298,10 @@ class VideoBriefState(TypedDict):
     script_draft: Optional[dict]
 
     # Review workflow fields
-    script_status: Optional[str]       # "pending_review" | "approved" | "revision_requested" | "rejected"
+    script_status: Optional[str]       # "pending_review" | "approved" | "revision_requested" | "rejected" | "parse_error_final" | "retry_needed"
     revision_feedback: Optional[str]   # User's revision request
     revision_count: int                # Track revision iterations (max 3)
+    script_parse_attempts: int         # Track JSON parse retry count (max 3)
 
     # Production tracking (NEW)
     production_id: Optional[str]          # RAGNAROK pipeline ID
@@ -1198,12 +1199,27 @@ async def script_writer_node(state: VideoBriefState) -> dict:
                 f"- **Revise** - Tell me what to change (e.g., 'make it more upbeat')"
             )
         else:
-            logger.error("[ScriptWriterAgent] Failed to parse script JSON")
+            # Track retry attempts
+            attempts = state.get("script_parse_attempts", 0) + 1
+            logger.error(f"[ScriptWriterAgent] Failed to parse script JSON (attempt {attempts}/3)")
             new_state["script_draft"] = {"status": "parse_error", "raw": response_text[:500]}
-            response_message = (
-                f"I've drafted a script concept for {state.get('business_name', 'your business')}. "
-                f"Let me refine it and get it ready for your review."
-            )
+            new_state["script_parse_attempts"] = attempts
+
+            if attempts >= 3:
+                # Max retries reached - stop retrying, go to reviewer for fallback
+                new_state["script_status"] = "parse_error_final"
+                response_message = (
+                    f"I'm having trouble generating the script in the expected format. "
+                    f"Let me show you what I have so far for {state.get('business_name', 'your business')} "
+                    f"and we can work together to refine it."
+                )
+            else:
+                # Allow retry
+                new_state["script_status"] = "retry_needed"
+                response_message = (
+                    f"I've drafted a script concept for {state.get('business_name', 'your business')}. "
+                    f"Let me refine it and get it ready for your review."
+                )
 
     except Exception as e:
         logger.error(f"[ScriptWriterAgent] Error: {e}")
@@ -1716,6 +1732,7 @@ Your script is still saved and approved, so we won't lose any progress!'''
 def route_after_script_writer(state: VideoBriefState) -> Literal["reviewer", "script_writer"]:
     """
     After script writer generates a script, go to reviewer for user feedback.
+    Includes retry limit to prevent infinite loops on JSON parse errors.
     """
     script_status = state.get("script_status")
 
@@ -1723,9 +1740,18 @@ def route_after_script_writer(state: VideoBriefState) -> Literal["reviewer", "sc
         logger.info("[Router] Script ready → reviewer (awaiting feedback)")
         return "reviewer"
 
-    # Error case - retry
-    logger.info("[Router] Script error → retry script_writer")
-    return "script_writer"
+    if script_status == "parse_error_final":
+        logger.info("[Router] Max parse attempts reached → reviewer (for fallback handling)")
+        return "reviewer"
+
+    if script_status == "retry_needed":
+        attempts = state.get("script_parse_attempts", 0)
+        logger.info(f"[Router] Parse error, retrying script_writer ({attempts}/3)")
+        return "script_writer"
+
+    # Unknown status - go to reviewer to avoid infinite loop
+    logger.warning(f"[Router] Unknown script_status={script_status} → reviewer (safety fallback)")
+    return "reviewer"
 
 
 def route_after_reviewer(state: VideoBriefState) -> Literal["script_writer", "production", "end"]:
