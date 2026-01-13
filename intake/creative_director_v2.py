@@ -443,10 +443,16 @@ def _detect_assets(message: str) -> List[dict]:
 
         assets.append({"type": asset_type, "url": url, "name": filename})
 
-    # 2. Detect frontend upload notifications: [User uploaded logo/image: filename.png]
-    # Frontend sends this pattern when user uploads a file
+    # 2. Detect frontend upload notifications
+    # Pattern A: [User uploaded logo/image: filename.png]
     upload_pattern = r'\[User uploaded (?:logo/image|document): ([^\]]+)\]'
     upload_match = re.search(upload_pattern, message)
+
+    # Pattern B: 📎 Uploaded: filename.png (emoji format from frontend)
+    if not upload_match:
+        emoji_upload_pattern = r'📎\s*(?:Uploaded|File attached):\s*([^\s\n]+)'
+        upload_match = re.search(emoji_upload_pattern, message)
+
     if upload_match:
         filename = upload_match.group(1)
         lower_name = filename.lower()
@@ -609,15 +615,33 @@ Extract ONLY what user explicitly stated. Do not guess or infer."""
             current_assets.extend(new_assets)
             new_state["uploaded_assets"] = current_assets
 
+        # Check if user is providing additional instructions for previously uploaded assets
+        has_existing_assets = bool(new_state.get("uploaded_assets"))
+        is_asset_instruction = any(word in last_lower for word in [
+            "place", "position", "bottom", "top", "left", "right", "corner",
+            "frame", "end", "beginning", "watermark", "overlay", "logo"
+        ])
+
         if new_assets:
             response_text = f"✅ Assets received! Starting research for {new_state.get('business_name')}..."
         elif any(word in last_lower for word in skip_words):
             response_text = f"Got it! Starting research for {new_state.get('business_name')}..."
+        elif has_existing_assets and is_asset_instruction:
+            # User is giving placement instructions for already-uploaded logo
+            response_text = f"✅ Got it - logo placement noted! Starting research for {new_state.get('business_name')}..."
+            logger.info(f"[IntakeAgent] Asset instruction detected: {last_message[:50]}")
+        elif has_existing_assets:
+            # User has assets and is responding with something else - proceed
+            response_text = f"Perfect! Starting research for {new_state.get('business_name')}..."
         else:
-            response_text = f"Ready to start production! Say 'yes' to begin."
+            # No assets, not skipping - ask again
+            response_text = f"Would you like to upload a logo, or say 'skip' to proceed without one?"
+            new_state["is_complete"] = False  # Don't proceed yet
+            new_state["current_phase"] = "intake"
 
-        new_state["is_complete"] = True
-        new_state["current_phase"] = "research"
+        if new_state.get("is_complete") != False:  # Don't override if set to False above
+            new_state["is_complete"] = True
+            new_state["current_phase"] = "research"
 
     new_state["messages"] = state.get("messages", []) + [{
         "role": "assistant",
@@ -1866,8 +1890,14 @@ class CreativeDirectorV2:
         # LOGO UPLOAD DETECTION - Set flag, DO NOT early-return
         # =========================================================================
         import re
+        # Pattern 1: Original format [User uploaded logo/image: filename.png]
         upload_pattern = r'\[User uploaded (?:logo/image|document): ([^\]]+)\]'
         upload_match = re.search(upload_pattern, message)
+
+        # Pattern 2: Frontend emoji format 📎 Uploaded: filename.png
+        if not upload_match:
+            emoji_pattern = r'📎\s*(?:Uploaded|File attached):\s*([^\s\n]+)'
+            upload_match = re.search(emoji_pattern, message)
 
         if upload_match:
             filename = upload_match.group(1)
@@ -1950,11 +1980,13 @@ class CreativeDirectorV2:
                 self.sessions[session_id] = result
             except Exception as e:
                 logger.error(f"Graph error: {e}")
+                logger.error(f"Graph error traceback: {traceback.format_exc()}")
                 result = state
                 result["messages"].append({
                     "role": "assistant",
                     "content": "I encountered an issue. Could you repeat that?"
                 })
+                self.sessions[session_id] = result  # Save session even on error
 
         # Calculate progress
         required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
