@@ -1528,7 +1528,12 @@ async def _call_production_api(
     }
 
     try:
+        # Generate production_id - the SSE endpoint won't return JSON
+        production_id = f"prod_{session_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # Note: /api/production/start returns SSE stream, not JSON
+            # We just need to verify the request was accepted
             response = await client.post(
                 f"{GENESIS_API_BASE}/api/production/start/{session_id}",
                 json=payload,
@@ -1536,11 +1541,20 @@ async def _call_production_api(
             )
 
             if response.status_code == 200:
-                return {"success": True, **response.json()}
+                # SSE stream started successfully
+                # The actual streaming will be handled by the frontend connecting to the SSE endpoint
+                logger.info(f"[ProductionAPI] Production stream started for session {session_id}")
+                return {
+                    "success": True,
+                    "production_id": production_id,
+                    "session_id": session_id,
+                    "status": "streaming_started",
+                    "message": "Production pipeline initiated. Connect to SSE for real-time updates."
+                }
             else:
                 return {
                     "success": False,
-                    "error": f"Production API returned {response.status_code}: {response.text}"
+                    "error": f"Production API returned {response.status_code}: {response.text[:200]}"
                 }
     except httpx.TimeoutException:
         return {"success": False, "error": "Production API timeout (30s exceeded)"}
