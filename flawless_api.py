@@ -2136,10 +2136,10 @@ async def trigger_production(session_id: str, request: ProductionStartRequest, b
             logger.info(f"[Production] Starting background pipeline for {session_id}")
             async for state in nexus_bridge.start_production(session_id, approved_brief):
                 # Log progress
-                logger.info(f"[Production] {session_id}: {state.phase.value} - {state.progress}%")
+                logger.info(f"[Production] {session_id}: {state.phase.value} - {state.progress_percent}%")
 
                 # Publish to video gallery ONLY when FINAL production completes (100%)
-                if state.status == ProductionStatus.COMPLETED and state.progress == 100:
+                if state.status == ProductionStatus.COMPLETED and state.progress_percent == 100:
                     logger.info(f"[Production] FINAL completion - publishing to video gallery")
                     await publish_to_video_gallery(session_id, state, approved_brief)
 
