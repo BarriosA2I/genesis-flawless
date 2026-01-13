@@ -1244,7 +1244,9 @@ async def script_writer_node(state: VideoBriefState) -> dict:
         else:
             # Track retry attempts
             attempts = state.get("script_parse_attempts", 0) + 1
+            # DEBUG: Log what the LLM actually returned
             logger.error(f"[ScriptWriterAgent] Failed to parse script JSON (attempt {attempts}/3)")
+            logger.error(f"[ScriptWriterAgent] Raw response preview: {response_text[:300]}...")
             new_state["script_draft"] = {"status": "parse_error", "raw": response_text[:500]}
             new_state["script_parse_attempts"] = attempts
 
