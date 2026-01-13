@@ -63,6 +63,14 @@ except ImportError:
     get_video_storage = None
     logger.warning("R2VideoStorage not available")
 
+# Import Catbox Storage (fallback when R2 not configured)
+try:
+    from storage.catbox_storage import CatboxStorage, get_catbox_storage
+except ImportError:
+    CatboxStorage = None
+    get_catbox_storage = None
+    logger.warning("CatboxStorage not available")
+
 # Import Music Selection Agent (Agent 6)
 try:
     from agents.music_selector_agent import (
@@ -831,6 +839,17 @@ class NexusBridge:
                 logger.warning(f"R2Storage init failed: {e}")
         else:
             logger.warning("R2VideoStorage not available")
+
+        # Catbox Storage (fallback when R2 not configured)
+        self.catbox_storage = None
+        if get_catbox_storage:
+            try:
+                self.catbox_storage = get_catbox_storage()
+                logger.info("CatboxStorage initialized (always available)")
+            except Exception as e:
+                logger.warning(f"CatboxStorage init failed: {e}")
+        else:
+            logger.warning("CatboxStorage not available")
 
         # Music Selection Agent (Agent 6)
         self.music_agent = None
@@ -2307,11 +2326,27 @@ Return ONLY valid JSON array, no markdown."""
                         except Exception as e:
                             logger.error(f"Thumbnail upload failed: {e}")
                 else:
-                    # R2 not configured - use mock URLs
-                    logger.warning("R2 not configured - using mock video URLs")
+                    # R2 not configured - use Catbox for upload
                     outputs = getattr(assembly_response, 'outputs', {}) or assembly_response.get('outputs', {})
-                    for format_name in outputs.keys():
-                        video_urls[format_name] = f"{R2_FALLBACK_URL}/productions/{production_id}/{format_name}.mp4"
+                    if self.catbox_storage:
+                        logger.info("R2 not configured - using Catbox for video upload")
+                        for format_name, local_path in outputs.items():
+                            if Path(local_path).exists():
+                                try:
+                                    url = await self.catbox_storage.upload_video(
+                                        local_path=local_path,
+                                        session_id=session_id,
+                                        format_name=format_name
+                                    )
+                                    video_urls[format_name] = url
+                                    logger.info(f"Uploaded {format_name} to Catbox: {url}")
+                                except Exception as e:
+                                    logger.error(f"Catbox upload failed for {format_name}: {e}")
+                                    video_urls[format_name] = f"{R2_FALLBACK_URL}/productions/{production_id}/{format_name}.mp4"
+                    else:
+                        logger.warning("No storage configured - using mock video URLs")
+                        for format_name in outputs.keys():
+                            video_urls[format_name] = f"{R2_FALLBACK_URL}/productions/{production_id}/{format_name}.mp4"
 
                 return {
                     "video_urls": video_urls,
