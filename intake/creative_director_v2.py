@@ -492,9 +492,8 @@ async def intake_node(state: VideoBriefState) -> dict:
     """
     Single LLM call for extraction, inline response generation.
     NO double LLM calls - extraction only, responses are deterministic.
+    OPTIMIZATION: Skip LLM call if all 5 fields already filled.
     """
-    llm = get_llm()
-
     # Get the last user message
     user_messages = [m for m in state.get("messages", []) if m.get("role") == "user"]
     if not user_messages:
@@ -510,8 +509,19 @@ async def intake_node(state: VideoBriefState) -> dict:
 
     last_message = user_messages[-1].get("content", "")
 
-    # Build extraction prompt
-    extraction_prompt = f"""Extract any of these fields from the user message:
+    # Check if all fields are already filled BEFORE making LLM call
+    required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
+    already_filled = all(state.get(f) for f in required)
+
+    extracted_dict = {}
+
+    # OPTIMIZATION: Skip LLM extraction if all fields already filled
+    # This prevents hangs when processing upload notifications or skip commands
+    if already_filled:
+        logger.info(f"[IntakeAgent] All 5 fields already filled - skipping LLM extraction")
+    else:
+        # Build extraction prompt
+        extraction_prompt = f"""Extract any of these fields from the user message:
 - business_name: The company/brand name
 - primary_offering: Product or service being promoted
 - target_demographic: Who the ad is targeting
@@ -529,15 +539,16 @@ Current state:
 
 Extract ONLY what user explicitly stated. Do not guess or infer."""
 
-    # SINGLE LLM call for extraction
-    try:
-        extractor = llm.with_structured_output(ExtractionSchema)
-        extracted = await extractor.ainvoke(extraction_prompt)
-        extracted_dict = extracted.dict(exclude_none=True) if hasattr(extracted, 'dict') else {}
-        logger.info(f"[IntakeAgent] Extracted: {extracted_dict}")
-    except Exception as e:
-        logger.error(f"[IntakeAgent] Extraction failed: {e}")
-        extracted_dict = {}
+        # SINGLE LLM call for extraction
+        try:
+            llm = get_llm()
+            extractor = llm.with_structured_output(ExtractionSchema)
+            extracted = await extractor.ainvoke(extraction_prompt)
+            extracted_dict = extracted.dict(exclude_none=True) if hasattr(extracted, 'dict') else {}
+            logger.info(f"[IntakeAgent] Extracted: {extracted_dict}")
+        except Exception as e:
+            logger.error(f"[IntakeAgent] Extraction failed: {e}")
+            extracted_dict = {}
 
     new_state = dict(state)
 
