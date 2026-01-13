@@ -963,7 +963,7 @@ class CommercialCuratorAgent:
     """
 
     PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
-    PERPLEXITY_MODEL = "llama-3.1-sonar-small-128k-online"  # Fast, cheap, real-time search
+    PERPLEXITY_MODEL = "sonar"  # Fast, cost-effective search with grounding (2025 model names)
 
     # URL extraction pattern
     URL_PATTERN = re.compile(r'https?://[^\s\)\]\}\"\'<>]+', re.IGNORECASE)
