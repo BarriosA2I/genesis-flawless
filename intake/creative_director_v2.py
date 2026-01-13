@@ -2103,6 +2103,13 @@ class CreativeDirectorV2:
         }
         missing_display = [field_map.get(f, f) for f in result.get("missing_fields", [])]
 
+        # Determine if production should be triggered
+        # Trigger when script is approved and production was started (has production_id)
+        should_trigger = (
+            result.get("script_status") == "approved" and
+            result.get("production_id") is not None
+        )
+
         return {
             "response": result["messages"][-1]["content"] if result["messages"] else "",
             "progress_percentage": progress,
@@ -2112,6 +2119,8 @@ class CreativeDirectorV2:
             "script_status": result.get("script_status"),
             "revision_count": result.get("revision_count", 0),
             "version": "v2-langgraph",
+            # Production trigger flag - frontend uses this to show voice selector
+            "trigger_production": should_trigger,
             # Production tracking (for SSE streaming)
             "production_id": result.get("production_id"),
             "production_status": result.get("production_status"),
