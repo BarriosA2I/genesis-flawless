@@ -977,34 +977,48 @@ def _parse_script_json(response_text: str) -> Optional[dict]:
     # Try direct parse first
     try:
         return json.loads(response_text)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug(f"[Parser] Direct parse failed: {e}")
 
     # Strip JS-style comments and try again
     cleaned_text = strip_js_comments(response_text)
     try:
         return json.loads(cleaned_text)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug(f"[Parser] After comment strip failed: {e}")
 
     # Try to extract JSON from markdown code block
     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response_text)
     if json_match:
         extracted = strip_js_comments(json_match.group(1))
+        logger.info(f"[Parser] Markdown extraction found {len(extracted)} chars, first 200: {extracted[:200]}")
         try:
             return json.loads(extracted)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.error(f"[Parser] Markdown JSON parse failed at pos {e.pos}: {e.msg}")
+            # Log context around error position
+            if e.pos is not None and e.pos < len(extracted):
+                start = max(0, e.pos - 50)
+                end = min(len(extracted), e.pos + 50)
+                logger.error(f"[Parser] Context around error: ...{extracted[start:end]}...")
+    else:
+        logger.warning(f"[Parser] No markdown code block found in response")
 
     # Try to find JSON object in response
     json_match = re.search(r'\{[\s\S]*\}', response_text)
     if json_match:
         extracted = strip_js_comments(json_match.group(0))
+        logger.info(f"[Parser] Brace extraction found {len(extracted)} chars")
         try:
             return json.loads(extracted)
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.error(f"[Parser] Brace JSON parse failed at pos {e.pos}: {e.msg}")
+            if e.pos is not None and e.pos < len(extracted):
+                start = max(0, e.pos - 50)
+                end = min(len(extracted), e.pos + 50)
+                logger.error(f"[Parser] Context around error: ...{extracted[start:end]}...")
 
+    logger.error(f"[Parser] All parsing methods failed")
     return None
 
 
