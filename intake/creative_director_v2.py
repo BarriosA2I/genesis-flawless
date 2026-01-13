@@ -209,7 +209,7 @@ Your visual_description fields must describe HIGH-END COMMERCIAL B-ROLL footage.
 - "Business owner talks about their experience" ❌
 
 ## OUTPUT FORMAT
-Return a JSON object with this exact structure:
+Return a JSON object with this exact structure (NO comments allowed - pure JSON only):
 {{
     "title": "Commercial title",
     "duration_seconds": {total_duration},
@@ -218,14 +218,21 @@ Return a JSON object with this exact structure:
         {{
             "scene_number": 1,
             "timestamp": "0:00-0:08",
-            "type": "scene_type",
-            "visual_description": "What viewers SEE (be specific and cinematic)",
-            "narration": "What viewers HEAR (MAX {words_per_scene} WORDS - punchy, impactful)",
-            "text_overlay": "Any on-screen text",
-            "music_mood": "Music/sound direction"
+            "type": "hook",
+            "visual_description": "Cinematic B-roll description for scene 1",
+            "narration": "Voiceover text (MAX {words_per_scene} words)",
+            "text_overlay": "On-screen text or empty string",
+            "music_mood": "Music direction"
         }},
-        // ... Generate EXACTLY {scene_count} scenes following the structure above
-        // Each scene must have correct timestamp based on {scene_duration}-second intervals
+        {{
+            "scene_number": 2,
+            "timestamp": "0:08-0:16",
+            "type": "problem",
+            "visual_description": "Cinematic B-roll description for scene 2",
+            "narration": "Voiceover text (MAX {words_per_scene} words)",
+            "text_overlay": "On-screen text or empty string",
+            "music_mood": "Music direction"
+        }}
     ],
     "voiceover_full_script": "Complete narration (MUST be under {total_words} words total)",
     "visual_style_notes": "Overall visual direction",
@@ -233,8 +240,10 @@ Return a JSON object with this exact structure:
     "estimated_production_complexity": "low|medium|high"
 }}
 
+IMPORTANT: Generate EXACTLY {scene_count} scenes with timestamps at {scene_duration}-second intervals.
+The example shows 2 scenes - you must generate all {scene_count} scenes following the same structure.
 REMEMBER: {words_per_scene} words per scene MAX. {total_words} words total MAX. Count carefully!
-Create EXACTLY {scene_count} scenes totaling {total_duration} seconds. Make it cinematic and compelling for {business_name}.
+Make it cinematic and compelling for {business_name}.
 """
 
 # Reviewer Node - Approval/Revision detection patterns
@@ -940,25 +949,49 @@ def _parse_script_json(response_text: str) -> Optional[dict]:
     """
     import re
 
+    def strip_js_comments(text: str) -> str:
+        """Strip JavaScript-style // comments that LLMs sometimes add to JSON."""
+        lines = text.split('\n')
+        cleaned = []
+        for line in lines:
+            stripped = line.strip()
+            # Skip lines that are just comments
+            if stripped.startswith('//'):
+                continue
+            # Remove trailing // comments (but not if inside a quoted string)
+            if '//' in line and not re.search(r'"[^"]*//[^"]*"', line):
+                line = re.sub(r'\s*//.*$', '', line)
+            cleaned.append(line)
+        return '\n'.join(cleaned)
+
     # Try direct parse first
     try:
         return json.loads(response_text)
     except json.JSONDecodeError:
         pass
 
+    # Strip JS-style comments and try again
+    cleaned_text = strip_js_comments(response_text)
+    try:
+        return json.loads(cleaned_text)
+    except json.JSONDecodeError:
+        pass
+
     # Try to extract JSON from markdown code block
     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response_text)
     if json_match:
+        extracted = strip_js_comments(json_match.group(1))
         try:
-            return json.loads(json_match.group(1))
+            return json.loads(extracted)
         except json.JSONDecodeError:
             pass
 
     # Try to find JSON object in response
     json_match = re.search(r'\{[\s\S]*\}', response_text)
     if json_match:
+        extracted = strip_js_comments(json_match.group(0))
         try:
-            return json.loads(json_match.group(0))
+            return json.loads(extracted)
         except json.JSONDecodeError:
             pass
 
