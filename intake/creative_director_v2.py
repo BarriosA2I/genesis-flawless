@@ -643,26 +643,36 @@ Extract ONLY what user explicitly stated. Do not guess or infer."""
             "frame", "end", "beginning", "watermark", "overlay", "logo"
         ])
 
+        # Use explicit flag to determine if we should proceed to research
+        should_proceed = False
+
         if new_assets:
             response_text = f"✅ Assets received! Starting research for {new_state.get('business_name')}..."
+            should_proceed = True
         elif any(word in last_lower for word in skip_words):
             response_text = f"Got it! Starting research for {new_state.get('business_name')}..."
+            should_proceed = True
         elif has_existing_assets and is_asset_instruction:
             # User is giving placement instructions for already-uploaded logo
             response_text = f"✅ Got it - logo placement noted! Starting research for {new_state.get('business_name')}..."
             logger.info(f"[IntakeAgent] Asset instruction detected: {last_message[:50]}")
+            should_proceed = True
         elif has_existing_assets:
             # User has assets and is responding with something else - proceed
             response_text = f"Perfect! Starting research for {new_state.get('business_name')}..."
+            should_proceed = True
         else:
             # No assets, not skipping - ask again
             response_text = f"Would you like to upload a logo, or say 'skip' to proceed without one?"
-            new_state["is_complete"] = False  # Don't proceed yet
-            new_state["current_phase"] = "intake"
+            should_proceed = False
 
-        if new_state.get("is_complete") != False:  # Don't override if set to False above
+        # FIXED: Explicitly set based on flag, not inherited state
+        if should_proceed:
             new_state["is_complete"] = True
             new_state["current_phase"] = "research"
+        else:
+            new_state["is_complete"] = False
+            new_state["current_phase"] = "intake"
 
     new_state["messages"] = state.get("messages", []) + [{
         "role": "assistant",
