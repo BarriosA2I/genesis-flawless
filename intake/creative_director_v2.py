@@ -386,7 +386,7 @@ def get_llm():
         llm = ChatAnthropic(
             model=model,
             temperature=0.3,
-            max_tokens=1024,
+            max_tokens=4096,  # Increased from 1024 - script generation needs ~3000-4000 tokens
             api_key=api_key
         )
         logger.info(f"[LLM] ChatAnthropic created successfully")
