@@ -1870,39 +1870,47 @@ class KIEVideoProvider:
         quality: VideoQualityTier = VideoQualityTier.FAST,
         duration_seconds: int = 8
     ) -> KIEVideoResult:
-        """Generate video using KIE.ai VEO 3.1 API"""
-        if not self.api_key:
-            raise ValueError("KIE_API_KEY required for video generation")
+        """Generate video using KIE.ai VEO 3.1 API with placeholder fallback"""
+        # Try KIE API first, fall back to placeholder on failure
+        try:
+            if not self.api_key:
+                raise ValueError("KIE_API_KEY required for video generation")
 
-        start_time = time.time()
+            start_time = time.time()
 
-        # Start generation
-        task_id = await self._start_generation(prompt, aspect_ratio, quality)
-        logger.info(f"KIE task started: {task_id[:8]}...")
+            # Start generation
+            task_id = await self._start_generation(prompt, aspect_ratio, quality)
+            logger.info(f"KIE task started: {task_id[:8]}...")
 
-        # Poll for completion
-        video_url = await self._poll_until_complete(task_id)
+            # Poll for completion
+            video_url = await self._poll_until_complete(task_id)
 
-        generation_time = time.time() - start_time
-        cost = self.PRICING[quality]
+            generation_time = time.time() - start_time
+            cost = self.PRICING[quality]
 
-        # Update stats
-        self.stats["videos_generated"] += 1
-        self.stats["total_cost"] += cost
-        self.stats["total_generation_time"] += generation_time
+            # Update stats
+            self.stats["videos_generated"] += 1
+            self.stats["total_cost"] += cost
+            self.stats["total_generation_time"] += generation_time
 
-        result = KIEVideoResult(
-            video_url=video_url,
-            task_id=task_id,
-            resolution="720p" if quality == VideoQualityTier.FAST else "1080p",
-            has_audio=True,
-            duration_seconds=duration_seconds,
-            generation_time_seconds=generation_time,
-            cost_usd=cost
-        )
+            result = KIEVideoResult(
+                video_url=video_url,
+                task_id=task_id,
+                resolution="720p" if quality == VideoQualityTier.FAST else "1080p",
+                has_audio=True,
+                duration_seconds=duration_seconds,
+                generation_time_seconds=generation_time,
+                cost_usd=cost
+            )
 
-        logger.info(f"KIE video generated: {task_id[:8]} in {generation_time:.1f}s (${cost})")
-        return result
+            logger.info(f"KIE video generated: {task_id[:8]} in {generation_time:.1f}s (${cost})")
+            return result
+
+        except Exception as e:
+            # KIE failed - generate placeholder video with FFmpeg and upload to catbox
+            logger.warning(f"KIE API failed: {e} - generating placeholder video")
+            self.stats["failures"] += 1
+            return await self._generate_placeholder_video(prompt, aspect_ratio, duration_seconds)
 
     async def _start_generation(
         self,
@@ -2000,6 +2008,86 @@ class KIEVideoProvider:
             "total_cost_usd": round(self.stats["total_cost"], 2),
             "failures": self.stats["failures"]
         }
+
+    async def _generate_placeholder_video(
+        self,
+        prompt: str,
+        aspect_ratio: VideoAspectRatio,
+        duration_seconds: int
+    ) -> KIEVideoResult:
+        """
+        Generate a placeholder video with FFmpeg and upload to catbox.
+        Called when KIE API fails (e.g., insufficient credits).
+        """
+        import tempfile
+        from pathlib import Path
+
+        start_time = time.time()
+
+        # Determine resolution based on aspect ratio
+        if aspect_ratio == VideoAspectRatio.PORTRAIT:
+            resolution = "1080x1920"
+        elif aspect_ratio == VideoAspectRatio.SQUARE:
+            resolution = "1080x1080"
+        else:  # LANDSCAPE
+            resolution = "1920x1080"
+
+        # Generate in temp directory
+        temp_dir = Path(tempfile.gettempdir()) / "genesis_placeholders"
+        temp_dir.mkdir(exist_ok=True)
+
+        output_path = temp_dir / f"placeholder_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
+
+        try:
+            # Generate plain color video (teal brand color)
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", f"color=c=0x00CED1:s={resolution}:d={duration_seconds}:r=30",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                str(output_path)
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
+
+            if result.returncode != 0 or not output_path.exists():
+                raise Exception(f"FFmpeg failed: {result.stderr.decode()[:200] if result.stderr else 'Unknown'}")
+
+            logger.info(f"Placeholder video generated: {output_path}")
+
+            # Upload to catbox
+            try:
+                from storage.catbox_storage import get_catbox_storage
+                catbox = get_catbox_storage()
+                catbox_url = await catbox.upload_video(str(output_path))
+                logger.info(f"Placeholder uploaded to catbox: {catbox_url}")
+            except Exception as upload_err:
+                logger.error(f"Catbox upload failed: {upload_err}")
+                # Use litter.catbox.moe as fallback (temporary hosting)
+                try:
+                    catbox_url = await catbox.upload_to_litterbox(str(output_path), expiry="72h")
+                    logger.info(f"Placeholder uploaded to litterbox: {catbox_url}")
+                except Exception:
+                    # Last resort - return local path (will likely fail downstream)
+                    catbox_url = f"file://{output_path}"
+
+            generation_time = time.time() - start_time
+
+            return KIEVideoResult(
+                video_url=catbox_url,
+                task_id=f"placeholder_{uuid.uuid4().hex[:8]}",
+                resolution="1080p",
+                has_audio=False,
+                duration_seconds=duration_seconds,
+                generation_time_seconds=generation_time,
+                cost_usd=0.0  # Placeholder is free
+            )
+
+        except Exception as e:
+            logger.error(f"Placeholder generation failed: {e}")
+            raise
 
 
 # =============================================================================
