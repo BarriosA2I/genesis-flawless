@@ -315,6 +315,7 @@ class VideoBriefState(TypedDict):
     # Asset Upload (NEW)
     uploaded_assets: Optional[List[dict]]  # List of {type, url, name}
     assets_reviewed: bool                  # Gate flag to ensure we asked
+    _asset_just_received: Optional[str]    # Temp flag for logo upload acknowledgment
 
     # Video Preview Integration
     preview_url: Optional[str]             # Shareable preview link
@@ -483,218 +484,145 @@ def _detect_assets(message: str) -> List[dict]:
 
 async def intake_node(state: VideoBriefState) -> dict:
     """
-    Schema-First Extraction: Replaces 2800 lines of regex with structured LLM output.
+    Single LLM call for extraction, inline response generation.
+    NO double LLM calls - extraction only, responses are deterministic.
     """
-    logger.info(f"[IntakeAgent] Processing for session {state.get('session_id', 'unknown')}")
-    # DEBUG: Log current state to diagnose intake skipping bug
-    logger.info(f"[DEBUG INTAKE] Session: {state.get('session_id', 'unknown')}")
-    logger.info(f"[DEBUG INTAKE] Fields: business={state.get('business_name')}, product={state.get('primary_offering')}, audience={state.get('target_demographic')}, cta={state.get('call_to_action')}, tone={state.get('tone')}")
-    logger.info(f"[DEBUG INTAKE] assets_reviewed={state.get('assets_reviewed')}, is_complete={state.get('is_complete')}, phase={state.get('current_phase')}")
-
     llm = get_llm()
 
-    # Get latest user message
-    user_messages = [m for m in state["messages"] if m.get("role") == "user"]
+    # Get the last user message
+    user_messages = [m for m in state.get("messages", []) if m.get("role") == "user"]
     if not user_messages:
-        return state
-    latest_msg = user_messages[-1]["content"]
+        # First turn - greet
+        new_state = dict(state)
+        new_state["messages"] = state.get("messages", []) + [{
+            "role": "assistant",
+            "content": "Welcome! Let's create your commercial. What's the name of your business?"
+        }]
+        new_state["current_phase"] = "intake"
+        new_state["is_complete"] = False
+        return new_state
 
-    # =========================================================================
-    # STEP 1: Structured Extraction
-    # =========================================================================
+    last_message = user_messages[-1].get("content", "")
+
+    # Build extraction prompt
+    extraction_prompt = f"""Extract any of these fields from the user message:
+- business_name: The company/brand name
+- primary_offering: Product or service being promoted
+- target_demographic: Who the ad is targeting
+- call_to_action: What viewer should do
+- tone: Style/vibe of the video
+
+User said: {last_message}
+
+Current state:
+- business_name: {state.get('business_name', 'NOT SET')}
+- primary_offering: {state.get('primary_offering', 'NOT SET')}
+- target_demographic: {state.get('target_demographic', 'NOT SET')}
+- call_to_action: {state.get('call_to_action', 'NOT SET')}
+- tone: {state.get('tone', 'NOT SET')}
+
+Extract ONLY what user explicitly stated. Do not guess or infer."""
+
+    # SINGLE LLM call for extraction
     try:
         extractor = llm.with_structured_output(ExtractionSchema)
-
-        extraction_prompt = f"""Extract video brief information from this message.
-
-User said: "{latest_msg}"
-
-What we already know:
-- Business: {state.get('business_name') or 'unknown'}
-- Product: {state.get('primary_offering') or 'unknown'}
-- Audience: {state.get('target_demographic') or 'unknown'}
-- CTA: {state.get('call_to_action') or 'unknown'}
-- Tone: {state.get('tone') or 'unknown'}
-
-Extract ONLY what user explicitly stated. Do not guess."""
-
         extracted = await extractor.ainvoke(extraction_prompt)
-        extracted_dict = extracted.dict(exclude_none=True)
+        extracted_dict = extracted.dict(exclude_none=True) if hasattr(extracted, 'dict') else {}
         logger.info(f"[IntakeAgent] Extracted: {extracted_dict}")
-
     except Exception as e:
-        logger.error(f"[IntakeAgent] Extraction error: {type(e).__name__}: {e}")
-        logger.error(f"[IntakeAgent] Extraction traceback:\n{traceback.format_exc()}")
+        logger.error(f"[IntakeAgent] Extraction failed: {e}")
         extracted_dict = {}
 
-    # =========================================================================
-    # STEP 2: Update State
-    # =========================================================================
     new_state = dict(state)
 
-
-    # FILTER: Reject placeholder values that the LLM might extract from the prompt
+    # FILTER: Reject placeholder values
     PLACEHOLDER_VALUES = {"unknown", "<unknown>", "[not provided]", "[not yet provided]",
                           "not provided", "n/a", "na", "none", "null", "undefined",
-                          "[unknown]", "tbd", "to be determined"}
+                          "[unknown]", "tbd", "to be determined", "not set"}
+
+    # Update state with extracted values
     for field, value in extracted_dict.items():
         if value and not state.get(field):
-            # Skip placeholder values - these are not real data
             value_lower = str(value).lower().strip()
             if value_lower in PLACEHOLDER_VALUES:
-                logger.warning(f"[IntakeAgent] Skipping placeholder value for {field}: '{value}'")
+                logger.warning(f"[IntakeAgent] Skipping placeholder: {field}={value}")
                 continue
             new_state[field] = value
             logger.info(f"[IntakeAgent] Set {field} = {value}")
 
-    # =========================================================================
-    # STEP 2.5: Asset Detection (NEW)
-    # =========================================================================
-    new_assets = _detect_assets(latest_msg)
-
-    if new_assets:
-        current_assets = new_state.get("uploaded_assets") or []
-        # Avoid duplicates
-        existing_urls = {a['url'] for a in current_assets}
-        for asset in new_assets:
-            if asset['url'] not in existing_urls:
-                current_assets.append(asset)
-
-        new_state["uploaded_assets"] = current_assets
-        logger.info(f"[IntakeAgent] Assets detected: {len(new_assets)}")
-
-    # =========================================================================
-    # STEP 3: Calculate Missing (Deterministic)
-    # =========================================================================
+    # Calculate missing fields
     required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
     missing = [f for f in required if not new_state.get(f)]
-
-    # DEFENSIVE CHECK: If missing is empty but business_name is None, force recalculation
-    if not missing and not new_state.get("business_name"):
-        logger.error(f"[INTAKE BUG] missing is empty but business_name is None!")
-        logger.error(f"[INTAKE BUG] Field values: {[(f, new_state.get(f)) for f in required]}")
-        missing = required.copy()
-    # DEBUG: Log missing fields calculation
-    logger.info(f"[DEBUG INTAKE] Missing fields calculated: {missing}")
-    logger.info(f"[DEBUG INTAKE] Will enter CASE A (ask for field): {bool(missing)}")
-    logger.info(f"[DEBUG INTAKE] Will enter CASE B (ask for assets): {not missing and not new_state.get('assets_reviewed')}")
-
     new_state["missing_fields"] = missing
 
-    # =========================================================================
-    # STEP 4: Generate Response (UPGRADED WITH ASSET WORKFLOW)
-    # =========================================================================
-    # LOGIC GATE:
-    # A. Missing Fields → Ask for Fields
-    # B. Fields Done AND Assets NOT Reviewed → Ask for Assets
-    # C. Fields Done AND Assets Reviewed → Complete
+    logger.info(f"[IntakeAgent] Missing: {missing}, assets_reviewed={new_state.get('assets_reviewed')}")
 
-    response_text = ""
+    # GENERATE RESPONSE INLINE - NO EXTRA LLM CALL
+    # Deterministic field questions
+    field_questions = {
+        "business_name": "What's the name of your business?",
+        "primary_offering": "What product or service are you promoting?",
+        "target_demographic": "Who's the ideal audience for this commercial?",
+        "call_to_action": "What's the one thing you want viewers to do after watching?",
+        "tone": "What's the vibe—professional, fun, inspiring, edgy?",
+    }
 
-    try:
-        if missing:
-            # CASE A: Still gathering basic info
-            new_state["is_complete"] = False
+    if missing:
+        # CASE A: Still need fields
+        next_field = missing[0]
 
-            # Build uploaded assets description for prompt
-            uploaded_assets_desc = "None"
-            if new_assets:
-                asset_names = [a.get('name', 'unknown') for a in new_assets]
-                uploaded_assets_desc = f"Just uploaded: {', '.join(asset_names)}"
-            elif new_state.get("uploaded_assets"):
-                asset_names = [a.get('name', 'unknown') for a in new_state.get("uploaded_assets", [])]
-                uploaded_assets_desc = f"Previously uploaded: {', '.join(asset_names)}"
-
-            # Build context-aware prompt
-            prompt = INTAKE_PROMPT.format(
-                business_name=new_state.get("business_name") or "[not yet provided]",
-                primary_offering=new_state.get("primary_offering") or "[not yet provided]",
-                target_demographic=new_state.get("target_demographic") or "[not yet provided]",
-                call_to_action=new_state.get("call_to_action") or "[not yet provided]",
-                tone=new_state.get("tone") or "[not yet provided]",
-                uploaded_assets=uploaded_assets_desc,
-                missing_fields=", ".join(missing)
-            )
-
-            messages = [SystemMessage(content=prompt)]
-            for m in state["messages"]:
-                if m["role"] == "user":
-                    messages.append(HumanMessage(content=m["content"]))
-                else:
-                    messages.append(AIMessage(content=m["content"]))
-
-            response = await llm.ainvoke(messages)
-            response_text = response.content
-
-        elif not new_state.get("assets_reviewed"):
-            # CASE B: Fields done, now ask for assets (The "Missing Step")
-            new_state["is_complete"] = False
-            new_state["assets_reviewed"] = True  # Mark as asked so we don't loop forever
-
-            if new_assets:
-                # They just uploaded it spontaneously!
-                response_text = (
-                    "✅ **Assets Received!** I've added them to your brief.\n\n"
-                    "I have everything I need now. Starting market research..."
-                )
-                new_state["is_complete"] = True
-                new_state["current_phase"] = "research"
-            else:
-                # We need to ask proactively
-                response_text = (
-                    f"Perfect! I have all the details for **{new_state.get('business_name', 'your business')}**.\n\n"
-                    "**One last thing:** Do you have a **logo** or **product images** you'd like to include?\n\n"
-                    "Please upload them now or paste a link. If not, just say 'no' and we'll start research."
-                )
-
+        # Check if asset was just received (flagged by process_message)
+        if new_state.get("_asset_just_received"):
+            filename = new_state.get("_asset_just_received")
+            response_text = f"✅ Got your logo: {filename}! Now, {field_questions[next_field].lower()}"
+            del new_state["_asset_just_received"]
         else:
-            # CASE C: All done - User responded to asset prompt
-            # This handles: logo URLs, "no", "skip", "proceed", etc.
-            new_state["is_complete"] = True
-            new_state["current_phase"] = "research"
+            response_text = field_questions[next_field]
 
-            # Skip word patterns for declining assets
-            skip_words = ["no", "skip", "none", "don't have", "proceed", "no logo", "no assets",
-                          "don't need", "without", "nope", "n/a", "na", "not now", "later", "pass"]
-            msg_lower = latest_msg.lower()
-
-            if new_assets:
-                # User provided asset URL(s)
-                response_text = (
-                    "✅ **Got it!** Assets received. Sending this to our research team..."
-                )
-                logger.info(f"[IntakeAgent] CASE C: Assets received, transitioning to research")
-            elif any(skip in msg_lower for skip in skip_words):
-                # User explicitly declined to provide assets
-                response_text = (
-                    "Understood. We'll proceed without specific assets. Starting research..."
-                )
-                logger.info(f"[IntakeAgent] CASE C: User skipped assets, transitioning to research")
-            else:
-                # Catch-all - user said something else, proceed anyway
-                response_text = (
-                    f"Great! Moving to research phase for {new_state.get('business_name', 'your business')}..."
-                )
-                logger.info(f"[IntakeAgent] CASE C: Catch-all response, transitioning to research")
-
-    except Exception as e:
-        # Error handling for LLM/intake errors
-        logger.error(f"[IntakeAgent] LLM call failed: {type(e).__name__}: {e}")
-        logger.error(f"[IntakeAgent] Full traceback:\n{traceback.format_exc()}")
-        logger.error(f"[IntakeAgent] State at failure: missing={missing}, phase={new_state.get('current_phase')}, assets_reviewed={new_state.get('assets_reviewed')}")
-        response_text = (
-            "I hit a snag processing that. Let me try again - "
-            "do you have any brand assets to include, or shall we proceed?"
-        )
-        new_state["current_phase"] = "intake"  # Stay in intake to retry
         new_state["is_complete"] = False
+        new_state["current_phase"] = "intake"
 
-    logger.info(f"[IntakeAgent] Missing: {missing}, Assets Reviewed: {new_state.get('assets_reviewed')}, Complete: {new_state.get('is_complete')}, Phase: {new_state.get('current_phase')}")
+    elif new_state.get("_asset_just_received"):
+        # Asset was just uploaded AND all fields complete
+        filename = new_state.get("_asset_just_received")
+        response_text = f"✅ Got your logo: {filename}! I have everything I need. Ready to start research?"
+        new_state["is_complete"] = True
+        new_state["current_phase"] = "research"
+        new_state["assets_reviewed"] = True
+        del new_state["_asset_just_received"]
 
-    # Add to history
-    new_state["messages"] = list(state["messages"]) + [
-        {"role": "assistant", "content": response_text}
-    ]
+    elif not new_state.get("assets_reviewed"):
+        # CASE B: All 5 fields done, ask about assets
+        response_text = f"Perfect! I have all the details for **{new_state.get('business_name')}**.\n\nDo you have a logo or brand images to include? Upload now, or say 'skip' to proceed."
+        new_state["assets_reviewed"] = True
+        new_state["is_complete"] = False  # NOT complete until they respond
+
+    else:
+        # CASE C: Fields done, assets asked, user responded
+        last_lower = last_message.lower()
+        skip_words = ["skip", "no", "none", "proceed", "continue", "no logo", "don't have", "nope", "pass"]
+
+        # Check for new assets in this message
+        new_assets = _detect_assets(last_message)
+        if new_assets:
+            current_assets = new_state.get("uploaded_assets") or []
+            current_assets.extend(new_assets)
+            new_state["uploaded_assets"] = current_assets
+
+        if new_assets:
+            response_text = f"✅ Assets received! Starting research for {new_state.get('business_name')}..."
+        elif any(word in last_lower for word in skip_words):
+            response_text = f"Got it! Starting research for {new_state.get('business_name')}..."
+        else:
+            response_text = f"Ready to start production! Say 'yes' to begin."
+
+        new_state["is_complete"] = True
+        new_state["current_phase"] = "research"
+
+    new_state["messages"] = state.get("messages", []) + [{
+        "role": "assistant",
+        "content": response_text
+    }]
 
     return new_state
 
@@ -1265,14 +1193,28 @@ async def script_writer_node(state: VideoBriefState) -> dict:
 
 def route_after_intake(state: VideoBriefState) -> Literal["intake", "researcher"]:
     """
+    Three-gate check for proper state transitions.
     CODE decides routing, NOT the AI.
-    This is the key fix for the 'Ready to create?' bug.
     """
-    if state.get("is_complete", False):
-        logger.info("[Router] All fields complete → researcher")
+    required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
+
+    # Gate 1: Have all required fields?
+    if not all(state.get(f) for f in required):
+        logger.info(f"[Router] Gate 1 FAIL: Missing fields → stay in intake")
+        return "intake"
+
+    # Gate 2: Have we asked about assets?
+    if not state.get("assets_reviewed"):
+        logger.info(f"[Router] Gate 2 FAIL: Haven't asked about assets → stay in intake")
+        return "intake"
+
+    # Gate 3: Is intake truly complete?
+    if state.get("is_complete"):
+        logger.info(f"[Router] All gates PASS → researcher")
         return "researcher"
 
-    logger.info("[Router] Missing fields → stay in intake")
+    # Still waiting for user to respond to asset prompt
+    logger.info(f"[Router] Gate 3 FAIL: Waiting for asset response → stay in intake")
     return "intake"
 
 
@@ -1921,7 +1863,7 @@ class CreativeDirectorV2:
         state["messages"].append({"role": "user", "content": message})
 
         # =========================================================================
-        # LOGO UPLOAD DETECTION - Handle at TOP before any routing
+        # LOGO UPLOAD DETECTION - Set flag, DO NOT early-return
         # =========================================================================
         import re
         upload_pattern = r'\[User uploaded (?:logo/image|document): ([^\]]+)\]'
@@ -1929,7 +1871,7 @@ class CreativeDirectorV2:
 
         if upload_match:
             filename = upload_match.group(1)
-            logger.info(f"[LOGO] Detected upload in process_message: {filename}")
+            logger.info(f"[LOGO] Detected upload: {filename}")
 
             # Store the logo in state
             current_assets = state.get("uploaded_assets", [])
@@ -1941,54 +1883,11 @@ class CreativeDirectorV2:
             })
             state["uploaded_assets"] = current_assets
 
-            # Check if brief is already complete
-            required = ["business_name", "primary_offering", "target_demographic", "call_to_action", "tone"]
-            filled = sum(1 for f in required if state.get(f))
-            brief_complete = filled == len(required)
+            # FLAG that asset just arrived - intake_node will see this
+            state["_asset_just_received"] = filename
+            logger.info(f"[LOGO] Asset flagged, continuing to graph invocation")
 
-            if brief_complete:
-                # Brief is done - acknowledge logo and prompt for production
-                logger.info(f"[LOGO] Brief complete - acknowledging logo and ready for production")
-                response_content = (
-                    f"✅ **Got your logo: {filename}!**\n\n"
-                    f"Your brief is complete with your brand assets. Ready to start video production?\n\n"
-                    f"Say **'yes'** or **'start production'** to begin!"
-                )
-                state["messages"].append({
-                    "role": "assistant",
-                    "content": response_content
-                })
-                self.sessions[session_id] = state
-
-                # Return early with properly formatted response
-                return {
-                    "response": response_content,
-                    "progress_percentage": 100,
-                    "missing_fields": [],
-                    "current_phase": state.get("current_phase", "intake"),
-                    "is_complete": True,
-                    "script_status": state.get("script_status"),
-                    "revision_count": state.get("revision_count", 0),
-                    "version": "v2-langgraph",
-                    "production_id": state.get("production_id"),
-                    "production_status": state.get("production_status"),
-                    "metadata": {
-                        "session_id": session_id,
-                        "logo_received": True,
-                        "logo_filename": filename,
-                        "extracted_data": {
-                            "business_name": state.get("business_name"),
-                            "product": state.get("primary_offering"),
-                            "audience": state.get("target_demographic"),
-                            "cta": state.get("call_to_action"),
-                            "tone": state.get("tone")
-                        }
-                    }
-                }
-            else:
-                # Brief not complete - logo stored, continue with normal flow
-                logger.info(f"[LOGO] Brief not complete - continuing intake with logo stored")
-                # Don't return early - let the normal flow handle the next field
+            # DO NOT RETURN EARLY - let graph invoke normally below
 
         # Determine which node to invoke based on current state
         current_phase = state.get("current_phase", "intake")
