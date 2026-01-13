@@ -3933,6 +3933,40 @@ class FlawlessGenesisOrchestrator:
                 )
 
                 # =============================================================
+                # AUTO-PUBLISH TO VIDEO GALLERY
+                # =============================================================
+                if generate_video and state.video and state.video.video_urls:
+                    try:
+                        # Get primary video URL (catbox URL after upload)
+                        video_urls = state.video.video_urls
+                        primary_url = video_urls.get("youtube_1080p") or (list(video_urls.values())[0] if video_urls else None)
+
+                        if primary_url and primary_url.startswith("https://"):
+                            gallery_payload = {
+                                "url": primary_url,
+                                "title": f"{lead.business_name} Commercial",
+                                "description": f"AI-generated commercial for {lead.business_name}",
+                                "duration": f"{int(state.video.duration_seconds // 60)}:{int(state.video.duration_seconds % 60):02d}",
+                                "tags": ["commercial", "ai-generated", "ragnarok", lead.industry.lower()],
+                                "business_name": lead.business_name,
+                                "industry": lead.industry,
+                                "created": time.strftime("%Y-%m-%d")
+                            }
+
+                            async with httpx.AsyncClient(timeout=30.0) as client:
+                                response = await client.post(
+                                    "https://video-preview-theta.vercel.app/api/videos",
+                                    json=gallery_payload
+                                )
+                                if response.status_code in [200, 201]:
+                                    video_id = response.json().get("video", {}).get("id", pipeline_id)
+                                    logger.info(f"[{pipeline_id}] Published to gallery: https://video-preview-theta.vercel.app/gallery.html#{video_id}")
+                                else:
+                                    logger.warning(f"[{pipeline_id}] Gallery publish failed: {response.status_code}")
+                    except Exception as e:
+                        logger.warning(f"[{pipeline_id}] Gallery publish error: {e}")
+
+                # =============================================================
                 # AGENT 8: Meta-Learning Performance Optimizer (RAGNAROK v4.0)
                 # Fire-and-forget: Record successful generation for future learning
                 # =============================================================
