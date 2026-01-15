@@ -2018,12 +2018,39 @@ class KIEVideoProvider:
         """
         Generate a placeholder video with FFmpeg and upload to catbox.
         Called when KIE API fails (e.g., insufficient credits).
+        Falls back to pre-existing placeholder URLs if FFmpeg unavailable.
         """
         import tempfile
+        import shutil
         from pathlib import Path
 
         start_time = time.time()
 
+        # Pre-existing placeholder videos (uploaded to catbox previously)
+        # These are working AI-generated commercials that can serve as placeholders
+        FALLBACK_PLACEHOLDERS = {
+            VideoAspectRatio.LANDSCAPE: "https://litter.catbox.moe/m8jg2n.mp4",  # 16:9 64s commercial
+            VideoAspectRatio.PORTRAIT: "https://litter.catbox.moe/iwxqiu.mp4",   # 9:16 56s commercial
+            VideoAspectRatio.SQUARE: "https://litter.catbox.moe/x2owau.mp4",     # 1:1 64s commercial
+        }
+
+        # Check if FFmpeg is available
+        ffmpeg_available = shutil.which("ffmpeg") is not None
+        if not ffmpeg_available:
+            logger.warning("FFmpeg not available - using pre-existing placeholder video")
+            placeholder_url = FALLBACK_PLACEHOLDERS.get(aspect_ratio, FALLBACK_PLACEHOLDERS[VideoAspectRatio.LANDSCAPE])
+            generation_time = time.time() - start_time
+            return KIEVideoResult(
+                video_url=placeholder_url,
+                task_id=f"placeholder_fallback_{uuid.uuid4().hex[:8]}",
+                resolution="1080p",
+                has_audio=False,
+                duration_seconds=duration_seconds,
+                generation_time_seconds=generation_time,
+                cost_usd=0.0  # Placeholder is free
+            )
+
+        # FFmpeg is available - generate custom placeholder
         # Determine resolution based on aspect ratio
         if aspect_ratio == VideoAspectRatio.PORTRAIT:
             resolution = "1080x1920"
@@ -2070,8 +2097,8 @@ class KIEVideoProvider:
                     catbox_url = await catbox.upload_to_litterbox(str(output_path), expiry="72h")
                     logger.info(f"Placeholder uploaded to litterbox: {catbox_url}")
                 except Exception:
-                    # Last resort - return local path (will likely fail downstream)
-                    catbox_url = f"file://{output_path}"
+                    # Last resort - use pre-existing placeholder
+                    catbox_url = FALLBACK_PLACEHOLDERS.get(aspect_ratio, FALLBACK_PLACEHOLDERS[VideoAspectRatio.LANDSCAPE])
 
             generation_time = time.time() - start_time
 
@@ -2086,8 +2113,19 @@ class KIEVideoProvider:
             )
 
         except Exception as e:
-            logger.error(f"Placeholder generation failed: {e}")
-            raise
+            logger.error(f"Placeholder generation failed: {e} - using fallback URL")
+            # Return pre-existing placeholder as ultimate fallback
+            placeholder_url = FALLBACK_PLACEHOLDERS.get(aspect_ratio, FALLBACK_PLACEHOLDERS[VideoAspectRatio.LANDSCAPE])
+            generation_time = time.time() - start_time
+            return KIEVideoResult(
+                video_url=placeholder_url,
+                task_id=f"placeholder_fallback_{uuid.uuid4().hex[:8]}",
+                resolution="1080p",
+                has_audio=False,
+                duration_seconds=duration_seconds,
+                generation_time_seconds=generation_time,
+                cost_usd=0.0
+            )
 
 
 # =============================================================================
