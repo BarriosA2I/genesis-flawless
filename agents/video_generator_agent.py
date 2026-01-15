@@ -234,6 +234,10 @@ class VideoGeneratorAgent:
         # Statistics
         self.stats = GenerationStats()
 
+        # Credits tracking - set True when 402 received
+        self.credits_exhausted = False
+        self.credits_exhausted_time: Optional[float] = None
+
         # Check if API is configured
         self.is_configured = bool(self.api_key)
 
@@ -297,6 +301,12 @@ class VideoGeneratorAgent:
         debug_print(f"  is_configured: {self.is_configured}")
         debug_print(f"  circuit.state: {self.circuit.state.value}")
         debug_print(f"  circuit.can_attempt(): {self.circuit.can_attempt()}")
+        debug_print(f"  credits_exhausted: {self.credits_exhausted}")
+
+        # Check if credits are exhausted - skip API calls entirely
+        if self.credits_exhausted:
+            debug_print("  -> BYPASS: KIE.ai credits exhausted, using placeholder")
+            return await self._generate_placeholder(request, start_time)
 
         # Check if API is configured
         if not self.is_configured:
@@ -406,6 +416,21 @@ class VideoGeneratorAgent:
 
                 if status_code == 429:
                     raise Exception("KIE.ai rate limited - too many requests")
+
+                # CRITICAL: Detect credits exhausted (402 Payment Required)
+                if status_code == 402:
+                    error_msg = "KIE.AI CREDITS EXHAUSTED - Please add credits at https://kie.ai"
+                    debug_print("=" * 60)
+                    debug_print(f"🚨 {error_msg}")
+                    debug_print("=" * 60)
+                    logger.critical(error_msg)
+                    # Set credits exhausted flag for health checks
+                    self.credits_exhausted = True
+                    self.credits_exhausted_time = time.time()
+                    # Mark circuit breaker to prevent repeated failed calls
+                    self.circuit.state = CircuitState.OPEN
+                    self.circuit.last_failure_time = time.time()
+                    raise Exception(error_msg)
 
                 if status_code != 200:
                     raise Exception(f"KIE.ai generation failed: {status_code} - {text}")
@@ -685,15 +710,22 @@ class VideoGeneratorAgent:
 
     def get_stats(self) -> Dict[str, Any]:
         """Get agent statistics."""
-        return {
+        stats = {
             "total_requests": self.stats.total_requests,
             "successful": self.stats.successful,
             "failed": self.stats.failed,
             "total_cost_usd": self.stats.total_cost_usd,
             "avg_generation_time": self.stats.avg_generation_time,
             "circuit_state": self.circuit.state.value,
-            "is_configured": self.is_configured
+            "is_configured": self.is_configured,
+            "credits_exhausted": self.credits_exhausted,
         }
+        # Add timestamp if credits were exhausted
+        if self.credits_exhausted and self.credits_exhausted_time:
+            stats["credits_exhausted_at"] = datetime.fromtimestamp(
+                self.credits_exhausted_time
+            ).isoformat()
+        return stats
 
 
 # =============================================================================
