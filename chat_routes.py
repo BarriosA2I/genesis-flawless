@@ -46,9 +46,76 @@ except ImportError as e:
     SESSION_STORE_AVAILABLE = False
     RedisSessionStore = None
 
+# Import NEXUS Q&A handler
+try:
+    from nexus_qa import nexus_qa_handler
+    QA_HANDLER_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"NEXUS Q&A handler not available: {e}")
+    QA_HANDLER_AVAILABLE = False
+    nexus_qa_handler = None
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Chat"])
+
+# =============================================================================
+# INTENT DETECTION - Routes customer Q&A vs video intake
+# =============================================================================
+
+# Keywords that indicate customer Q&A (not video production)
+QA_INTENT_KEYWORDS = [
+    "pricing", "price", "cost", "how much", "tier", "plan", "subscription",
+    "what is", "what are", "what do", "explain", "tell me about", "describe",
+    "services", "features", "capabilities", "roi", "results", "benefits",
+    "consultation", "meeting", "schedule", "book", "call", "demo",
+    "who is", "who are", "company", "barrios", "about you",
+    "how does", "how do", "why should", "can you", "do you",
+    "help me understand", "i have a question", "question about",
+    "contact", "support", "talk to", "speak with",
+]
+
+# Keywords that indicate explicit video production intent
+VIDEO_INTENT_KEYWORDS = [
+    "video", "commercial", "ad ", "advertisement", "create a", "make a",
+    "produce", "film", "content for", "marketing video", "promo",
+    "i want to create", "i need a video", "let's make", "start production",
+    "generate a", "build a commercial",
+]
+
+
+def detect_intent(message: str) -> str:
+    """
+    Classify message as 'qa' (customer questions) or 'video_intake' (production).
+
+    Intent Priority:
+    1. Explicit video keywords → video_intake
+    2. Q&A keywords → qa
+    3. Questions (ends with ?) → qa
+    4. Default → video_intake (for statements that may be brief data)
+    """
+    message_lower = message.lower().strip()
+
+    # First check for explicit video intent (highest priority)
+    for keyword in VIDEO_INTENT_KEYWORDS:
+        if keyword in message_lower:
+            logger.info(f"[INTENT] Detected VIDEO intent: '{keyword}' in '{message[:50]}...'")
+            return "video_intake"
+
+    # Then check for Q&A intent
+    for keyword in QA_INTENT_KEYWORDS:
+        if keyword in message_lower:
+            logger.info(f"[INTENT] Detected QA intent: '{keyword}' in '{message[:50]}...'")
+            return "qa"
+
+    # Questions default to Q&A
+    if message_lower.endswith("?"):
+        logger.info(f"[INTENT] Detected QA intent: message is a question")
+        return "qa"
+
+    # Default to video intake for statements (likely brief data)
+    logger.info(f"[INTENT] Defaulting to video_intake for: '{message[:50]}...'")
+    return "video_intake"
 
 # =============================================================================
 # GLOBAL INSTANCES (initialized on startup)
@@ -150,10 +217,12 @@ async def chat(request: ChatRequest):
     """
     Main chat endpoint for the Neural Interface.
 
-    This is the 23-agent RAGNAROK system's conversational interface.
-    Handles intake, qualification, and prepares briefs for the full pipeline.
+    ROUTING LOGIC:
+    1. Detect intent (Q&A vs video production)
+    2. Q&A questions → NEXUS Q&A handler (pricing, services, general questions)
+    3. Video intent → Orchestrator for brief collection
 
-    The conversation collects:
+    The video intake conversation collects:
     - Business identity (name, industry, description)
     - Target audience and pain points
     - Video goals and creative direction
@@ -165,6 +234,45 @@ async def chat(request: ChatRequest):
         # Get or create session ID
         session_id = request.session_id or str(uuid.uuid4())
 
+        # =====================================================================
+        # INTENT ROUTING - Route Q&A separately from video intake
+        # =====================================================================
+        intent = detect_intent(request.message)
+        logger.info(f"[CHAT] Intent detected: {intent} for message: '{request.message[:50]}...'")
+
+        # Route to Q&A handler for customer questions
+        if intent == "qa" and QA_HANDLER_AVAILABLE and nexus_qa_handler:
+            logger.info(f"[CHAT] Routing to NEXUS Q&A handler")
+            result = await nexus_qa_handler(request.message, session_id)
+
+            latency_ms = (time.time() - start_time) * 1000
+            logger.info(f"[CHAT] Q&A processed: session={session_id}, latency={latency_ms:.0f}ms")
+
+            # Return Q&A response in ChatResponse format
+            return ChatResponse(
+                session_id=session_id,
+                response=result.get("response", ""),
+                phase=result.get("phase", "qa"),
+                progress=result.get("progress", 0.0),
+                is_complete=result.get("is_complete", False),
+                progress_percentage=result.get("progress_percentage", 0),
+                missing_fields=result.get("missing_fields", []),
+                trigger_production=False,  # Never trigger production from Q&A
+                ragnarok_ready=False,
+                mode="qa",
+                metadata={
+                    "latency_ms": latency_ms,
+                    "intent": intent,
+                    "handler": "nexus_qa",
+                    **result.get("metadata", {})
+                }
+            )
+
+        # =====================================================================
+        # VIDEO INTAKE - Route to orchestrator for brief collection
+        # =====================================================================
+        logger.info(f"[CHAT] Routing to video intake orchestrator")
+
         # Get orchestrator
         orchestrator = get_orchestrator()
 
@@ -175,7 +283,7 @@ async def chat(request: ChatRequest):
         )
 
         latency_ms = (time.time() - start_time) * 1000
-        logger.info(f"Chat processed: session={session_id}, latency={latency_ms:.0f}ms")
+        logger.info(f"[CHAT] Intake processed: session={session_id}, latency={latency_ms:.0f}ms")
 
         # Extract state info
         state = result.get("state", {})
@@ -193,9 +301,11 @@ async def chat(request: ChatRequest):
             mode=result.get("mode", "intake"),
             metadata={
                 "latency_ms": latency_ms,
+                "intent": intent,
+                "handler": "orchestrator",
                 "turns_count": state.get("turns_count", 0),
                 "extracted_fields": list(state.get("brief_data", {}).keys()) if state.get("brief_data") else [],
-                "extracted_data": state.get("brief_data", {}),  # Full brief data for voice selector
+                "extracted_data": state.get("brief_data", {}),
                 "sentiment": result.get("sentiment", {}),
             }
         )
