@@ -934,25 +934,14 @@ async def fix_database_enums():
     """Add missing enum values to PostgreSQL types. Uses raw asyncpg for autocommit."""
     import os
     import asyncpg
-    from urllib.parse import urlparse
 
     results = []
 
     try:
         database_url = os.getenv("DATABASE_URL", "")
 
-        # Parse the URL and convert to asyncpg format
-        parsed = urlparse(database_url)
-
-        # Connect directly with asyncpg (no prepared statements for pgbouncer)
-        conn = await asyncpg.connect(
-            user=parsed.username,
-            password=parsed.password,
-            database=parsed.path[1:],  # Remove leading /
-            host=parsed.hostname,
-            port=parsed.port or 5432,
-            statement_cache_size=0
-        )
+        # asyncpg accepts postgres:// URLs directly
+        conn = await asyncpg.connect(dsn=database_url, statement_cache_size=0)
 
         try:
             enum_updates = [
