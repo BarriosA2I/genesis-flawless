@@ -1208,6 +1208,214 @@ class Phase4ActiveHandler(BasePhaseHandler):
             duration_ms=int((time.time() - start_time) * 1000)
         )
 
+    async def handle_payment_intent_canceled(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle payment_intent.canceled - Log cancellation.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        intent_id = event_data.get("payment_intent_id") or event_data.get("id")
+        cancellation_reason = event_data.get("cancellation_reason", "unknown")
+
+        logger.info(f"Payment intent canceled: {intent_id} - reason: {cancellation_reason}")
+
+        return HandlerResult(
+            success=True,
+            action="handle_payment_intent_canceled",
+            from_phase=None,
+            to_phase=NexusPhase.PHASE_4_ACTIVE,
+            from_status=None,
+            to_status=CustomerStatus.ACTIVE,
+            customer_id=stripe_customer_id or "unknown",
+            metadata={"intent_id": intent_id, "cancellation_reason": cancellation_reason},
+            duration_ms=int((time.time() - start_time) * 1000)
+        )
+
+
+# =============================================================================
+# PHASE 5: EXPANSION HANDLER
+# =============================================================================
+
+class Phase5ExpansionHandler(BasePhaseHandler):
+    """
+    Phase 5: Customer Expansion & Upgrades
+    Triggered by: customer.subscription.updated
+    """
+
+    async def update_entitlements(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle subscription updates - upgrade/downgrade entitlements.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        subscription_id = event_data.get("subscription_id")
+        previous_attributes = event_data.get("previous_attributes", {})
+        items = event_data.get("items", [])
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if not customer:
+                logger.warning(f"Customer not found for entitlement update: {stripe_customer_id}")
+                return HandlerResult(
+                    success=False,
+                    action="update_entitlements",
+                    from_phase=None,
+                    to_phase=NexusPhase.PHASE_5_EXPANSION,
+                    from_status=None,
+                    to_status=CustomerStatus.ACTIVE,
+                    customer_id=stripe_customer_id or "unknown",
+                    metadata=event_data,
+                    error="Customer not found"
+                )
+
+            from_phase = customer.current_phase
+            from_status = customer.status
+
+            # Determine new tier from subscription items
+            new_tier = self._determine_tier_from_items(items)
+            old_tier = customer.tier
+
+            # Update customer tier if changed
+            tier_changed = new_tier and new_tier != old_tier
+            if tier_changed:
+                customer.tier = new_tier
+                customer.version += 1
+                customer.updated_at = datetime.utcnow()
+
+                # Update entitlements based on new tier
+                await self._update_tier_entitlements(customer, old_tier, new_tier)
+
+                logger.info(f"Customer {customer.email} tier changed: {old_tier} -> {new_tier}")
+
+            # Record transition
+            duration_ms = int((time.time() - start_time) * 1000)
+            await self.record_transition(
+                customer=customer,
+                from_phase=from_phase,
+                to_phase=NexusPhase.PHASE_5_EXPANSION if tier_changed else from_phase,
+                from_status=from_status,
+                to_status=customer.status,
+                trigger_event="customer.subscription.updated",
+                trigger_event_id=event_id,
+                action="update_entitlements",
+                success=True,
+                duration_ms=duration_ms,
+                metadata={
+                    "subscription_id": subscription_id,
+                    "old_tier": old_tier.value if old_tier else None,
+                    "new_tier": new_tier.value if new_tier else None,
+                    "tier_changed": tier_changed
+                }
+            )
+
+            await self.db.commit()
+
+            # Publish event if tier changed
+            if tier_changed:
+                await self.publish_event("nexus.customer.tier_changed", {
+                    "customer_id": str(customer.id),
+                    "email": customer.email,
+                    "old_tier": old_tier.value if old_tier else None,
+                    "new_tier": new_tier.value if new_tier else None
+                })
+
+            return HandlerResult(
+                success=True,
+                action="update_entitlements",
+                from_phase=from_phase,
+                to_phase=NexusPhase.PHASE_5_EXPANSION if tier_changed else from_phase,
+                from_status=from_status,
+                to_status=customer.status,
+                customer_id=str(customer.id),
+                metadata={
+                    "subscription_id": subscription_id,
+                    "tier_changed": tier_changed,
+                    "new_tier": new_tier.value if new_tier else None
+                },
+                duration_ms=duration_ms
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to update entitlements: {e}")
+            await self.db.rollback()
+            return HandlerResult(
+                success=False,
+                action="update_entitlements",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_5_EXPANSION,
+                from_status=None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
+
+    def _determine_tier_from_items(self, items: List[Dict]) -> Optional[SubscriptionTier]:
+        """Determine subscription tier from line items."""
+        price_tier_map = {
+            "price_starter": SubscriptionTier.STARTER,
+            "price_growth": SubscriptionTier.GROWTH,
+            "price_scale": SubscriptionTier.SCALE,
+            "price_enterprise": SubscriptionTier.ENTERPRISE,
+            "price_nexus": SubscriptionTier.NEXUS_PERSONAL,
+        }
+
+        for item in items:
+            price_id = item.get("price_id", "")
+            for key, tier in price_tier_map.items():
+                if key in price_id.lower():
+                    return tier
+
+        return None
+
+    async def _update_tier_entitlements(
+        self,
+        customer: Customer,
+        old_tier: Optional[SubscriptionTier],
+        new_tier: SubscriptionTier
+    ):
+        """Update entitlements when tier changes."""
+        # Revoke old tier entitlements not in new tier
+        new_tier_features = {e["feature_key"] for e in TIER_ENTITLEMENTS.get(new_tier, [])}
+
+        for entitlement in customer.entitlements:
+            if entitlement.is_active and entitlement.feature_key not in new_tier_features:
+                entitlement.is_active = False
+                entitlement.revoked_at = datetime.utcnow()
+
+        # Grant new tier entitlements
+        for ent_config in TIER_ENTITLEMENTS.get(new_tier, []):
+            existing = next(
+                (e for e in customer.entitlements if e.feature_key == ent_config["feature_key"]),
+                None
+            )
+
+            if existing:
+                existing.is_active = True
+                existing.revoked_at = None
+                existing.quota = ent_config.get("quota")
+                existing.used = 0
+            else:
+                entitlement = Entitlement(
+                    customer_id=customer.id,
+                    feature_key=ent_config["feature_key"],
+                    feature_name=ent_config["feature_name"],
+                    quota=ent_config.get("quota"),
+                    source_subscription_id=customer.subscription_id
+                )
+                self.db.add(entitlement)
+
 
 # =============================================================================
 # PHASE 10: DUNNING HANDLER
@@ -1521,6 +1729,7 @@ class NexusOrchestrator:
         "payment_intent.created": ("phase_4", "track_payment_intent"),
         "payment_intent.succeeded": ("phase_4", "handle_payment_intent_succeeded"),
         "payment_intent.payment_failed": ("phase_4", "handle_payment_intent_failed"),
+        "payment_intent.canceled": ("phase_4", "handle_payment_intent_canceled"),
 
         # Phase 4: Active - Charge lifecycle
         "charge.succeeded": ("phase_4", "handle_charge_succeeded"),
@@ -1552,6 +1761,7 @@ class NexusOrchestrator:
             "phase_2": Phase2OnboardingHandler(db, event_bus, notification_service),
             "phase_3": Phase3ProvisioningHandler(db, event_bus, notification_service),
             "phase_4": Phase4ActiveHandler(db, event_bus, notification_service),
+            "phase_5": Phase5ExpansionHandler(db, event_bus, notification_service),
             "phase_10": Phase10DunningHandler(db, event_bus, notification_service),
             "phase_13": Phase13ChurnHandler(db, event_bus, notification_service),
         }
