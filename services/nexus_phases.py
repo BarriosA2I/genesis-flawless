@@ -1236,6 +1236,272 @@ class Phase4ActiveHandler(BasePhaseHandler):
             duration_ms=int((time.time() - start_time) * 1000)
         )
 
+    async def handle_charge_refunded(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle charge.refunded - Record refund and reduce LTV.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        charge_id = event_data.get("charge_id") or event_data.get("id")
+        amount_refunded = event_data.get("amount_refunded", 0)
+        refund_reason = event_data.get("reason", "requested_by_customer")
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if customer:
+                # Record refund as negative payment
+                payment = Payment(
+                    customer_id=customer.id,
+                    stripe_charge_id=charge_id,
+                    amount=-amount_refunded,
+                    status=PaymentStatus.REFUNDED,
+                    description=f"Refund: {refund_reason}"
+                )
+                self.db.add(payment)
+
+                # Reduce lifetime value
+                customer.lifetime_value -= amount_refunded / 100
+                customer.version += 1
+                customer.updated_at = datetime.utcnow()
+
+                await self.db.commit()
+
+                logger.info(f"Refund recorded: {charge_id}, ${amount_refunded/100:.2f} for {customer.email}")
+
+            return HandlerResult(
+                success=True,
+                action="handle_charge_refunded",
+                from_phase=customer.current_phase if customer else None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=customer.status if customer else None,
+                to_status=customer.status if customer else CustomerStatus.ACTIVE,
+                customer_id=str(customer.id) if customer else stripe_customer_id,
+                metadata={"charge_id": charge_id, "amount_refunded": amount_refunded, "reason": refund_reason},
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to handle refund: {e}")
+            return HandlerResult(
+                success=False,
+                action="handle_charge_refunded",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
+
+    async def handle_dispute_created(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle charge.dispute.created - Flag customer AT_RISK and create ops alert.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        dispute_id = event_data.get("dispute_id") or event_data.get("id")
+        charge_id = event_data.get("charge_id")
+        amount = event_data.get("amount", 0)
+        reason = event_data.get("reason", "unknown")
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if customer:
+                from_status = customer.status
+
+                # Flag customer as at-risk
+                customer.status = CustomerStatus.AT_RISK
+                customer.version += 1
+                customer.updated_at = datetime.utcnow()
+                customer.custom_metadata = {
+                    **customer.custom_metadata,
+                    "active_dispute": {
+                        "dispute_id": dispute_id,
+                        "charge_id": charge_id,
+                        "amount": amount,
+                        "reason": reason,
+                        "created_at": datetime.utcnow().isoformat()
+                    }
+                }
+
+                # Record transition
+                await self.record_transition(
+                    customer=customer,
+                    from_phase=customer.current_phase,
+                    to_phase=customer.current_phase,
+                    from_status=from_status,
+                    to_status=CustomerStatus.AT_RISK,
+                    trigger_event="charge.dispute.created",
+                    trigger_event_id=event_id,
+                    action="handle_dispute_created",
+                    success=True,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    metadata={"dispute_id": dispute_id, "amount": amount, "reason": reason}
+                )
+
+                await self.db.commit()
+
+                # Publish ops alert
+                await self.publish_event("nexus.dispute.created", {
+                    "customer_id": str(customer.id),
+                    "email": customer.email,
+                    "dispute_id": dispute_id,
+                    "charge_id": charge_id,
+                    "amount": amount,
+                    "reason": reason,
+                    "severity": "high"
+                })
+
+                # Send ops notification
+                if self.notification_service:
+                    await self.notification_service.send_ops_alert(
+                        alert_type="dispute_created",
+                        customer=customer,
+                        metadata={"dispute_id": dispute_id, "amount": amount, "reason": reason}
+                    )
+
+                logger.warning(f"Dispute created: {dispute_id} for {customer.email}, ${amount/100:.2f}, reason: {reason}")
+
+            return HandlerResult(
+                success=True,
+                action="handle_dispute_created",
+                from_phase=customer.current_phase if customer else None,
+                to_phase=customer.current_phase if customer else NexusPhase.PHASE_4_ACTIVE,
+                from_status=from_status if customer else None,
+                to_status=CustomerStatus.AT_RISK if customer else CustomerStatus.ACTIVE,
+                customer_id=str(customer.id) if customer else stripe_customer_id,
+                metadata={"dispute_id": dispute_id, "amount": amount, "reason": reason},
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to handle dispute created: {e}")
+            return HandlerResult(
+                success=False,
+                action="handle_dispute_created",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=None,
+                to_status=CustomerStatus.AT_RISK,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
+
+    async def handle_dispute_closed(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle charge.dispute.closed - Resolve dispute, restore status if won.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        dispute_id = event_data.get("dispute_id") or event_data.get("id")
+        status = event_data.get("status", "unknown")  # won, lost, needs_response, etc.
+        amount = event_data.get("amount", 0)
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if customer:
+                from_status = customer.status
+
+                # Determine outcome and update status
+                if status == "won":
+                    # Dispute won - restore to ACTIVE
+                    customer.status = CustomerStatus.ACTIVE
+                    logger.info(f"Dispute won: {dispute_id} for {customer.email}")
+                elif status == "lost":
+                    # Dispute lost - reduce LTV by disputed amount
+                    customer.lifetime_value -= amount / 100
+                    customer.status = CustomerStatus.ACTIVE  # Still active but flagged
+                    logger.warning(f"Dispute lost: {dispute_id} for {customer.email}, ${amount/100:.2f} lost")
+                else:
+                    # Other status - keep as active
+                    customer.status = CustomerStatus.ACTIVE
+
+                # Clear active dispute from metadata
+                if "active_dispute" in customer.custom_metadata:
+                    dispute_history = customer.custom_metadata.get("dispute_history", [])
+                    dispute_history.append({
+                        **customer.custom_metadata["active_dispute"],
+                        "closed_at": datetime.utcnow().isoformat(),
+                        "outcome": status
+                    })
+                    customer.custom_metadata["dispute_history"] = dispute_history
+                    del customer.custom_metadata["active_dispute"]
+
+                customer.version += 1
+                customer.updated_at = datetime.utcnow()
+
+                # Record transition
+                await self.record_transition(
+                    customer=customer,
+                    from_phase=customer.current_phase,
+                    to_phase=customer.current_phase,
+                    from_status=from_status,
+                    to_status=customer.status,
+                    trigger_event="charge.dispute.closed",
+                    trigger_event_id=event_id,
+                    action="handle_dispute_closed",
+                    success=True,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    metadata={"dispute_id": dispute_id, "outcome": status, "amount": amount}
+                )
+
+                await self.db.commit()
+
+                # Publish event
+                await self.publish_event("nexus.dispute.closed", {
+                    "customer_id": str(customer.id),
+                    "email": customer.email,
+                    "dispute_id": dispute_id,
+                    "outcome": status,
+                    "amount": amount
+                })
+
+            return HandlerResult(
+                success=True,
+                action="handle_dispute_closed",
+                from_phase=customer.current_phase if customer else None,
+                to_phase=customer.current_phase if customer else NexusPhase.PHASE_4_ACTIVE,
+                from_status=from_status if customer else None,
+                to_status=customer.status if customer else CustomerStatus.ACTIVE,
+                customer_id=str(customer.id) if customer else stripe_customer_id,
+                metadata={"dispute_id": dispute_id, "outcome": status, "amount": amount},
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to handle dispute closed: {e}")
+            return HandlerResult(
+                success=False,
+                action="handle_dispute_closed",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
+
 
 # =============================================================================
 # PHASE 5: EXPANSION HANDLER
@@ -1415,6 +1681,127 @@ class Phase5ExpansionHandler(BasePhaseHandler):
                     source_subscription_id=customer.subscription_id
                 )
                 self.db.add(entitlement)
+
+
+# =============================================================================
+# PHASE 9: RENEWAL HANDLER
+# =============================================================================
+
+class Phase9RenewalHandler(BasePhaseHandler):
+    """
+    Phase 9: Subscription Renewal Management
+    Triggered by: invoice.upcoming
+    """
+
+    async def send_renewal_notice(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle invoice.upcoming - Create renewal email notification.
+        Sent ~3 days before the next billing date.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        invoice_id = event_data.get("invoice_id") or event_data.get("id")
+        subscription_id = event_data.get("subscription_id")
+        amount_due = event_data.get("amount_due", 0)
+        billing_date = event_data.get("next_payment_attempt")
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if not customer:
+                logger.info(f"Renewal notice (no customer record): {invoice_id}")
+                return HandlerResult(
+                    success=True,
+                    action="send_renewal_notice",
+                    from_phase=None,
+                    to_phase=NexusPhase.PHASE_4_ACTIVE,
+                    from_status=None,
+                    to_status=CustomerStatus.ACTIVE,
+                    customer_id=stripe_customer_id or "unknown",
+                    metadata={"invoice_id": invoice_id, "amount_due": amount_due},
+                    duration_ms=int((time.time() - start_time) * 1000)
+                )
+
+            # Update next billing date
+            if billing_date:
+                customer.next_billing_at = datetime.fromisoformat(billing_date.replace("Z", "+00:00")) if isinstance(billing_date, str) else datetime.utcnow() + timedelta(days=3)
+            else:
+                customer.next_billing_at = datetime.utcnow() + timedelta(days=3)
+
+            customer.version += 1
+            customer.updated_at = datetime.utcnow()
+
+            # Create renewal notification record
+            notification = Notification(
+                customer_id=customer.id,
+                notification_type=NotificationType.RENEWAL_REMINDER,
+                channel="email",
+                subject=f"Your subscription renews soon - ${amount_due/100:.2f}",
+                content=json.dumps({
+                    "amount_due": amount_due,
+                    "billing_date": customer.next_billing_at.isoformat() if customer.next_billing_at else None,
+                    "subscription_id": subscription_id,
+                    "tier": customer.tier.value if customer.tier else None
+                })
+            )
+            self.db.add(notification)
+
+            await self.db.commit()
+
+            # Send renewal notification
+            if self.notification_service:
+                await self.notification_service.send_renewal_reminder(
+                    customer=customer,
+                    amount=amount_due,
+                    billing_date=customer.next_billing_at
+                )
+
+            # Publish event
+            await self.publish_event("nexus.renewal.upcoming", {
+                "customer_id": str(customer.id),
+                "email": customer.email,
+                "subscription_id": subscription_id,
+                "amount_due": amount_due,
+                "billing_date": customer.next_billing_at.isoformat() if customer.next_billing_at else None
+            })
+
+            logger.info(f"Renewal notice sent: {customer.email}, ${amount_due/100:.2f} due on {customer.next_billing_at}")
+
+            return HandlerResult(
+                success=True,
+                action="send_renewal_notice",
+                from_phase=customer.current_phase,
+                to_phase=customer.current_phase,
+                from_status=customer.status,
+                to_status=customer.status,
+                customer_id=str(customer.id),
+                metadata={
+                    "invoice_id": invoice_id,
+                    "subscription_id": subscription_id,
+                    "amount_due": amount_due,
+                    "billing_date": customer.next_billing_at.isoformat() if customer.next_billing_at else None
+                },
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to send renewal notice: {e}")
+            return HandlerResult(
+                success=False,
+                action="send_renewal_notice",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
 
 
 # =============================================================================
@@ -1734,9 +2121,17 @@ class NexusOrchestrator:
         # Phase 4: Active - Charge lifecycle
         "charge.succeeded": ("phase_4", "handle_charge_succeeded"),
         "charge.failed": ("phase_4", "handle_charge_failed"),
+        "charge.refunded": ("phase_4", "handle_charge_refunded"),
+
+        # Phase 4: Active - Dispute lifecycle
+        "charge.dispute.created": ("phase_4", "handle_dispute_created"),
+        "charge.dispute.closed": ("phase_4", "handle_dispute_closed"),
 
         # Phase 5: Expansion (subscription changes)
         "customer.subscription.updated": ("phase_5", "update_entitlements"),
+
+        # Phase 9: Renewal notifications
+        "invoice.upcoming": ("phase_9", "send_renewal_notice"),
 
         # Phase 10: Dunning
         "invoice.payment_failed": ("phase_10", "initiate_dunning"),
@@ -1762,6 +2157,7 @@ class NexusOrchestrator:
             "phase_3": Phase3ProvisioningHandler(db, event_bus, notification_service),
             "phase_4": Phase4ActiveHandler(db, event_bus, notification_service),
             "phase_5": Phase5ExpansionHandler(db, event_bus, notification_service),
+            "phase_9": Phase9RenewalHandler(db, event_bus, notification_service),
             "phase_10": Phase10DunningHandler(db, event_bus, notification_service),
             "phase_13": Phase13ChurnHandler(db, event_bus, notification_service),
         }

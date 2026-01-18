@@ -47,6 +47,7 @@ class CustomerStatus(str, Enum):
     LEAD = "lead"
     TRIAL = "trial"
     ACTIVE = "active"
+    AT_RISK = "at_risk"
     PAST_DUE = "past_due"
     SUSPENDED = "suspended"
     CANCELLED = "cancelled"
