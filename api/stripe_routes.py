@@ -806,6 +806,49 @@ async def run_migration():
         raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
 
 
+@router.post("/stripe/admin/fix-schema")
+async def fix_schema():
+    """
+    Add missing columns to existing tables.
+    Safe to run multiple times - uses IF NOT EXISTS.
+    """
+    if async_session_factory is None:
+        await init_database()
+
+    if async_session_factory is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+
+    fixes_applied = []
+
+    async with async_session_factory() as db:
+        try:
+            # Add metadata column to nexus_customers if missing
+            await db.execute(text("""
+                ALTER TABLE nexus_customers
+                ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb
+            """))
+            fixes_applied.append("nexus_customers.metadata")
+
+            # Add metadata column to other tables if missing
+            for table in ['nexus_phase_transitions', 'nexus_payments', 'nexus_entitlements', 'nexus_notifications']:
+                await db.execute(text(f"""
+                    ALTER TABLE {table}
+                    ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{{}}'::jsonb
+                """))
+                fixes_applied.append(f"{table}.metadata")
+
+            await db.commit()
+
+            return {
+                "status": "success",
+                "fixes_applied": fixes_applied,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Schema fix failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/stripe/admin/status")
 async def get_service_status():
     """
