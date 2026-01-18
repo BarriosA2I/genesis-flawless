@@ -285,7 +285,12 @@ class Phase1AcquisitionHandler(BasePhaseHandler):
         start_time = time.time()
         
         stripe_customer_id = event_data.get("customer_id")
-        email = event_data.get("customer_email")
+        # Extract email from multiple possible locations in Stripe event
+        email = (
+            event_data.get("customer_email") or
+            event_data.get("email") or
+            (event_data.get("customer_details") or {}).get("email")
+        )
         amount_total = event_data.get("amount_total", 0)
         subscription_id = event_data.get("subscription_id")
         metadata = event_data.get("metadata", {})
