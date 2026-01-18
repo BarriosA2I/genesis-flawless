@@ -43,7 +43,7 @@ try:
     )
     from services.event_bus import create_event_bus, InMemoryEventBus
     from services.notification_service import NotificationService, OpsAlertService
-    from models.customer_lifecycle import Base
+    from models.customer_lifecycle import Base, WebhookEvent
     NEXUS_AVAILABLE = True
 except ImportError as e:
     NEXUS_AVAILABLE = False
@@ -231,9 +231,10 @@ async def record_event_processing(
     payload: Dict[str, Any],
     success: bool,
     error: Optional[str] = None,
-    processing_time_ms: int = 0
+    processing_time_ms: int = 0,
+    phase_triggered: Optional[str] = None
 ):
-    """Record event processing for idempotency and audit."""
+    """Record event processing for idempotency and audit using ORM."""
     # Always update in-memory cache
     _processed_events[event_id] = datetime.utcnow()
 
@@ -247,28 +248,43 @@ async def record_event_processing(
         return
 
     try:
-        import json
-        await db.execute(
-            text("""
-                INSERT INTO nexus_webhook_events
-                (stripe_event_id, event_type, payload, processed_at, success, error, processing_time_ms)
-                VALUES (:event_id, :event_type, :payload::jsonb, NOW(), :success, :error, :time_ms)
-                ON CONFLICT (stripe_event_id) DO UPDATE SET
-                    processed_at = NOW(),
-                    success = :success,
-                    error = :error,
-                    processing_time_ms = :time_ms
-            """),
-            {
-                "event_id": event_id,
-                "event_type": event_type,
-                "payload": json.dumps(payload),
-                "success": success,
-                "error": error,
-                "time_ms": processing_time_ms
-            }
+        # Extract customer ID from payload
+        customer_id = (
+            payload.get("customer_id") or
+            payload.get("customer") or
+            payload.get("raw_object", {}).get("customer")
         )
+
+        # Check if event already exists
+        existing = await db.execute(
+            select(WebhookEvent).where(WebhookEvent.stripe_event_id == event_id)
+        )
+        existing_event = existing.scalar_one_or_none()
+
+        if existing_event:
+            # Update existing event
+            existing_event.processed_at = datetime.utcnow()
+            existing_event.success = success
+            existing_event.error = error[:1000] if error else None
+            existing_event.processing_time_ms = processing_time_ms
+            existing_event.phase_triggered = phase_triggered
+        else:
+            # Create new event
+            webhook_event = WebhookEvent(
+                stripe_event_id=event_id,
+                event_type=event_type,
+                stripe_customer_id=customer_id,
+                payload=payload,
+                processed_at=datetime.utcnow(),
+                success=success,
+                error=error[:1000] if error else None,
+                phase_triggered=phase_triggered,
+                processing_time_ms=processing_time_ms
+            )
+            db.add(webhook_event)
+
         await db.commit()
+        logger.info(f"Recorded webhook event: {event_id} ({event_type}) success={success}")
     except Exception as e:
         logger.warning(f"Failed to record event processing: {e}")
 
@@ -518,7 +534,8 @@ async def _process_webhook(
                 payload=extracted_data,
                 success=result.success,
                 error=result.error,
-                processing_time_ms=processing_time_ms
+                processing_time_ms=processing_time_ms,
+                phase_triggered=result.to_phase.value if result.to_phase else None
             )
 
             # Send ops alerts for important events
@@ -557,7 +574,8 @@ async def _process_webhook(
                 event_type=event_type,
                 payload=extracted_data,
                 success=True,
-                processing_time_ms=processing_time_ms
+                processing_time_ms=processing_time_ms,
+                phase_triggered="basic_mode"
             )
 
             logger.info(f"Processed {event_type} in basic mode")
@@ -586,7 +604,8 @@ async def _process_webhook(
             payload=extracted_data,
             success=False,
             error=str(e),
-            processing_time_ms=processing_time_ms
+            processing_time_ms=processing_time_ms,
+            phase_triggered=None
         )
 
         # Return 200 to prevent Stripe retries (we'll handle retry ourselves)
