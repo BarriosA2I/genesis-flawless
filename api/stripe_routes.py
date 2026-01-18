@@ -783,6 +783,57 @@ async def manual_trigger(
         return result.to_dict()
 
 
+class TestEventRequest(BaseModel):
+    """Request model for testing webhook handlers."""
+    event_type: str
+    event_data: Dict[str, Any] = {}
+
+
+@router.post("/stripe/test-handler")
+async def test_handler(request_body: TestEventRequest):
+    """
+    Test a webhook handler directly without signature verification.
+    For development/testing only - validates handler routing works.
+    """
+    if not NEXUS_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Nexus services not available")
+
+    if async_session_factory is None:
+        await init_database()
+
+    if async_session_factory is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    async with async_session_factory() as db:
+        orchestrator = NexusOrchestrator(
+            db=db,
+            event_bus=event_bus,
+            notification_service=notification_service
+        )
+
+        # Check if handler exists
+        mapping = orchestrator.EVENT_HANDLER_MAP.get(request_body.event_type)
+        if not mapping:
+            return {
+                "status": "error",
+                "error": f"No handler mapped for event type: {request_body.event_type}",
+                "available_events": list(orchestrator.EVENT_HANDLER_MAP.keys())
+            }
+
+        result = await orchestrator.route_event(
+            event_type=request_body.event_type,
+            event_id=f"test_{datetime.utcnow().timestamp()}",
+            event_data=request_body.event_data
+        )
+
+        return {
+            "status": "success" if result.success else "handler_error",
+            "event_type": request_body.event_type,
+            "handler_action": result.action,
+            "result": result.to_dict()
+        }
+
+
 # =============================================================================
 # ADMIN ENDPOINTS
 # =============================================================================
