@@ -114,7 +114,7 @@ class Customer(Base):
     
     # Lifecycle state
     current_phase = Column(SQLEnum(NexusPhase), default=NexusPhase.PHASE_1_ACQUISITION)
-    status = Column(SQLEnum(CustomerStatus), default=CustomerStatus.LEAD)
+    status = Column(SQLEnum(CustomerStatus, values_callable=lambda obj: [e.name for e in obj]), default=CustomerStatus.LEAD)
     tier = Column(SQLEnum(SubscriptionTier), nullable=True)
     
     # Subscription tracking
@@ -197,8 +197,8 @@ class PhaseTransition(Base):
     # Transition details
     from_phase = Column(SQLEnum(NexusPhase), nullable=True)
     to_phase = Column(SQLEnum(NexusPhase), nullable=False)
-    from_status = Column(SQLEnum(CustomerStatus), nullable=True)
-    to_status = Column(SQLEnum(CustomerStatus), nullable=False)
+    from_status = Column(SQLEnum(CustomerStatus, values_callable=lambda obj: [e.name for e in obj]), nullable=True)
+    to_status = Column(SQLEnum(CustomerStatus, values_callable=lambda obj: [e.name for e in obj]), nullable=False)
     
     # Trigger info
     trigger_event = Column(String(100), nullable=False)  # e.g., "checkout.session.completed"
