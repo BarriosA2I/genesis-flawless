@@ -907,6 +907,16 @@ async def fix_schema():
                 """))
                 fixes_applied.append(f"{table}.metadata")
 
+            # Add AT_RISK to customerstatus enum if missing
+            try:
+                await db.execute(text("""
+                    ALTER TYPE customerstatus ADD VALUE IF NOT EXISTS 'at_risk'
+                """))
+                fixes_applied.append("customerstatus.at_risk")
+            except Exception as e:
+                # May fail if value already exists or in transaction
+                logger.warning(f"Could not add at_risk to enum: {e}")
+
             await db.commit()
 
             return {

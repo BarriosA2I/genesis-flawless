@@ -1739,15 +1739,15 @@ class Phase9RenewalHandler(BasePhaseHandler):
             # Create renewal notification record
             notification = Notification(
                 customer_id=customer.id,
-                notification_type=NotificationType.RENEWAL_REMINDER,
+                type=NotificationType.RENEWAL_REMINDER,
                 channel="email",
                 subject=f"Your subscription renews soon - ${amount_due/100:.2f}",
-                content=json.dumps({
+                custom_metadata={
                     "amount_due": amount_due,
                     "billing_date": customer.next_billing_at.isoformat() if customer.next_billing_at else None,
                     "subscription_id": subscription_id,
                     "tier": customer.tier.value if customer.tier else None
-                })
+                }
             )
             self.db.add(notification)
 
