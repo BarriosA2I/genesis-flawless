@@ -949,7 +949,8 @@ async def fix_database_enums():
 
         async with temp_engine.connect() as conn:
             enum_updates = [
-                ("customerstatus", "at_risk"),
+                ("customerstatus", "AT_RISK"),
+                ("customerstatus", "PAST_DUE"),
             ]
 
             for enum_type, enum_value in enum_updates:
