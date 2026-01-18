@@ -139,7 +139,7 @@ class Customer(Base):
     feature_usage = Column(JSONB, default=dict)
     
     # Metadata
-    metadata = Column(JSONB, default=dict)
+    custom_metadata = Column(JSONB, default=dict)
     tags = Column(JSONB, default=list)
     
     # Versioning for MVCC
@@ -209,10 +209,10 @@ class PhaseTransition(Base):
     handler_success = Column(Boolean, default=True)
     handler_error = Column(Text, nullable=True)
     handler_duration_ms = Column(Integer, nullable=True)
-    
+
     # Metadata
-    metadata = Column(JSONB, default=dict)
-    
+    custom_metadata = Column(JSONB, default=dict)
+
     # Customer version at transition time (for MVCC)
     customer_version = Column(Integer, nullable=False)
     
@@ -261,11 +261,11 @@ class Payment(Base):
     
     # Metadata
     description = Column(String(500), nullable=True)
-    metadata = Column(JSONB, default=dict)
-    
+    custom_metadata = Column(JSONB, default=dict)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     customer = relationship("Customer", back_populates="payments")
     
@@ -304,12 +304,12 @@ class Entitlement(Base):
     # Source
     source_subscription_id = Column(String(255), nullable=True)
     source_product_id = Column(String(255), nullable=True)
-    
-    metadata = Column(JSONB, default=dict)
-    
+
+    custom_metadata = Column(JSONB, default=dict)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     customer = relationship("Customer", back_populates="entitlements")
     
@@ -353,11 +353,11 @@ class Notification(Base):
     # Trigger context
     trigger_phase = Column(SQLEnum(NexusPhase), nullable=True)
     trigger_event = Column(String(100), nullable=True)
-    
-    metadata = Column(JSONB, default=dict)
-    
+
+    custom_metadata = Column(JSONB, default=dict)
+
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     # Relationships
     customer = relationship("Customer", back_populates="notifications")
     
