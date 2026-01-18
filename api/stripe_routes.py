@@ -945,7 +945,11 @@ async def fix_database_enums():
         elif database_url.startswith("postgresql://") and "asyncpg" not in database_url:
             database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-        temp_engine = create_async_engine(database_url, isolation_level="AUTOCOMMIT")
+        temp_engine = create_async_engine(
+            database_url,
+            isolation_level="AUTOCOMMIT",
+            connect_args={"statement_cache_size": 0, "prepared_statement_cache_size": 0}
+        )
 
         async with temp_engine.connect() as conn:
             enum_updates = [
