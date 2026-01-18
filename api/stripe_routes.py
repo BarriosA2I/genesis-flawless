@@ -929,6 +929,61 @@ async def fix_schema():
             raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/stripe/admin/fix-enums")
+async def fix_database_enums():
+    """Add missing enum values to PostgreSQL types. Uses autocommit (required for ALTER TYPE)."""
+    import os
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    results = []
+
+    try:
+        database_url = os.getenv("DATABASE_URL", "")
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif database_url.startswith("postgresql://") and "asyncpg" not in database_url:
+            database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        temp_engine = create_async_engine(database_url, isolation_level="AUTOCOMMIT")
+
+        async with temp_engine.connect() as conn:
+            enum_updates = [
+                ("customerstatus", "at_risk"),
+            ]
+
+            for enum_type, enum_value in enum_updates:
+                try:
+                    check = await conn.execute(text("""
+                        SELECT 1 FROM pg_enum
+                        WHERE enumlabel = :value
+                        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = :enum_type)
+                    """), {"value": enum_value, "enum_type": enum_type})
+
+                    if not check.fetchone():
+                        await conn.execute(text(f"ALTER TYPE {enum_type} ADD VALUE '{enum_value}'"))
+                        results.append({"enum": enum_type, "value": enum_value, "status": "added"})
+                        logger.info(f"Added '{enum_value}' to {enum_type} enum")
+                    else:
+                        results.append({"enum": enum_type, "value": enum_value, "status": "exists"})
+
+                except Exception as e:
+                    results.append({"enum": enum_type, "value": enum_value, "status": "error", "error": str(e)})
+
+        await temp_engine.dispose()
+
+        return {
+            "status": "success",
+            "message": "Enum values processed",
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to fix enums: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/stripe/admin/status")
 async def get_service_status():
     """
