@@ -102,7 +102,10 @@ async def init_database():
                 pool_size=5,
                 max_overflow=10,
                 pool_pre_ping=True,
-                echo=False
+                echo=False,
+                connect_args={
+                    "statement_cache_size": 0,  # Required for pgbouncer compatibility
+                }
             )
             async_session_factory = async_sessionmaker(
                 engine,
