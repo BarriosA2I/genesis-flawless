@@ -406,6 +406,14 @@ try:
 except ImportError as e:
     logger.warning(f"Post-production routes not available: {e}")
 
+# Include Stripe webhook routes
+try:
+    from api.stripe_routes import router as stripe_router
+    app.include_router(stripe_router)
+    logger.info("Stripe webhook routes loaded")
+except ImportError as e:
+    logger.warning(f"Stripe webhook routes not available: {e}")
+
 
 # =============================================================================
 # HEALTH & METRICS

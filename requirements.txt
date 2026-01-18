@@ -55,3 +55,6 @@ langchain-anthropic>=0.1.0
 # Agent 7: Video Assembly + R2 Storage
 boto3>=1.34.0
 botocore>=1.34.0
+
+# Stripe Webhook Integration
+stripe>=8.0.0
