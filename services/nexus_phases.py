@@ -251,7 +251,7 @@ class BasePhaseHandler:
             handler_error=error,
             handler_duration_ms=duration_ms,
             customer_version=customer.version,
-            custom_metadata=metadata or {}
+            metadata=metadata or {}
         )
         self.db.add(transition)
         return transition
@@ -321,7 +321,7 @@ class Phase1AcquisitionHandler(BasePhaseHandler):
                     subscription_id=subscription_id,
                     subscription_started_at=datetime.utcnow(),
                     mrr=amount_total / 100 if amount_total else 0,
-                    custom_metadata=metadata
+                    metadata=metadata
                 )
                 self.db.add(customer)
                 
@@ -481,7 +481,7 @@ class Phase2OnboardingHandler(BasePhaseHandler):
                 if name:
                     customer.name = name
                 if metadata:
-                    customer.custom_metadata = {**customer.custom_metadata, **metadata}
+                    customer.metadata = {**customer.metadata, **metadata}
                 customer.version += 1
                 customer.updated_at = datetime.utcnow()
                 
@@ -497,7 +497,7 @@ class Phase2OnboardingHandler(BasePhaseHandler):
                     name=name,
                     current_phase=NexusPhase.PHASE_2_ONBOARDING,
                     status=CustomerStatus.LEAD,
-                    custom_metadata=metadata
+                    metadata=metadata
                 )
                 self.db.add(customer)
                 

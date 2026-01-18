@@ -139,7 +139,7 @@ class Customer(Base):
     feature_usage = Column(JSONB, default=dict)
     
     # Metadata
-    custom_metadata = Column(JSONB, default=dict)
+    metadata = Column("metadata", JSONB, default=dict)
     tags = Column(JSONB, default=list)
     
     # Versioning for MVCC
@@ -211,7 +211,7 @@ class PhaseTransition(Base):
     handler_duration_ms = Column(Integer, nullable=True)
 
     # Metadata
-    custom_metadata = Column(JSONB, default=dict)
+    metadata = Column("metadata", JSONB, default=dict)
 
     # Customer version at transition time (for MVCC)
     customer_version = Column(Integer, nullable=False)
@@ -261,7 +261,7 @@ class Payment(Base):
     
     # Metadata
     description = Column(String(500), nullable=True)
-    custom_metadata = Column(JSONB, default=dict)
+    metadata = Column("metadata", JSONB, default=dict)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -305,7 +305,7 @@ class Entitlement(Base):
     source_subscription_id = Column(String(255), nullable=True)
     source_product_id = Column(String(255), nullable=True)
 
-    custom_metadata = Column(JSONB, default=dict)
+    metadata = Column("metadata", JSONB, default=dict)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -354,7 +354,7 @@ class Notification(Base):
     trigger_phase = Column(SQLEnum(NexusPhase), nullable=True)
     trigger_event = Column(String(100), nullable=True)
 
-    custom_metadata = Column(JSONB, default=dict)
+    metadata = Column("metadata", JSONB, default=dict)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
