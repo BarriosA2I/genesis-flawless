@@ -931,27 +931,30 @@ async def fix_schema():
 
 @router.post("/stripe/admin/fix-enums")
 async def fix_database_enums():
-    """Add missing enum values to PostgreSQL types. Uses autocommit (required for ALTER TYPE)."""
+    """Add missing enum values to PostgreSQL types. Uses raw asyncpg for autocommit."""
     import os
-    from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
+    import asyncpg
+    from urllib.parse import urlparse
 
     results = []
 
     try:
         database_url = os.getenv("DATABASE_URL", "")
-        if database_url.startswith("postgres://"):
-            database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
-        elif database_url.startswith("postgresql://") and "asyncpg" not in database_url:
-            database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-        temp_engine = create_async_engine(
-            database_url,
-            isolation_level="AUTOCOMMIT",
-            connect_args={"statement_cache_size": 0, "prepared_statement_cache_size": 0}
+        # Parse the URL and convert to asyncpg format
+        parsed = urlparse(database_url)
+
+        # Connect directly with asyncpg (no prepared statements for pgbouncer)
+        conn = await asyncpg.connect(
+            user=parsed.username,
+            password=parsed.password,
+            database=parsed.path[1:],  # Remove leading /
+            host=parsed.hostname,
+            port=parsed.port or 5432,
+            statement_cache_size=0
         )
 
-        async with temp_engine.connect() as conn:
+        try:
             enum_updates = [
                 ("customerstatus", "AT_RISK"),
                 ("customerstatus", "PAST_DUE"),
@@ -959,14 +962,15 @@ async def fix_database_enums():
 
             for enum_type, enum_value in enum_updates:
                 try:
-                    check = await conn.execute(text("""
+                    # Check if value exists
+                    check = await conn.fetchval("""
                         SELECT 1 FROM pg_enum
-                        WHERE enumlabel = :value
-                        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = :enum_type)
-                    """), {"value": enum_value, "enum_type": enum_type})
+                        WHERE enumlabel = $1
+                        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = $2)
+                    """, enum_value, enum_type)
 
-                    if not check.fetchone():
-                        await conn.execute(text(f"ALTER TYPE {enum_type} ADD VALUE '{enum_value}'"))
+                    if not check:
+                        await conn.execute(f"ALTER TYPE {enum_type} ADD VALUE '{enum_value}'")
                         results.append({"enum": enum_type, "value": enum_value, "status": "added"})
                         logger.info(f"Added '{enum_value}' to {enum_type} enum")
                     else:
@@ -975,7 +979,8 @@ async def fix_database_enums():
                 except Exception as e:
                     results.append({"enum": enum_type, "value": enum_value, "status": "error", "error": str(e)})
 
-        await temp_engine.dispose()
+        finally:
+            await conn.close()
 
         return {
             "status": "success",
