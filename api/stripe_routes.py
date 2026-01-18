@@ -162,6 +162,13 @@ async def init_services():
         return
 
     try:
+        # Initialize database first - required for phase routing
+        db_ready = await init_database()
+        if not db_ready:
+            logger.warning("Database not initialized - phase routing will be disabled")
+        else:
+            logger.info("Database ready for phase routing")
+
         # Event bus (in-memory by default)
         event_bus = await create_event_bus(
             use_rabbitmq=Config.USE_RABBITMQ,
@@ -752,3 +759,72 @@ async def manual_trigger(
         )
 
         return result.to_dict()
+
+
+# =============================================================================
+# ADMIN ENDPOINTS
+# =============================================================================
+
+@router.post("/stripe/admin/migrate")
+async def run_migration():
+    """
+    Run database migration to create Nexus tables.
+    Call this endpoint to ensure all required tables exist.
+    """
+    if not Config.DATABASE_URL:
+        raise HTTPException(status_code=500, detail="DATABASE_URL not configured")
+
+    if not SQLALCHEMY_AVAILABLE:
+        raise HTTPException(status_code=500, detail="SQLAlchemy not available")
+
+    try:
+        # Initialize database (creates tables if they don't exist)
+        db_ready = await init_database()
+
+        if not db_ready:
+            raise HTTPException(
+                status_code=500,
+                detail="Database initialization failed - check logs"
+            )
+
+        return {
+            "status": "success",
+            "message": "Migration completed - Nexus tables created",
+            "database_configured": True,
+            "nexus_available": NEXUS_AVAILABLE,
+            "async_session_factory_ready": async_session_factory is not None,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
+
+
+@router.get("/stripe/admin/status")
+async def get_service_status():
+    """
+    Get detailed status of all webhook services.
+    Useful for debugging why phase routing might not be working.
+    """
+    return {
+        "services": {
+            "stripe_available": STRIPE_AVAILABLE,
+            "stripe_api_key_configured": bool(Config.STRIPE_API_KEY),
+            "webhook_secret_configured": bool(Config.STRIPE_WEBHOOK_SECRET),
+            "sqlalchemy_available": SQLALCHEMY_AVAILABLE,
+            "database_url_configured": bool(Config.DATABASE_URL),
+            "nexus_available": NEXUS_AVAILABLE,
+            "services_initialized": services_initialized,
+            "async_session_factory_ready": async_session_factory is not None,
+            "engine_ready": engine is not None,
+            "event_bus_type": "rabbitmq" if Config.USE_RABBITMQ else "in_memory",
+            "event_bus_ready": event_bus is not None,
+            "notification_service_ready": notification_service is not None,
+            "ops_alert_service_ready": ops_alert_service is not None,
+        },
+        "routing_mode": "full_nexus" if (NEXUS_AVAILABLE and async_session_factory is not None) else "basic",
+        "timestamp": datetime.utcnow().isoformat()
+    }
