@@ -956,8 +956,15 @@ async def fix_database_enums():
 
         try:
             enum_updates = [
+                # Add all uppercase variants to match SQLAlchemy enum serialization
+                ("customerstatus", "LEAD"),
+                ("customerstatus", "TRIAL"),
+                ("customerstatus", "ACTIVE"),
                 ("customerstatus", "AT_RISK"),
                 ("customerstatus", "PAST_DUE"),
+                ("customerstatus", "SUSPENDED"),
+                ("customerstatus", "CANCELLED"),
+                ("customerstatus", "CHURNED"),
             ]
 
             for enum_type, enum_value in enum_updates:
