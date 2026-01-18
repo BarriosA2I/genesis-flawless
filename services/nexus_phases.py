@@ -938,6 +938,276 @@ class Phase4ActiveHandler(BasePhaseHandler):
                 error=str(e)
             )
 
+    async def track_invoice(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle invoice.created / invoice.finalized - Track invoice.
+        No phase change, just records the invoice for auditing.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        invoice_id = event_data.get("invoice_id") or event_data.get("id")
+        amount_due = event_data.get("amount_due", 0)
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if not customer:
+                # Customer may not exist yet - that's OK for invoice tracking
+                logger.info(f"Invoice tracked (no customer yet): {invoice_id}")
+                return HandlerResult(
+                    success=True,
+                    action="track_invoice",
+                    from_phase=None,
+                    to_phase=NexusPhase.PHASE_4_ACTIVE,
+                    from_status=None,
+                    to_status=CustomerStatus.ACTIVE,
+                    customer_id=stripe_customer_id or "unknown",
+                    metadata={"invoice_id": invoice_id, "amount_due": amount_due},
+                    duration_ms=int((time.time() - start_time) * 1000)
+                )
+
+            # Record invoice as pending payment
+            payment = Payment(
+                customer_id=customer.id,
+                stripe_invoice_id=invoice_id,
+                amount=amount_due,
+                status=PaymentStatus.PENDING,
+                description="Invoice created"
+            )
+            self.db.add(payment)
+            await self.db.commit()
+
+            logger.info(f"Invoice tracked: {invoice_id} for {customer.email}, ${amount_due/100:.2f}")
+
+            return HandlerResult(
+                success=True,
+                action="track_invoice",
+                from_phase=customer.current_phase,
+                to_phase=customer.current_phase,  # No phase change
+                from_status=customer.status,
+                to_status=customer.status,
+                customer_id=str(customer.id),
+                metadata={"invoice_id": invoice_id, "amount_due": amount_due},
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to track invoice: {e}")
+            return HandlerResult(
+                success=False,
+                action="track_invoice",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
+
+    async def track_payment_intent(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle payment_intent.created - Track new payment intent.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        intent_id = event_data.get("payment_intent_id") or event_data.get("id")
+        amount = event_data.get("amount", 0)
+
+        logger.info(f"Payment intent tracked: {intent_id}, ${amount/100:.2f}")
+
+        return HandlerResult(
+            success=True,
+            action="track_payment_intent",
+            from_phase=None,
+            to_phase=NexusPhase.PHASE_4_ACTIVE,
+            from_status=None,
+            to_status=CustomerStatus.ACTIVE,
+            customer_id=stripe_customer_id or "unknown",
+            metadata={"intent_id": intent_id, "amount": amount},
+            duration_ms=int((time.time() - start_time) * 1000)
+        )
+
+    async def handle_payment_intent_succeeded(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle payment_intent.succeeded - Record successful payment.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        intent_id = event_data.get("payment_intent_id") or event_data.get("id")
+        amount = event_data.get("amount", 0)
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if customer:
+                payment = Payment(
+                    customer_id=customer.id,
+                    stripe_payment_intent_id=intent_id,
+                    amount=amount,
+                    status=PaymentStatus.SUCCEEDED
+                )
+                self.db.add(payment)
+                customer.last_payment_at = datetime.utcnow()
+                customer.lifetime_value += amount / 100
+                await self.db.commit()
+
+            logger.info(f"Payment intent succeeded: {intent_id}, ${amount/100:.2f}")
+
+            return HandlerResult(
+                success=True,
+                action="handle_payment_intent_succeeded",
+                from_phase=customer.current_phase if customer else None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=customer.status if customer else None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=str(customer.id) if customer else stripe_customer_id,
+                metadata={"intent_id": intent_id, "amount": amount},
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to handle payment intent: {e}")
+            return HandlerResult(
+                success=False,
+                action="handle_payment_intent_succeeded",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
+
+    async def handle_payment_intent_failed(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle payment_intent.payment_failed - Log failure, may trigger dunning.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        intent_id = event_data.get("payment_intent_id") or event_data.get("id")
+        error = event_data.get("last_payment_error", {})
+
+        logger.warning(f"Payment intent failed: {intent_id} - {error.get('message', 'Unknown error')}")
+
+        return HandlerResult(
+            success=True,  # We successfully handled the failure event
+            action="handle_payment_intent_failed",
+            from_phase=None,
+            to_phase=NexusPhase.PHASE_4_ACTIVE,  # Don't move to dunning for single intent failure
+            from_status=None,
+            to_status=CustomerStatus.ACTIVE,
+            customer_id=stripe_customer_id or "unknown",
+            metadata={"intent_id": intent_id, "error_code": error.get("code")},
+            duration_ms=int((time.time() - start_time) * 1000)
+        )
+
+    async def handle_charge_succeeded(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle charge.succeeded - Record revenue.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        charge_id = event_data.get("charge_id") or event_data.get("id")
+        amount = event_data.get("amount", 0)
+
+        try:
+            customer = await self.get_customer_by_stripe_id(stripe_customer_id)
+
+            if customer:
+                payment = Payment(
+                    customer_id=customer.id,
+                    stripe_charge_id=charge_id,
+                    amount=amount,
+                    status=PaymentStatus.SUCCEEDED,
+                    description="Charge succeeded"
+                )
+                self.db.add(payment)
+                customer.last_payment_at = datetime.utcnow()
+                await self.db.commit()
+
+            logger.info(f"Charge succeeded: {charge_id}, ${amount/100:.2f}")
+
+            return HandlerResult(
+                success=True,
+                action="handle_charge_succeeded",
+                from_phase=customer.current_phase if customer else None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=customer.status if customer else None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=str(customer.id) if customer else stripe_customer_id,
+                metadata={"charge_id": charge_id, "amount": amount},
+                duration_ms=int((time.time() - start_time) * 1000)
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to handle charge: {e}")
+            return HandlerResult(
+                success=False,
+                action="handle_charge_succeeded",
+                from_phase=None,
+                to_phase=NexusPhase.PHASE_4_ACTIVE,
+                from_status=None,
+                to_status=CustomerStatus.ACTIVE,
+                customer_id=stripe_customer_id or "unknown",
+                metadata=event_data,
+                error=str(e)
+            )
+
+    async def handle_charge_failed(
+        self,
+        event_data: Dict[str, Any],
+        event_id: str
+    ) -> HandlerResult:
+        """
+        Handle charge.failed - Log failure.
+        """
+        start_time = time.time()
+
+        stripe_customer_id = event_data.get("customer_id")
+        charge_id = event_data.get("charge_id") or event_data.get("id")
+        failure_message = event_data.get("failure_message", "Unknown")
+
+        logger.warning(f"Charge failed: {charge_id} - {failure_message}")
+
+        return HandlerResult(
+            success=True,
+            action="handle_charge_failed",
+            from_phase=None,
+            to_phase=NexusPhase.PHASE_4_ACTIVE,
+            from_status=None,
+            to_status=CustomerStatus.ACTIVE,
+            customer_id=stripe_customer_id or "unknown",
+            metadata={"charge_id": charge_id, "failure_message": failure_message},
+            duration_ms=int((time.time() - start_time) * 1000)
+        )
+
 
 # =============================================================================
 # PHASE 10: DUNNING HANDLER
@@ -1233,24 +1503,35 @@ class NexusOrchestrator:
         # Phase 1: Acquisition
         "checkout.session.completed": ("phase_1", "convert_lead"),
         "checkout.session.expired": ("phase_1", "trigger_recovery"),
-        
+
         # Phase 2: Onboarding
         "customer.created": ("phase_2", "create_customer_record"),
         "customer.updated": ("phase_2", "sync_customer_data"),
-        
+
         # Phase 3: Provisioning
         "customer.subscription.created": ("phase_3", "provision_services"),
-        
-        # Phase 4: Active
-        "invoice.payment_succeeded": ("phase_4", "record_payment"),
+
+        # Phase 4: Active - Invoice lifecycle
+        "invoice.created": ("phase_4", "track_invoice"),
+        "invoice.finalized": ("phase_4", "track_invoice"),
         "invoice.paid": ("phase_4", "record_payment"),
-        
+        "invoice.payment_succeeded": ("phase_4", "record_payment"),
+
+        # Phase 4: Active - Payment Intent lifecycle
+        "payment_intent.created": ("phase_4", "track_payment_intent"),
+        "payment_intent.succeeded": ("phase_4", "handle_payment_intent_succeeded"),
+        "payment_intent.payment_failed": ("phase_4", "handle_payment_intent_failed"),
+
+        # Phase 4: Active - Charge lifecycle
+        "charge.succeeded": ("phase_4", "handle_charge_succeeded"),
+        "charge.failed": ("phase_4", "handle_charge_failed"),
+
         # Phase 5: Expansion (subscription changes)
         "customer.subscription.updated": ("phase_5", "update_entitlements"),
-        
+
         # Phase 10: Dunning
         "invoice.payment_failed": ("phase_10", "initiate_dunning"),
-        
+
         # Phase 13: Churn
         "customer.subscription.deleted": ("phase_13", "deprovision_services"),
     }
