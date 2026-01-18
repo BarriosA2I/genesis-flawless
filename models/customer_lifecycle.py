@@ -370,6 +370,31 @@ class Notification(Base):
 # DUNNING SCHEDULE MODEL
 # =============================================================================
 
+class WebhookEvent(Base):
+    """
+    Audit log for processed webhook events.
+    Provides idempotency checking and event history.
+    """
+    __tablename__ = "nexus_webhook_events"
+
+    id = Column(Integer, primary_key=True)
+    stripe_event_id = Column(String(255), unique=True, nullable=False, index=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    stripe_customer_id = Column(String(255), nullable=True, index=True)
+    payload = Column(JSONB, default=dict)
+    processed_at = Column(DateTime, default=datetime.utcnow)
+    success = Column(Boolean, default=False)
+    error = Column(Text, nullable=True)
+    phase_triggered = Column(String(50), nullable=True)
+    processing_time_ms = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_webhook_event_type_time', 'event_type', 'created_at'),
+    )
+
+
 class DunningSchedule(Base):
     """
     Dunning attempt schedule and tracking.
