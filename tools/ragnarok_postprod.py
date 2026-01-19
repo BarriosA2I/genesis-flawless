@@ -46,6 +46,9 @@ except ImportError:
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Add video-preview path for gallery publisher
+sys.path.insert(0, r"C:\Users\gary\video-preview")
+
 
 # =============================================================================
 # CONFIGURATION
@@ -779,6 +782,41 @@ async def process_batch(
         batch.final_output = output_path
         size_mb = output_path.stat().st_size / (1024 * 1024)
         print(f"\n    SUCCESS: {output_path.name} ({size_mb:.1f} MB)")
+
+        # Step 6: Auto-publish to Gallery
+        print("\n[6/6] Publishing to Commercial Gallery...")
+        try:
+            from ragnarok_publisher import GalleryPublisher
+
+            ragnarok_api_key = os.getenv("RAGNAROK_API_KEY")
+            if ragnarok_api_key:
+                publisher = GalleryPublisher(
+                    api_url="https://video-preview-theta.vercel.app",
+                    api_key=ragnarok_api_key
+                )
+
+                # Calculate duration string
+                total_duration = sum(s.duration_ms for s in batch.scenes) / 1000
+                duration_str = f"{int(total_duration // 60)}:{int(total_duration % 60):02d}"
+
+                result = publisher.publish(
+                    video_path=str(output_path),
+                    title=f"RAGNAROK {batch.batch_id.replace('_', ' ').title()}",
+                    tags=["ragnarok", "auto-generated", config.voice_style],
+                    duration=duration_str
+                )
+
+                if result.get('success'):
+                    print(f"    ✅ Published! Gallery: {result.get('gallery_url')}")
+                else:
+                    print(f"    ⚠️  Publish failed: {result.get('error', 'Unknown error')}")
+            else:
+                print("    ⚠️  RAGNAROK_API_KEY not set - skipping gallery publish")
+        except ImportError:
+            print("    ⚠️  ragnarok_publisher not found - skipping gallery publish")
+        except Exception as e:
+            print(f"    ⚠️  Publish error: {e}")
+
         return True
     else:
         print(f"\n    FAILED: Assembly failed")
