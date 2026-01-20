@@ -419,7 +419,10 @@ class RAGNAROKVortexBridge:
 
         # Run orchestrator
         try:
-            if self.orchestrator:
+            # Use orchestrator only if all agents enabled, otherwise use selective processing
+            all_agents_enabled = enable_editor and enable_soundscaper and enable_wordsmith
+
+            if self.orchestrator and all_agents_enabled:
                 result = await self.orchestrator.process_video(
                     video_path=local_path,
                     company_name=company_name,
@@ -428,7 +431,7 @@ class RAGNAROKVortexBridge:
                     mode=processing_mode,
                 )
             else:
-                # Fallback to individual agent calls
+                # Selective agent processing when some agents disabled
                 result = await self._process_with_agents(
                     video_path=local_path,
                     company_name=company_name,
