@@ -1,14 +1,16 @@
 """
 ================================================================================
-RAGNAROK v4.0 LEGENDARY - Agent Module
+RAGNAROK v7.5 LEGENDARY - Agent Module
 ================================================================================
-Enhancement, Strategic, and Legendary agents for the commercial video pipeline.
+Enhancement, Strategic, Legendary, and Post-Production agents for the
+commercial video pipeline.
 
 Phase 1 (Enhancement): Agents 0.75, 1.5, 3.5, 5.5, 6.5
 Phase 2 (Strategic): Agents 8, 9, 10
 Phase 3 (Legendary): Agents 7.5, 8.5, 11-15
+Phase 4 (Post-Production): Agents 7.75 (EDITOR), 6.5 (SOUNDSCAPER), 7.25 (WORDSMITH)
 
-Author: Barrios A2I | Version: 4.0.0 | January 2026
+Author: Barrios A2I | Version: 7.5.0 | January 2026
 ================================================================================
 """
 
@@ -105,6 +107,47 @@ from .ragnarok_legendary_upgrades import (
     ShadowModeResult,
 )
 
+# VORTEX Post-Production Agents (Phase 4)
+try:
+    from .vortex_postprod import (
+        # Orchestrator
+        VortexOrchestrator,
+        VortexStateMachine,
+        ProcessingMode,
+        PipelinePhase,
+        GlobalState,
+        VideoMetadata,
+        BriefData,
+        create_vortex_orchestrator,
+        # Agent 7.75: THE EDITOR
+        TheEditor,
+        create_editor,
+        TransitionType,
+        StylePreset,
+        ColorGradingIntent,
+        ShotType,
+        # Agent 6.5: THE SOUNDSCAPER (VORTEX)
+        TheSoundscaper,
+        create_soundscaper,
+        SFXCategory,
+        MoodProfile,
+        SoundscapeRequest,
+        SoundscapeResult,
+        # Agent 7.25: THE WORDSMITH
+        TheWordsmith,
+        create_wordsmith,
+        WordsmithConfig,
+        TextValidationRequest,
+        TextValidationResult,
+    )
+    VORTEX_POSTPROD_AVAILABLE = True
+except ImportError as e:
+    VORTEX_POSTPROD_AVAILABLE = False
+    VortexOrchestrator = None
+    TheEditor = None
+    TheSoundscaper = None
+    TheWordsmith = None
+
 __all__ = [
     # Enhancement (Phase 1)
     "EnhancementAgentFactory",
@@ -181,4 +224,35 @@ __all__ = [
     # Shadow Mode
     "ShadowModeOrchestrator",
     "ShadowModeResult",
+    # VORTEX Post-Production (Phase 4)
+    "VORTEX_POSTPROD_AVAILABLE",
+    # Orchestrator
+    "VortexOrchestrator",
+    "VortexStateMachine",
+    "ProcessingMode",
+    "PipelinePhase",
+    "GlobalState",
+    "VideoMetadata",
+    "BriefData",
+    "create_vortex_orchestrator",
+    # Agent 7.75: THE EDITOR
+    "TheEditor",
+    "create_editor",
+    "TransitionType",
+    "StylePreset",
+    "ColorGradingIntent",
+    "ShotType",
+    # Agent 6.5 (VORTEX): THE SOUNDSCAPER
+    "TheSoundscaper",
+    "create_soundscaper",
+    "SFXCategory",
+    "MoodProfile",
+    "SoundscapeRequest",
+    "SoundscapeResult",
+    # Agent 7.25: THE WORDSMITH
+    "TheWordsmith",
+    "create_wordsmith",
+    "WordsmithConfig",
+    "TextValidationRequest",
+    "TextValidationResult",
 ]

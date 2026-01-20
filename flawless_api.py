@@ -87,6 +87,15 @@ from nexus_bridge import (
 # Import NEXUS Brain concierge router (Landing Page AI)
 from nexus_router import router as nexus_brain_router
 
+# Import VORTEX Post-Production Bridge (Agents 7.75, 6.5, 7.25)
+from vortex_integration import (
+    RAGNAROKVortexBridge,
+    EnhanceRequest as VortexEnhanceRequest,
+    EnhanceResponse as VortexEnhanceResponse,
+    create_vortex_bridge,
+    VORTEX_POSTPROD_AVAILABLE,
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -191,6 +200,7 @@ orchestrator: Optional[FlawlessGenesisOrchestrator] = None
 legendary_coordinator: Optional[LegendaryCoordinator] = None
 curator: Optional[TheCurator] = None
 nexus_bridge: Optional[NexusBridge] = None
+vortex_postprod_bridge: Optional[RAGNAROKVortexBridge] = None
 active_streams: Dict[str, asyncio.Task] = {}
 
 
@@ -321,9 +331,24 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Nexus Bridge init failed: {e} - using default")
         nexus_bridge = create_nexus_bridge()
 
+    # Initialize VORTEX Post-Production Bridge (Agents 7.75, 6.5, 7.25)
+    global vortex_postprod_bridge
+    if VORTEX_POSTPROD_AVAILABLE:
+        try:
+            vortex_postprod_bridge = create_vortex_bridge(
+                anthropic_client=anthropic_client,
+                qdrant_client=qdrant_client
+            )
+            logger.info("✅ VORTEX Post-Production Bridge initialized (Agents 7.75, 6.5, 7.25)")
+        except Exception as e:
+            logger.warning(f"⚠️ VORTEX Post-Production init failed: {e} - using passthrough mode")
+            vortex_postprod_bridge = None
+    else:
+        logger.info("ℹ️ VORTEX Post-Production not available - will passthrough videos unchanged")
+
     logger.info("=" * 60)
     logger.info("⚡ FLAWLESS GENESIS API v2.0 READY")
-    logger.info("⚡ 24 AGENTS + COMMERCIAL_LAB PIPELINE ACTIVATED")
+    logger.info("⚡ 27 AGENTS + COMMERCIAL_LAB PIPELINE ACTIVATED")
     logger.info("=" * 60)
     
     yield
@@ -2312,6 +2337,70 @@ async def list_voices():
     except Exception as e:
         logger.error(f"Error fetching voices: {e}")
         return {"voices": default_voices, "source": "default", "error": str(e)}
+
+# =============================================================================
+# VORTEX POST-PRODUCTION ENDPOINTS (Agents 7.75, 6.5, 7.25)
+# =============================================================================
+
+@app.post("/api/v1/ragnarok/enhance", tags=["VORTEX PostProd"], response_model=VortexEnhanceResponse)
+async def enhance_video(request: VortexEnhanceRequest):
+    """
+    VORTEX Post-Production Enhancement Pipeline.
+
+    Applies 3 enhancement agents to a RAGNAROK-assembled video:
+    - **THE EDITOR (7.75)**: Shot detection, transitions, color grading
+    - **THE SOUNDSCAPER (6.5)**: SFX placement, ambient audio, audio mixing
+    - **THE WORDSMITH (7.25)**: Text detection, spelling/grammar QA, accessibility
+
+    Processing Modes:
+    - `system1_fast`: ~8s, $0.25 - Simple videos, rule-based processing
+    - `system2_deep`: ~25s, $0.55 - Complex videos, full AI analysis
+    - `hybrid` (default): ~15s, $0.40 - Adaptive routing based on complexity
+
+    Returns enhanced video URL with detailed metrics per agent.
+    """
+    if not vortex_postprod_bridge:
+        # Passthrough mode - return original video unchanged
+        logger.warning("VORTEX Post-Production not available - passthrough mode")
+        return VortexEnhanceResponse(
+            success=True,
+            request_id=f"passthrough_{uuid.uuid4().hex[:8]}",
+            output_url=request.video_url,
+            output_path=request.video_path,
+            total_latency_ms=0.0,
+            total_cost_usd=0.0,
+            processing_mode="passthrough",
+            error="VORTEX Post-Production not available - video passed through unchanged",
+            final_phase="PASSTHROUGH",
+        )
+
+    try:
+        result = await vortex_postprod_bridge.enhance_from_request(request)
+        return result
+    except Exception as e:
+        logger.error(f"VORTEX enhance error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/ragnarok/enhance/health", tags=["VORTEX PostProd"])
+async def vortex_postprod_health():
+    """
+    Health check for VORTEX Post-Production subsystem.
+
+    Returns status of:
+    - Orchestrator availability
+    - Individual agent status (Editor, Soundscaper, Wordsmith)
+    - Anthropic API connectivity
+    """
+    if not vortex_postprod_bridge:
+        return {
+            "status": "unavailable",
+            "vortex_available": False,
+            "message": "VORTEX Post-Production not initialized"
+        }
+
+    return vortex_postprod_bridge.health_check()
+
 
 # ROOT & DOCS
 # =============================================================================

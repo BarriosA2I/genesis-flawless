@@ -44,6 +44,10 @@ numpy>=1.24.0
 # RAGNAROK v7.0 APEX Legendary Agents (7.5-15)
 scipy>=1.10.0
 
+# VORTEX v7.5 Post-Production Agents (7.75, 6.5, 7.25)
+# Uses numpy (above), pydantic (above), asyncio (stdlib)
+# Optional: opencv-python>=4.8.0 for advanced video analysis
+
 # Qdrant Vector Store
 qdrant-client>=1.7.0
 
