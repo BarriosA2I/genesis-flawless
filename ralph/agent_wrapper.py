@@ -105,6 +105,38 @@ AGENT_RALPH_CONFIGS: Dict[str, AgentRalphConfig] = {
     'cultural_sensitivity': AgentRalphConfig(enabled=False),
     'trend_integrator': AgentRalphConfig(enabled=False),
     'final_polish': AgentRalphConfig(enabled=False),
+
+    # ============================================================
+    # VORTEX POST-PRODUCTION AGENTS - Enable Ralph loops for v8.0
+    # ============================================================
+    'the_wordsmith': AgentRalphConfig(
+        enabled=True,
+        max_iterations=3,
+        completion_threshold=0.95,  # High - spelling must be perfect
+        timeout_per_iteration=60,
+        min_score_to_continue=0.5
+    ),
+    'the_editor': AgentRalphConfig(
+        enabled=True,
+        max_iterations=3,
+        completion_threshold=0.85,
+        timeout_per_iteration=180,  # Longer for video processing
+        min_score_to_continue=0.4
+    ),
+    'the_soundscaper': AgentRalphConfig(
+        enabled=True,
+        max_iterations=3,
+        completion_threshold=0.85,
+        timeout_per_iteration=120,
+        min_score_to_continue=0.4
+    ),
+    'clip_timing_engine': AgentRalphConfig(
+        enabled=True,
+        max_iterations=2,  # Limited - sync should converge fast
+        completion_threshold=0.90,
+        timeout_per_iteration=90,
+        min_score_to_continue=0.5
+    ),
 }
 
 
@@ -537,6 +569,179 @@ def evaluate_auteur_qa(output: Any) -> float:
     return 0.5
 
 
+# ============================================================
+# VORTEX POST-PRODUCTION EVALUATION FUNCTIONS (v8.0)
+# ============================================================
+
+def evaluate_wordsmith(output: Any) -> float:
+    """
+    Evaluate WORDSMITH text validation quality.
+
+    Checks:
+    - Spelling errors (must be 0 for high score)
+    - Grammar errors
+    - Brand compliance
+    - WCAG accessibility
+    """
+    if not output:
+        return 0.0
+
+    score = 0.0
+
+    if isinstance(output, dict):
+        # Perfect spelling = high score
+        spelling_errors = output.get('spelling_errors', [])
+        if len(spelling_errors) == 0:
+            score += 0.50
+        else:
+            score += max(0, 0.30 - len(spelling_errors) * 0.05)
+
+        # Grammar check passed
+        grammar_errors = output.get('grammar_errors', [])
+        if len(grammar_errors) == 0:
+            score += 0.20
+
+        # Brand compliance
+        if output.get('brand_compliant', False):
+            score += 0.15
+
+        # Accessibility passed
+        if output.get('wcag_compliant', False):
+            score += 0.15
+
+        # Emit completion signal if no errors
+        if len(spelling_errors) == 0 and len(grammar_errors) == 0:
+            score = max(score, 0.95)  # Force completion
+
+    return min(score, 1.0)
+
+
+def evaluate_editor(output: Any) -> float:
+    """
+    Evaluate THE EDITOR shot detection & assembly quality.
+
+    Checks:
+    - Shot detection successful (3+ shots)
+    - Transitions applied (2+)
+    - Color analysis complete
+    - Stabilization analyzed
+    - Timeline/FFmpeg commands generated
+    """
+    if not output:
+        return 0.0
+
+    score = 0.0
+
+    if isinstance(output, dict):
+        # Shot detection successful
+        shots = output.get('shots', [])
+        if len(shots) >= 3:
+            score += 0.25
+        elif len(shots) >= 1:
+            score += 0.15
+
+        # Transitions applied
+        transitions = output.get('transitions', [])
+        if len(transitions) >= 2:
+            score += 0.20
+
+        # Color analysis complete
+        if output.get('color_analysis'):
+            score += 0.15
+
+        # Stabilization analyzed
+        if output.get('stabilization_result'):
+            score += 0.15
+
+        # Timeline generated
+        if output.get('timeline') or output.get('ffmpeg_commands'):
+            score += 0.25
+
+    return min(score, 1.0)
+
+
+def evaluate_soundscaper(output: Any) -> float:
+    """
+    Evaluate THE SOUNDSCAPER audio mixing quality.
+
+    Checks:
+    - Audio layers present (2+)
+    - Ducking applied
+    - Levels balanced
+    - SFX matched
+    - No clipping
+    """
+    if not output:
+        return 0.0
+
+    score = 0.0
+
+    if isinstance(output, dict):
+        # Audio layers present
+        layers = output.get('audio_layers', [])
+        if len(layers) >= 2:
+            score += 0.25
+
+        # Ducking applied
+        if output.get('ducking_applied', False):
+            score += 0.25
+
+        # Levels balanced
+        if output.get('levels_balanced', False):
+            score += 0.20
+
+        # SFX matched
+        sfx = output.get('sfx_matches', [])
+        if len(sfx) >= 1:
+            score += 0.15
+
+        # No clipping
+        if not output.get('clipping_detected', True):
+            score += 0.15
+
+    return min(score, 1.0)
+
+
+def evaluate_clip_timing(output: Any) -> float:
+    """
+    Evaluate ClipTimingEngine voiceover sync quality.
+
+    Checks:
+    - Segments parsed (3+)
+    - Clips timed (3+)
+    - Sync quality > 0.8
+    - FFmpeg filter generated
+    """
+    if not output:
+        return 0.0
+
+    score = 0.0
+
+    if isinstance(output, dict):
+        # Segments parsed
+        segments = output.get('segments', [])
+        if len(segments) >= 3:
+            score += 0.30
+
+        # Clips timed
+        timed_clips = output.get('timed_clips', [])
+        if len(timed_clips) >= 3:
+            score += 0.30
+
+        # Sync quality (avg offset < 0.5s)
+        sync_quality = output.get('sync_quality', 0)
+        if sync_quality > 0.8:
+            score += 0.25
+        elif sync_quality > 0.6:
+            score += 0.15
+
+        # FFmpeg filter generated
+        if output.get('ffmpeg_filter'):
+            score += 0.15
+
+    return min(score, 1.0)
+
+
 # Registry of evaluation functions
 AGENT_EVALUATORS: Dict[str, Callable[[Any], float]] = {
     'story_creator': evaluate_script,
@@ -547,6 +752,11 @@ AGENT_EVALUATORS: Dict[str, Callable[[Any], float]] = {
     'competitor_intel': evaluate_research,
     'viral_pattern': evaluate_research,
     'the_auteur': evaluate_auteur_qa,
+    # VORTEX Post-Production Agents (v8.0)
+    'the_wordsmith': evaluate_wordsmith,
+    'the_editor': evaluate_editor,
+    'the_soundscaper': evaluate_soundscaper,
+    'clip_timing_engine': evaluate_clip_timing,
 }
 
 
@@ -595,5 +805,10 @@ __all__ = [
     'evaluate_prompts',
     'evaluate_video_scene',
     'evaluate_research',
-    'evaluate_auteur_qa'
+    'evaluate_auteur_qa',
+    # VORTEX evaluators (v8.0)
+    'evaluate_wordsmith',
+    'evaluate_editor',
+    'evaluate_soundscaper',
+    'evaluate_clip_timing'
 ]

@@ -67,6 +67,15 @@ except ImportError:
     anthropic = None
     ANTHROPIC_AVAILABLE = False
 
+# RAGNAROK v8.0: Ralph System Integration
+try:
+    from ralph.agent_wrapper import get_ralph_wrapper, is_ralph_enabled
+    RALPH_AVAILABLE = True
+except ImportError:
+    RALPH_AVAILABLE = False
+    def get_ralph_wrapper(*args, **kwargs): return None
+    def is_ralph_enabled(*args): return False
+
 try:
     from prometheus_client import Counter, Histogram, Gauge
     METRICS_AVAILABLE = True
@@ -737,18 +746,68 @@ class EditorNode(GraphNode):
                     phase_history=state.phase_history + [(PipelinePhase.SOUNDSCAPER, time.time())]
                 )
             try:
-                # THE EDITOR AGENT EXECUTION
-                await asyncio.sleep(0.3)  # Simulate processing
-                result = EditorResult(
-                    success=True,
-                    output_path=f"/tmp/edited_{state.id}.mp4",
-                    transitions_applied=4,
-                    color_grade_applied="corporate",
-                    effects_applied=["stabilization", "ken_burns"],
-                    edit_report="Applied professional editing with corporate color grade",
-                    latency_ms=(time.time() - start_time) * 1000,
-                    cost_usd=0.15
-                )
+                # RAGNAROK v8.0: THE EDITOR AGENT EXECUTION WITH RALPH LOOP
+                from agents.vortex_postprod.the_editor import TheEditor, EditValidationRequest, StylePreset
+
+                editor = TheEditor()
+                video_path = state.current_video_path or state.video.path
+
+                # Determine style from brief
+                style_map = {
+                    "corporate": StylePreset.CORPORATE,
+                    "commercial": StylePreset.COMMERCIAL,
+                    "cinematic": StylePreset.CINEMATIC,
+                    "modern": StylePreset.MODERN,
+                    "energetic": StylePreset.ENERGETIC,
+                }
+                style_preset = style_map.get(state.brief.style.lower(), StylePreset.COMMERCIAL)
+
+                if RALPH_AVAILABLE and is_ralph_enabled('the_editor'):
+                    # Wrap in Ralph loop for iterative quality refinement
+                    logger.info("[RALPH] Editor running with iterative refinement")
+                    wrapper = get_ralph_wrapper('the_editor', editor.analyze)
+                    ralph_result = await wrapper.execute(
+                        task=f"Analyze and edit video: {video_path}",
+                        context={
+                            'video_path': video_path,
+                            'style': style_preset.value,
+                            'enable_stabilization': True
+                        }
+                    )
+
+                    if ralph_result['status'] == 'completed' and ralph_result['final_score'] >= 0.85:
+                        editor_output = ralph_result['output']
+                        result = EditorResult(
+                            success=True,
+                            output_path=editor_output.get('output_path', f"/tmp/edited_{state.id}.mp4"),
+                            transitions_applied=len(editor_output.get('transitions', [])),
+                            color_grade_applied=editor_output.get('color_analysis', {}).get('color_intent', 'corporate'),
+                            effects_applied=editor_output.get('effects_applied', []),
+                            edit_report=f"Ralph iterations: {ralph_result['iterations']}, score: {ralph_result['final_score']:.2f}",
+                            latency_ms=(time.time() - start_time) * 1000,
+                            cost_usd=0.15
+                        )
+                    else:
+                        raise RuntimeError(f"EDITOR Ralph loop failed after {ralph_result['iterations']} iterations")
+                else:
+                    # Single-pass execution (fallback)
+                    request = EditValidationRequest(
+                        video_path=video_path,
+                        style_preset=style_preset,
+                        enable_stabilization=True,
+                        generate_ffmpeg_commands=True
+                    )
+                    editor_output = await editor.analyze(request)
+                    result = EditorResult(
+                        success=editor_output.success,
+                        output_path=editor_output.video_path or f"/tmp/edited_{state.id}.mp4",
+                        transitions_applied=len(editor_output.transitions),
+                        color_grade_applied=editor_output.color_analyses[0].color_intent.value if editor_output.color_analyses else "corporate",
+                        effects_applied=[s.recommended_method.value for s in editor_output.stabilization_results if s.stabilization_needed],
+                        edit_report=editor_output.report_markdown[:500] if editor_output.report_markdown else "Editing complete",
+                        latency_ms=(time.time() - start_time) * 1000,
+                        cost_usd=0.15
+                    )
                 latency_ms = (time.time() - start_time) * 1000
                 span.set_attribute("editor.latency_ms", latency_ms)
                 span.set_attribute("editor.transitions", result.transitions_applied)
@@ -816,17 +875,57 @@ class SoundscaperNode(GraphNode):
                     phase_history=state.phase_history + [(PipelinePhase.WORDSMITH, time.time())]
                 )
             try:
-                # THE SOUNDSCAPER AGENT EXECUTION
-                await asyncio.sleep(0.2)
-                result = SoundscaperResult(
-                    success=True,
-                    output_path=f"/tmp/soundscaped_{state.id}.mp4",
-                    sfx_count=6,
-                    ambient_applied=True,
-                    audio_report="Added 6 SFX and ambient office soundscape",
-                    latency_ms=(time.time() - start_time) * 1000,
-                    cost_usd=0.10
-                )
+                # RAGNAROK v8.0: THE SOUNDSCAPER AGENT EXECUTION WITH RALPH LOOP
+                from agents.vortex_postprod.the_soundscaper import TheSoundscaper, AudioMixRequest
+
+                soundscaper = TheSoundscaper()
+                video_path = state.current_video_path
+
+                if RALPH_AVAILABLE and is_ralph_enabled('the_soundscaper'):
+                    # Wrap in Ralph loop for iterative quality refinement
+                    logger.info("[RALPH] Soundscaper running with iterative refinement")
+                    wrapper = get_ralph_wrapper('the_soundscaper', soundscaper.mix)
+                    ralph_result = await wrapper.execute(
+                        task=f"Mix audio for video: {video_path}",
+                        context={
+                            'video_path': video_path,
+                            'mood': state.brief.mood,
+                            'style': state.brief.style,
+                            'enable_ducking': True
+                        }
+                    )
+
+                    if ralph_result['status'] == 'completed' and ralph_result['final_score'] >= 0.85:
+                        audio_output = ralph_result['output']
+                        result = SoundscaperResult(
+                            success=True,
+                            output_path=audio_output.get('output_path', f"/tmp/soundscaped_{state.id}.mp4"),
+                            sfx_count=len(audio_output.get('sfx_matches', [])),
+                            ambient_applied=audio_output.get('ambient_applied', False),
+                            audio_report=f"Ralph iterations: {ralph_result['iterations']}, score: {ralph_result['final_score']:.2f}",
+                            latency_ms=(time.time() - start_time) * 1000,
+                            cost_usd=0.10
+                        )
+                    else:
+                        raise RuntimeError(f"SOUNDSCAPER Ralph loop failed after {ralph_result['iterations']} iterations")
+                else:
+                    # Single-pass execution (fallback)
+                    request = AudioMixRequest(
+                        video_path=video_path,
+                        mood=state.brief.mood,
+                        enable_ducking=True,
+                        target_loudness=-14.0
+                    )
+                    audio_output = await soundscaper.mix(request)
+                    result = SoundscaperResult(
+                        success=audio_output.success if hasattr(audio_output, 'success') else True,
+                        output_path=audio_output.output_path if hasattr(audio_output, 'output_path') else f"/tmp/soundscaped_{state.id}.mp4",
+                        sfx_count=len(audio_output.sfx_applied) if hasattr(audio_output, 'sfx_applied') else 6,
+                        ambient_applied=audio_output.ambient_applied if hasattr(audio_output, 'ambient_applied') else True,
+                        audio_report=audio_output.report[:500] if hasattr(audio_output, 'report') else "Audio mixing complete",
+                        latency_ms=(time.time() - start_time) * 1000,
+                        cost_usd=0.10
+                    )
                 latency_ms = (time.time() - start_time) * 1000
                 span.set_attribute("soundscaper.latency_ms", latency_ms)
                 if cb:
@@ -893,14 +992,13 @@ class WordsmithNode(GraphNode):
                     phase_history=state.phase_history + [(PipelinePhase.VERIFICATION, time.time())]
                 )
             try:
-                # RAGNAROK v8.0: THE WORDSMITH AGENT EXECUTION
-                # Actually call TheWordsmith with blocking mode for spelling errors
+                # RAGNAROK v8.0: THE WORDSMITH AGENT EXECUTION WITH RALPH LOOP
                 from agents.vortex_postprod.the_wordsmith import (
                     TheWordsmith, TextValidationRequest, OCREngine
                 )
 
                 # Get video path from state
-                video_path = state.final_output_paths.get("youtube_1080p") or state.final_output_paths.get("main")
+                video_path = state.current_video_path
                 if not video_path:
                     # No video to validate yet - skip
                     logger.info("No video path available for WORDSMITH validation, skipping")
@@ -915,20 +1013,47 @@ class WordsmithNode(GraphNode):
                     enable_languagetool=False  # Faster without external API
                 )
 
-                # Create validation request with BLOCKING mode enabled
-                validation_request = TextValidationRequest(
-                    video_path=video_path,
-                    blocking_spelling_errors=True,  # v8.0: BLOCKS pipeline on errors
-                    brand_whitelist=[
-                        "Barrios A2I", "RAGNAROK", "VORTEX", "NEXUS",
-                        "CHROMADON", "TRINITY", "GENESIS", "BARRIOS", "A2I"
-                    ],
-                    keyframe_interval_sec=1.0,  # Extract 1 frame per second
-                    ocr_confidence_threshold=0.65,
-                )
+                # Brand whitelist
+                brand_whitelist = [
+                    "Barrios A2I", "RAGNAROK", "VORTEX", "NEXUS",
+                    "CHROMADON", "TRINITY", "GENESIS", "BARRIOS", "A2I"
+                ] + state.brief.forbidden_spellings
 
-                # Run validation
-                validation_result = await wordsmith.validate(validation_request)
+                if RALPH_AVAILABLE and is_ralph_enabled('the_wordsmith'):
+                    # Wrap in Ralph loop for iterative quality refinement
+                    logger.info("[RALPH] Wordsmith running with iterative refinement")
+                    wrapper = get_ralph_wrapper('the_wordsmith', wordsmith.validate)
+                    ralph_result = await wrapper.execute(
+                        task=f"Validate text in video: {video_path}",
+                        context={
+                            'video_path': video_path,
+                            'blocking_spelling_errors': True,
+                            'brand_whitelist': brand_whitelist
+                        }
+                    )
+
+                    if ralph_result['status'] == 'completed' and ralph_result['final_score'] >= 0.95:
+                        validation_result = ralph_result['output']
+                        logger.info(f"[RALPH] Wordsmith completed in {ralph_result['iterations']} iterations, score: {ralph_result['final_score']:.2f}")
+                    else:
+                        logger.error(f"[RALPH] Wordsmith failed after {ralph_result['iterations']} iterations")
+                        # Continue with last result for error reporting
+                        validation_result = ralph_result.get('output', type('obj', (object,), {
+                            'success': False,
+                            'error_message': f"Ralph loop incomplete after {ralph_result['iterations']} iterations",
+                            'all_errors': [],
+                            'summary': None
+                        })())
+                else:
+                    # Single-pass execution (fallback)
+                    validation_request = TextValidationRequest(
+                        video_path=video_path,
+                        blocking_spelling_errors=True,  # v8.0: BLOCKS pipeline on errors
+                        brand_whitelist=brand_whitelist,
+                        keyframe_interval_sec=1.0,  # Extract 1 frame per second
+                        ocr_confidence_threshold=0.65,
+                    )
+                    validation_result = await wordsmith.validate(validation_request)
 
                 # Convert to WordsmithResult
                 critical_errors = len([
