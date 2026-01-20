@@ -40,6 +40,14 @@ class RalphTestRequest(BaseModel):
         default=True,
         description="Whether to publish to gallery (AUTO-PUBLISH test)"
     )
+    max_size_mb: int = Field(
+        default=50,
+        description="Max video size in MB (default 50MB for Render free tier)"
+    )
+    lite_mode: bool = Field(
+        default=False,
+        description="Skip memory-heavy tests (editor) for low-RAM environments"
+    )
 
 
 class TestResultItem(BaseModel):
@@ -88,18 +96,24 @@ class Signals:
 # VIDEO DOWNLOADER
 # =============================================================================
 
-async def download_video(url: str, timeout: int = 300) -> str:
+MAX_VIDEO_SIZE_MB = 50  # Max video size for Render free tier (512MB RAM)
+
+
+async def download_video(url: str, timeout: int = 300, max_size_mb: int = MAX_VIDEO_SIZE_MB) -> str:
     """
     Download video from URL to temporary file.
 
     Args:
         url: Video URL
         timeout: Download timeout in seconds
+        max_size_mb: Maximum file size in MB (prevents OOM on free tier)
 
     Returns:
         Path to downloaded temporary file
     """
     logger.info(f"[RALPH_TEST] Downloading video from: {url}")
+
+    max_size_bytes = max_size_mb * 1024 * 1024
 
     # Create temp file with video extension
     ext = ".mp4"
@@ -117,15 +131,29 @@ async def download_video(url: str, timeout: int = 300) -> str:
     temp_file.close()
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             async with client.stream("GET", url) as response:
                 response.raise_for_status()
+
+                # Check content-length header if available
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > max_size_bytes:
+                    raise RuntimeError(
+                        f"Video too large: {int(content_length) / (1024*1024):.1f}MB > {max_size_mb}MB limit. "
+                        f"Use smaller videos or run tests locally for large files."
+                    )
 
                 total_size = 0
                 with open(temp_path, "wb") as f:
                     async for chunk in response.aiter_bytes(chunk_size=8192):
-                        f.write(chunk)
                         total_size += len(chunk)
+                        # Check size during download
+                        if total_size > max_size_bytes:
+                            raise RuntimeError(
+                                f"Video too large: >{max_size_mb}MB limit. "
+                                f"Use smaller videos or run tests locally."
+                            )
+                        f.write(chunk)
 
         size_mb = total_size / (1024 * 1024)
         logger.info(f"[RALPH_TEST] Downloaded {size_mb:.1f} MB to {temp_path}")
@@ -463,9 +491,15 @@ async def run_ralph_tests(request: RalphTestRequest) -> RalphTestResponse:
     gallery_url = None
     video_path = None
 
+    # Memory-heavy tests to skip in lite mode
+    heavy_tests = {"editor", "wordsmith"}
+
     try:
-        # Download video
-        video_path = await download_video(request.video_url)
+        # Download video with size limit
+        video_path = await download_video(
+            request.video_url,
+            max_size_mb=request.max_size_mb
+        )
 
         # Map test names to functions and evaluators
         test_map = {
@@ -475,8 +509,14 @@ async def run_ralph_tests(request: RalphTestRequest) -> RalphTestResponse:
             "editor": (test_editor, evaluate_editor, 0.85),
         }
 
+        # Filter tests if lite mode
+        tests_to_run = request.tests
+        if request.lite_mode:
+            tests_to_run = [t for t in request.tests if t.lower() not in heavy_tests]
+            logger.info(f"[RALPH_TEST] Lite mode: skipping {heavy_tests & set(t.lower() for t in request.tests)}")
+
         # Run selected tests
-        for test_name in request.tests:
+        for test_name in tests_to_run:
             test_name_lower = test_name.lower()
 
             if test_name_lower == "publish":
