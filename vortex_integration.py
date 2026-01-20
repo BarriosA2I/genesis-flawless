@@ -284,7 +284,7 @@ class RAGNAROKVortexBridge:
         """Lazy-load THE EDITOR agent."""
         if self._editor is None and VORTEX_POSTPROD_AVAILABLE:
             try:
-                self._editor = create_editor(anthropic_client=self.anthropic_client)
+                self._editor = create_editor()  # No anthropic_client param
             except Exception as e:
                 logger.error(f"Failed to create Editor: {e}")
         return self._editor
@@ -304,7 +304,7 @@ class RAGNAROKVortexBridge:
         """Lazy-load THE WORDSMITH agent."""
         if self._wordsmith is None and VORTEX_POSTPROD_AVAILABLE:
             try:
-                self._wordsmith = create_wordsmith(anthropic_client=self.anthropic_client)
+                self._wordsmith = create_wordsmith()  # No anthropic_client param
             except Exception as e:
                 logger.error(f"Failed to create Wordsmith: {e}")
         return self._wordsmith
