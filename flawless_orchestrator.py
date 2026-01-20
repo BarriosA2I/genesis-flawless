@@ -108,6 +108,22 @@ from ghost_recovery import (
 # VORTEX v2.1 Video Assembly (Agent 6)
 from vortex.router import assemble_video_inprocess
 
+# RAGNAROK v8.0: Music Selection Interface
+try:
+    from agents.music_selection_interface import (
+        MusicSelectionInterface,
+        create_music_selector as create_interactive_music_selector
+    )
+    from agents.music_selector_agent import (
+        MusicSelectionAgent,
+        MusicRequest,
+        create_music_selector
+    )
+    MUSIC_SELECTION_AVAILABLE = True
+except ImportError:
+    MUSIC_SELECTION_AVAILABLE = False
+    MusicSelectionInterface = None
+
 # RAGNAROK v4.0 Enhancement Agents (Phase 1)
 try:
     from agents import (
@@ -3768,6 +3784,66 @@ class FlawlessGenesisOrchestrator:
                             )
 
                         # -----------------------------------------------------------
+                        # RAGNAROK v8.0: MUSIC SELECTION (Before Agent 6)
+                        # User MUST select music before video assembly
+                        # -----------------------------------------------------------
+                        selected_music_url = None
+                        if MUSIC_SELECTION_AVAILABLE:
+                            yield await self._emit_event(
+                                pipeline_id,
+                                EventType.AGENT_START.value,
+                                {"agent": "music_selector", "description": "BLOCKING: Waiting for user music selection..."}
+                            )
+
+                            try:
+                                # Get recommended mood from commercial intelligence
+                                music_mood = (ci.recommended_music_styles[0]
+                                             if ci and ci.recommended_music_styles
+                                             else "professional")
+
+                                music_selector = create_music_selector(
+                                    require_user_confirmation=True  # v8.0: BLOCKS until user confirms
+                                )
+
+                                music_result = await music_selector.select_music(
+                                    MusicRequest(
+                                        industry=lead.industry,
+                                        mood=music_mood,
+                                        duration=30.0  # Target video duration
+                                    )
+                                )
+
+                                if music_result and music_result.primary_track:
+                                    selected_music_url = music_result.primary_track.url
+                                    logger.info(f"[{pipeline_id}] Music selected: {music_result.primary_track.title}")
+
+                                    yield await self._emit_event(
+                                        pipeline_id,
+                                        EventType.AGENT_COMPLETE.value,
+                                        {
+                                            "agent": "music_selector",
+                                            "track": music_result.primary_track.title,
+                                            "source": music_result.source,
+                                            "confidence": music_result.confidence
+                                        }
+                                    )
+                                else:
+                                    logger.warning(f"[{pipeline_id}] No music selected - proceeding without background music")
+                                    yield await self._emit_event(
+                                        pipeline_id,
+                                        "agent_warning",
+                                        {"agent": "music_selector", "message": "No music selected"}
+                                    )
+
+                            except Exception as e:
+                                logger.warning(f"[{pipeline_id}] Music selection failed: {e}")
+                                yield await self._emit_event(
+                                    pipeline_id,
+                                    "agent_warning",
+                                    {"agent": "music_selector", "error": str(e)}
+                                )
+
+                        # -----------------------------------------------------------
                         # AGENT 6: VORTEX Video Assembly (if we have clips)
                         # -----------------------------------------------------------
                         if generated_clips:
@@ -3781,6 +3857,7 @@ class FlawlessGenesisOrchestrator:
                                 vortex_outputs = await assemble_video_inprocess(
                                     video_urls=generated_clips,
                                     voiceover_url=generated_voiceover_url,
+                                    music_url=selected_music_url,  # RAGNAROK v8.0: User-selected music
                                     output_formats=video_formats,
                                     metadata={"pipeline_id": pipeline_id, "business": lead.business_name}
                                 )

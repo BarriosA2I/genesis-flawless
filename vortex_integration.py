@@ -50,7 +50,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import httpx
 from pydantic import BaseModel, Field
+
+# =============================================================================
+# MANDATORY VIDEO GALLERY PUBLISH - NON-OPTIONAL
+# =============================================================================
+VIDEO_GALLERY_API = "https://video-preview-theta.vercel.app/api/videos"
+VIDEO_UPLOAD_API = "https://video-preview-theta.vercel.app/api/upload"
 
 # VORTEX Post-Production imports
 try:
@@ -219,6 +226,93 @@ class EnhanceResponse(BaseModel):
                 "final_phase": "COMPLETE"
             }
         }
+
+
+# =============================================================================
+# MANDATORY PUBLISH FUNCTION - EVERY VIDEO MUST BE PUBLISHED
+# =============================================================================
+async def publish_to_gallery(
+    video_path: str,
+    video_url: Optional[str] = None,
+    title: str = "RAGNAROK Production",
+    tags: Optional[List[str]] = None,
+    duration_seconds: float = 60.0,
+    company_name: str = "Barrios A2I",
+    industry: str = "technology"
+) -> Optional[str]:
+    """
+    MANDATORY publish step - every completed video MUST be published.
+    This is NON-OPTIONAL in the RAGNAROK/VORTEX pipeline.
+    """
+    logger.info("[MANDATORY PUBLISH] Starting video gallery publish...")
+
+    video_id = f"vortex_{uuid.uuid4().hex[:12]}"
+    minutes = int(duration_seconds // 60)
+    seconds = int(duration_seconds % 60)
+
+    if tags is None:
+        tags = ["vortex", "ragnarok", "auto-generated"]
+
+    try:
+        # If we only have a local path, upload to temporary hosting first
+        if not video_url and video_path and os.path.exists(video_path):
+            logger.info("[MANDATORY PUBLISH] Uploading to temporary host...")
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                with open(video_path, 'rb') as f:
+                    files = {'fileToUpload': (os.path.basename(video_path), f, 'video/mp4')}
+                    data = {'reqtype': 'fileupload'}
+                    response = await client.post('https://catbox.moe/user/api.php', files=files, data=data)
+                    temp_url = response.text.strip()
+                    logger.info(f"[MANDATORY PUBLISH] Temp URL: {temp_url}")
+
+            # Migrate to Vercel Blob
+            logger.info("[MANDATORY PUBLISH] Migrating to Vercel Blob...")
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                migrate_response = await client.post(
+                    VIDEO_UPLOAD_API,
+                    json={'source_url': temp_url, 'filename': os.path.basename(video_path)}
+                )
+                if migrate_response.status_code in [200, 201]:
+                    result = migrate_response.json()
+                    video_url = result.get('url', temp_url)
+                else:
+                    video_url = temp_url
+
+        if not video_url:
+            logger.error("[MANDATORY PUBLISH] No video URL available")
+            return None
+
+        # Register in gallery
+        logger.info("[MANDATORY PUBLISH] Registering in gallery...")
+        payload = {
+            "id": video_id,
+            "url": video_url,
+            "title": title,
+            "description": f"VORTEX Post-Production enhanced video - {title}",
+            "thumbnail": None,
+            "duration": f"{minutes}:{seconds:02d}",
+            "tags": tags,
+            "business_name": company_name,
+            "industry": industry,
+            "created": datetime.now().strftime("%Y-%m-%d")
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(VIDEO_GALLERY_API, json=payload)
+
+            if response.status_code in [200, 201]:
+                result = response.json()
+                returned_id = result.get("video", {}).get("id", video_id)
+                gallery_url = f"https://video-preview-theta.vercel.app?v={returned_id}"
+                logger.info(f"[MANDATORY PUBLISH] SUCCESS! Gallery URL: {gallery_url}")
+                return gallery_url
+            else:
+                logger.error(f"[MANDATORY PUBLISH] Failed: {response.status_code} - {response.text[:200]}")
+                return None
+
+    except Exception as e:
+        logger.error(f"[MANDATORY PUBLISH] Error: {e}")
+        return None
 
 
 # =============================================================================
@@ -467,11 +561,26 @@ class RAGNAROKVortexBridge:
             metrics = result.get("metrics", {})
             total_cost = metrics.get("total_cost_usd", result.get("total_cost_usd", 0.0))
 
+            # MANDATORY PUBLISH - NON-OPTIONAL
+            output_path = result.get("output_path", local_path)
+            output_url = result.get("output_url")
+            gallery_url = await publish_to_gallery(
+                video_path=output_path,
+                video_url=output_url,
+                title=f"{company_name} - VORTEX Enhanced",
+                tags=["vortex", "ragnarok", "enhanced", industry],
+                duration_seconds=60.0,  # TODO: get actual duration from ffprobe
+                company_name=company_name,
+                industry=industry
+            )
+            if gallery_url:
+                logger.info(f"[{request_id}] Published to gallery: {gallery_url}")
+
             return EnhanceResponse(
                 success=result.get("success", True),
                 request_id=request_id,
-                output_url=result.get("output_url"),
-                output_path=result.get("output_path", local_path),
+                output_url=gallery_url or output_url,
+                output_path=output_path,
                 total_latency_ms=total_latency_ms,
                 total_cost_usd=total_cost,
                 processing_mode=mode_str,

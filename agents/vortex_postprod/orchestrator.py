@@ -893,29 +893,102 @@ class WordsmithNode(GraphNode):
                     phase_history=state.phase_history + [(PipelinePhase.VERIFICATION, time.time())]
                 )
             try:
-                # THE WORDSMITH AGENT EXECUTION
-                await asyncio.sleep(0.25)
-                result = WordsmithResult(
-                    success=True,
-                    passed=True,
-                    overall_score=92.5,
-                    errors_found=2,
-                    critical_errors=0,
-                    corrections_report="Found 2 minor typography issues, no critical errors",
-                    latency_ms=(time.time() - start_time) * 1000,
-                    cost_usd=0.12
+                # RAGNAROK v8.0: THE WORDSMITH AGENT EXECUTION
+                # Actually call TheWordsmith with blocking mode for spelling errors
+                from agents.vortex_postprod.the_wordsmith import (
+                    TheWordsmith, TextValidationRequest, OCREngine
                 )
+
+                # Get video path from state
+                video_path = state.final_output_paths.get("youtube_1080p") or state.final_output_paths.get("main")
+                if not video_path:
+                    # No video to validate yet - skip
+                    logger.info("No video path available for WORDSMITH validation, skipping")
+                    return state.copy_with(
+                        phase=PipelinePhase.VERIFICATION,
+                        phase_history=state.phase_history + [(PipelinePhase.VERIFICATION, time.time())]
+                    )
+
+                # Create WORDSMITH instance
+                wordsmith = TheWordsmith(
+                    ocr_engine=OCREngine.HYBRID,
+                    enable_languagetool=False  # Faster without external API
+                )
+
+                # Create validation request with BLOCKING mode enabled
+                validation_request = TextValidationRequest(
+                    video_path=video_path,
+                    blocking_spelling_errors=True,  # v8.0: BLOCKS pipeline on errors
+                    brand_whitelist=[
+                        "Barrios A2I", "RAGNAROK", "VORTEX", "NEXUS",
+                        "CHROMADON", "TRINITY", "GENESIS", "BARRIOS", "A2I"
+                    ],
+                    keyframe_interval_sec=1.0,  # Extract 1 frame per second
+                    ocr_confidence_threshold=0.65,
+                )
+
+                # Run validation
+                validation_result = await wordsmith.validate(validation_request)
+
+                # Convert to WordsmithResult
+                critical_errors = len([
+                    e for e in validation_result.all_errors
+                    if e.severity.value == "critical"
+                ])
+                result = WordsmithResult(
+                    success=validation_result.success,
+                    passed=validation_result.success and critical_errors == 0,
+                    overall_score=validation_result.summary.quality_score if validation_result.summary else 0.0,
+                    errors_found=len(validation_result.all_errors),
+                    critical_errors=critical_errors,
+                    corrections_report=validation_result.error_message or "Validation complete",
+                    latency_ms=(time.time() - start_time) * 1000,
+                    cost_usd=0.15
+                )
+
                 latency_ms = (time.time() - start_time) * 1000
                 span.set_attribute("wordsmith.latency_ms", latency_ms)
                 span.set_attribute("wordsmith.score", result.overall_score)
+                span.set_attribute("wordsmith.critical_errors", critical_errors)
+
                 if cb:
                     await cb.record_success()
-                AGENT_CALLS.labels(agent="wordsmith", status="success").inc()
+                AGENT_CALLS.labels(agent="wordsmith", status="success" if result.passed else "blocked").inc()
                 AGENT_LATENCY.labels(agent="wordsmith").observe(latency_ms)
+
                 await ctx.event_bus.publish(PipelineEvent(
                     type=EventType.AGENT_COMPLETED, timestamp=time.time(),
-                    state_id=state.id, payload={"agent": "wordsmith", "score": result.overall_score}
+                    state_id=state.id, payload={
+                        "agent": "wordsmith",
+                        "score": result.overall_score,
+                        "passed": result.passed,
+                        "critical_errors": critical_errors
+                    }
                 ))
+
+                # RAGNAROK v8.0: BLOCKING - If validation failed, move to ERROR phase
+                if not validation_result.success:
+                    logger.error(f"[WORDSMITH] PIPELINE BLOCKED: {validation_result.error_message}")
+                    await ctx.event_bus.publish(PipelineEvent(
+                        type=EventType.ERROR_OCCURRED, timestamp=time.time(),
+                        state_id=state.id, payload={
+                            "agent": "wordsmith",
+                            "error": validation_result.error_message,
+                            "blocking": True
+                        }
+                    ))
+                    return state.copy_with(
+                        phase=PipelinePhase.ERROR,
+                        wordsmith_result=result,
+                        error_message=f"WORDSMITH BLOCKED: {validation_result.error_message}",
+                        phase_history=state.phase_history + [(PipelinePhase.ERROR, time.time())],
+                        metrics=ExecutionMetrics(
+                            **{**state.metrics.__dict__,
+                               "wordsmith_cost": result.cost_usd,
+                               "phase_latencies": {**state.metrics.phase_latencies, "wordsmith": latency_ms}}
+                        )
+                    )
+
                 requires_escalation = (
                     result.critical_errors > ctx.config.max_critical_errors or
                     result.overall_score < ctx.config.min_wordsmith_score

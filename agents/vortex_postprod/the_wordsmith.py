@@ -584,30 +584,40 @@ class TextValidationRequest(BaseModel):
     """Request for text validation"""
     # Input
     video_path: str
-    
+
     # Brand/client
     brand_guidelines: Optional[BrandGuideline] = None
-    
+
     # What to check
     check_flags: List[CheckFlag] = Field(default_factory=lambda: [CheckFlag.ALL])
-    
+
     # OCR settings
     ocr_engine: OCREngine = OCREngine.HYBRID
     keyframe_interval_sec: float = Field(ge=0.1, le=10.0, default=1.0)
     ocr_confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.65)
-    
+
     # Accessibility
     target_wcag_level: WCAGLevel = WCAGLevel.AA
-    
+
     # Options
     include_suggestions: bool = True
     auto_fix_minor: bool = False
     generate_report: bool = True
-    
+
     # Custom dictionaries
     custom_allowed_words: Set[str] = Field(default_factory=set)
     custom_forbidden_words: Set[str] = Field(default_factory=set)
-    
+
+    # RAGNAROK v8.0: Blocking mode for spelling errors
+    blocking_spelling_errors: bool = Field(
+        default=True,
+        description="HALT pipeline on ANY spelling error (v8.0)"
+    )
+    brand_whitelist: List[str] = Field(
+        default=["Barrios A2I", "RAGNAROK", "VORTEX", "NEXUS", "CHROMADON", "TRINITY", "BARRIOS", "A2I", "GENESIS"],
+        description="Brand terms exempt from spell check"
+    )
+
     @field_validator("video_path")
     @classmethod
     def validate_video_path(cls, v: str) -> str:
@@ -1242,30 +1252,70 @@ class TheWordsmith:
         text: str,
         frame_id: int,
         timestamp: float,
+        blocking_mode: bool = True,  # RAGNAROK v8.0: Default to blocking
+        brand_whitelist: Optional[List[str]] = None,  # RAGNAROK v8.0: Brand terms to skip
     ) -> List[ValidationError]:
-        """Check spelling in text"""
+        """
+        Check spelling in text.
+
+        RAGNAROK v8.0: When blocking_mode=True, spelling errors are marked as
+        CRITICAL severity, which will HALT the pipeline.
+
+        Args:
+            text: Text to check
+            frame_id: Frame identifier
+            timestamp: Timestamp in video
+            blocking_mode: If True, spelling errors are CRITICAL (blocks pipeline)
+            brand_whitelist: Brand terms exempt from spell check
+        """
         errors = []
         words = re.findall(r'\b[A-Za-z]+\b', text)
-        
+
+        # Default brand whitelist for Barrios A2I
+        if brand_whitelist is None:
+            brand_whitelist = [
+                "Barrios", "A2I", "RAGNAROK", "VORTEX", "NEXUS",
+                "CHROMADON", "TRINITY", "GENESIS", "BarriosA2I"
+            ]
+
+        # Convert whitelist to uppercase for case-insensitive comparison
+        whitelist_upper = {w.upper() for w in brand_whitelist}
+
         for word in words:
+            # Skip brand whitelist terms
+            if word.upper() in whitelist_upper:
+                continue
+
+            # Skip very short words (likely abbreviations)
+            if len(word) <= 2:
+                continue
+
             correction = check_spelling(word, self.custom_allowed_words)
             if correction:
+                # RAGNAROK v8.0: Use CRITICAL severity in blocking mode
+                severity = (ValidationSeverity.CRITICAL
+                           if blocking_mode
+                           else ValidationSeverity.MINOR)
+
                 error = ValidationError(
                     error_id=generate_error_id(),
                     category=ErrorCategory.SPELLING,
-                    severity=ValidationSeverity.MINOR,
+                    severity=severity,
                     frame_id=frame_id,
                     timestamp_sec=timestamp,
                     original_text=text,
                     problematic_segment=word,
-                    message=f"Possible misspelling: '{word}'",
+                    message=f"{'BLOCKING: ' if blocking_mode else ''}Misspelled: '{word}' → '{correction}'",
                     suggestion=correction,
-                    confidence=0.85,
+                    confidence=0.95 if blocking_mode else 0.85,
                     auto_fixable=True,
-                    rule_id="SPELLING_TYPO",
+                    rule_id="SPELLING_TYPO_BLOCKING" if blocking_mode else "SPELLING_TYPO",
                 )
                 errors.append(error)
-        
+
+                if blocking_mode:
+                    logger.warning(f"[WORDSMITH] BLOCKING SPELLING ERROR at {timestamp:.2f}s: '{word}' → '{correction}'")
+
         return errors
     
     async def validate_grammar(
@@ -1773,10 +1823,12 @@ class TheWordsmith:
                 for detection in detections:
                     all_text_combined += " " + detection.text
                     
-                    # Spelling
+                    # Spelling - RAGNAROK v8.0: Blocking mode
                     if check_spelling:
                         spell_errors = await self.validate_spelling(
-                            detection.text, frame_id, timestamp
+                            detection.text, frame_id, timestamp,
+                            blocking_mode=request.blocking_spelling_errors,
+                            brand_whitelist=request.brand_whitelist
                         )
                         frame_errors.extend(spell_errors)
                     
@@ -1880,8 +1932,33 @@ class TheWordsmith:
             # Generate report
             if request.generate_report:
                 result.report_markdown = self._generate_report(result)
-            
-            result.success = True
+
+            # RAGNAROK v8.0: Check for BLOCKING spelling errors
+            # If blocking_spelling_errors=True and critical spelling errors exist,
+            # the pipeline MUST HALT
+            if request.blocking_spelling_errors:
+                critical_spelling = [
+                    e for e in all_errors
+                    if e.category == ErrorCategory.SPELLING
+                    and e.severity == ValidationSeverity.CRITICAL
+                ]
+
+                if critical_spelling:
+                    result.success = False  # BLOCKS PIPELINE
+                    error_details = "; ".join([
+                        f"'{e.problematic_segment}' → '{e.suggestion}' at {e.timestamp_sec:.2f}s"
+                        for e in critical_spelling[:5]  # Show first 5
+                    ])
+                    result.error_message = (
+                        f"BLOCKING: {len(critical_spelling)} spelling error(s) detected. "
+                        f"Pipeline HALTED. Errors: {error_details}"
+                    )
+                    logger.error(f"[WORDSMITH] PIPELINE BLOCKED: {len(critical_spelling)} spelling errors")
+                    logger.error(f"[WORDSMITH] Errors: {error_details}")
+                else:
+                    result.success = True
+            else:
+                result.success = True
             
         except Exception as e:
             logger.error(f"Validation failed: {e}")

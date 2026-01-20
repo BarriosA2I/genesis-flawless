@@ -6,15 +6,21 @@ Production FFmpeg video assembly pipeline for RAGNAROK Commercial_Lab.
 Adapted from python-barrios-agents/ragnarok/video_assembly_agent.py v3.1.0
 Standalone version without RagnarokCore dependency.
 
+RAGNAROK v8.0 UPGRADES:
+- ClipTimingEngine integration for voiceover sync
+- Clips are now timed to match narration sentences
+- Automatic speed/trim/loop adjustments
+
 Features:
 - Multi-format export (YouTube/TikTok/Instagram)
 - Resolution normalization for mixed inputs
 - Native FFmpeg sidechain compression for audio ducking
 - Async subprocess execution
 - Circuit breaker protection
+- VOICEOVER SYNC (v8.0)
 
 Author: Barrios A2I
-Version: 1.0.0 (GENESIS Standalone)
+Version: 8.0.0 (RAGNAROK v8.0)
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
@@ -32,6 +38,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+
+# RAGNAROK v8.0: Import ClipTimingEngine for voiceover sync
+try:
+    from agents.vortex_postprod.clip_timing_engine import (
+        ClipTimingEngine,
+        ClipTimingRequest,
+        create_clip_timing_engine
+    )
+    CLIP_TIMING_AVAILABLE = True
+except ImportError:
+    CLIP_TIMING_AVAILABLE = False
+    ClipTimingEngine = None
 
 # Configure logging
 logger = logging.getLogger("genesis.video_assembly")
@@ -273,7 +291,8 @@ class VideoAssemblyAgent:
         self,
         work_dir: str = "/tmp/genesis_assembly",
         ffmpeg_path: str = "ffmpeg",
-        ffprobe_path: str = "ffprobe"
+        ffprobe_path: str = "ffprobe",
+        enable_clip_timing: bool = True  # RAGNAROK v8.0: Enable voiceover sync
     ):
         # Work directory
         self.work_dir = Path(work_dir)
@@ -290,6 +309,13 @@ class VideoAssemblyAgent:
             recovery_timeout=60
         )
 
+        # RAGNAROK v8.0: ClipTimingEngine for voiceover sync
+        self.clip_timing_engine = None
+        self.enable_clip_timing = enable_clip_timing
+        if enable_clip_timing and CLIP_TIMING_AVAILABLE:
+            self.clip_timing_engine = create_clip_timing_engine(whisper_model="base")
+            logger.info("[VideoAssemblyAgent] ClipTimingEngine enabled for voiceover sync")
+
         # Cost tracking
         self.total_cost = 0.0
         self.render_count = 0
@@ -300,11 +326,42 @@ class VideoAssemblyAgent:
         """
         Assemble video from clips, voiceover, and optional music.
         Renders to all requested output formats.
+
+        RAGNAROK v8.0: If ClipTimingEngine is enabled and voiceover is present,
+        clips are automatically timed to match voiceover narration.
         """
         start_time = time.time()
 
         logger.info(f"[VideoAssemblyAgent] Starting assembly: {len(request.clips)} clips, "
                    f"{len(request.output_formats)} formats")
+
+        # RAGNAROK v8.0: Sync clips to voiceover timing if enabled
+        timed_clips = None
+        timing_result = None
+        if (self.clip_timing_engine and
+            self.enable_clip_timing and
+            request.audio.voiceover_path and
+            len(request.clips) > 0):
+
+            logger.info("[VideoAssemblyAgent] Calculating clip timing for voiceover sync...")
+            try:
+                timing_result = await self.clip_timing_engine.calculate(
+                    ClipTimingRequest(
+                        clips=[clip.path for clip in request.clips],
+                        voiceover_path=request.audio.voiceover_path
+                    )
+                )
+
+                if timing_result.success:
+                    timed_clips = timing_result.timed_clips
+                    logger.info(f"[VideoAssemblyAgent] Clip timing calculated: "
+                               f"{timing_result.adjusted_clips}/{timing_result.total_clips} clips adjusted")
+                else:
+                    logger.warning(f"[VideoAssemblyAgent] Clip timing failed: {timing_result.error_message}")
+
+            except Exception as e:
+                logger.warning(f"[VideoAssemblyAgent] ClipTimingEngine error: {e}")
+                # Continue without timing adjustments
 
         outputs: Dict[str, FormatOutput] = {}
         total_cost = 0.0

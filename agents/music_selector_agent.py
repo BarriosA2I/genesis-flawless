@@ -1,19 +1,25 @@
 """
-GENESIS Music Selection Agent (Agent 6)
+GENESIS Music Selection Agent (Agent 6) - RAGNAROK v8.0
 ===============================================================================
 Standalone music selector for video production pipeline.
 
 Adapted from RAGNAROK v3.1.0 MusicSelectionAgent - made standalone without
 RagnarokCore dependency.
 
+RAGNAROK v8.0 UPDATE:
+- Added require_user_confirmation parameter (default: True)
+- Integrates with MusicSelectionInterface for interactive selection
+- Pipeline BLOCKS until user confirms music choice
+
 Key Features:
 - Local library of 14 royalty-free tracks ($0 per use)
 - Mood-based track matching
 - FFmpeg sidechain ducking configuration
 - Industry-aware music selection
+- INTERACTIVE USER SELECTION (v8.0)
 
 Author: Barrios A2I
-Version: 1.0.0 (GENESIS Standalone)
+Version: 8.0.0 (RAGNAROK v8.0)
 ===============================================================================
 """
 
@@ -23,9 +29,22 @@ import logging
 import random
 import time
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
+
+# RAGNAROK v8.0: Import interactive selection interface
+try:
+    from agents.music_selection_interface import (
+        MusicSelectionInterface,
+        MusicSelectionResult as InteractiveResult,
+        MusicTrack as InteractiveTrack,
+        create_music_selector as create_interactive_selector
+    )
+    INTERACTIVE_SELECTION_AVAILABLE = True
+except ImportError:
+    INTERACTIVE_SELECTION_AVAILABLE = False
 
 logger = logging.getLogger("genesis.music_selector")
 
@@ -303,16 +322,34 @@ class MusicSelectionAgent:
     """
     Standalone music selection agent for GENESIS pipeline.
 
+    RAGNAROK v8.0: Added require_user_confirmation parameter.
+    When True, pipeline BLOCKS until user selects music interactively.
+
     Selection Strategy (in order):
-    1. Check cache (previous successful selections)
-    2. Search local library (free, instant)
-    3. Return best-effort fallback
+    1. If require_user_confirmation=True: BLOCK and prompt user
+    2. Check cache (previous successful selections)
+    3. Search local library (free, instant)
+    4. Return best-effort fallback
     """
 
-    def __init__(self, local_library: Optional[List[MusicTrack]] = None):
+    def __init__(
+        self,
+        local_library: Optional[List[MusicTrack]] = None,
+        require_user_confirmation: bool = True  # RAGNAROK v8.0: Default to requiring user input
+    ):
         self.local_library = local_library or LOCAL_LIBRARY
         self.industry_profiles = INDUSTRY_PROFILES
         self.cache = SimpleCache()
+
+        # RAGNAROK v8.0: User confirmation requirement
+        self.require_user_confirmation = require_user_confirmation
+        self._interactive_selector: Optional[MusicSelectionInterface] = None
+
+        if require_user_confirmation and INTERACTIVE_SELECTION_AVAILABLE:
+            self._interactive_selector = create_interactive_selector()
+            logger.info("[MusicSelector] Interactive selection ENABLED - user MUST confirm music choice")
+        elif require_user_confirmation and not INTERACTIVE_SELECTION_AVAILABLE:
+            logger.warning("[MusicSelector] Interactive selection requested but interface not available")
 
         # Stats tracking
         self.stats = {
@@ -320,17 +357,26 @@ class MusicSelectionAgent:
             "cache_hits": 0,
             "local_hits": 0,
             "fallbacks": 0,
+            "interactive_selections": 0,
             "total_cost": 0.0
         }
 
         logger.info(f"[MusicSelector] Initialized with {len(self.local_library)} local tracks")
 
-    async def select_music(self, request: MusicRequest) -> MusicResponse:
+    async def select_music(
+        self,
+        request: MusicRequest,
+        music_path: Optional[str] = None  # RAGNAROK v8.0: Allow pre-selected path
+    ) -> MusicResponse:
         """
         Select music for video production.
 
+        RAGNAROK v8.0: If require_user_confirmation=True, this method BLOCKS
+        until user interactively selects a music track.
+
         Args:
             request: Music selection request with industry, mood, duration
+            music_path: Optional pre-selected music path (bypasses interactive selection)
 
         Returns:
             MusicResponse with selected track and ducking config
@@ -339,6 +385,60 @@ class MusicSelectionAgent:
         self.stats["requests"] += 1
 
         logger.info(f"[MusicSelector] Selecting: industry={request.industry}, mood={request.mood}, duration={request.duration}s")
+
+        # RAGNAROK v8.0: Handle pre-selected music path (from API or previous selection)
+        if music_path:
+            logger.info(f"[MusicSelector] Using pre-selected music: {music_path}")
+            return await self._create_response_from_path(music_path, request, start_time)
+
+        # RAGNAROK v8.0: Interactive selection if enabled
+        if self.require_user_confirmation and self._interactive_selector:
+            logger.info("[MusicSelector] BLOCKING: Waiting for user music selection...")
+            interactive_result = await self._interactive_selector.select_music(
+                allow_default=False,
+                video_duration=request.duration
+            )
+
+            if interactive_result and interactive_result.selected_track:
+                self.stats["interactive_selections"] += 1
+                elapsed = (time.time() - start_time) * 1000
+
+                # Convert interactive track to our MusicTrack format
+                track = MusicTrack(
+                    id=interactive_result.selected_track.id,
+                    title=interactive_result.selected_track.title,
+                    artist=interactive_result.selected_track.artist,
+                    url=interactive_result.selected_track.path,
+                    duration=interactive_result.selected_track.duration_sec,
+                    bpm=interactive_result.selected_track.bpm or 120,
+                    mood=interactive_result.selected_track.mood,
+                    genre=interactive_result.selected_track.genre,
+                    provider=MusicProvider.LOCAL,
+                    cost=0.0
+                )
+
+                ducking = DuckingConfig(
+                    threshold=interactive_result.ducking_config.threshold,
+                    ratio=interactive_result.ducking_config.ratio,
+                    attack=interactive_result.ducking_config.attack,
+                    release=interactive_result.ducking_config.release,
+                    music_base_volume=interactive_result.ducking_config.music_base_volume
+                )
+
+                logger.info(f"[MusicSelector] User selected: {track.title} ({track.duration:.1f}s)")
+
+                return MusicResponse(
+                    primary_track=track,
+                    backup_tracks=[],
+                    ducking_config=ducking,
+                    confidence=1.0,  # User confirmed = 100% confidence
+                    source="user_interactive",
+                    cost=0.0,
+                    processing_time_ms=elapsed
+                )
+            else:
+                logger.warning("[MusicSelector] No music selected by user")
+                # Fall through to automatic selection as fallback
 
         # Generate cache key
         cache_key = self._generate_cache_key(request)
@@ -531,17 +631,86 @@ class MusicSelectionAgent:
         return {
             "local_library_size": len(self.local_library),
             "stats": self.stats,
-            "cache_size": len(self.cache._cache)
+            "cache_size": len(self.cache._cache),
+            "require_user_confirmation": self.require_user_confirmation
         }
+
+    # =========================================================================
+    # RAGNAROK v8.0: Helper method for pre-selected music paths
+    # =========================================================================
+
+    async def _create_response_from_path(
+        self,
+        music_path: str,
+        request: MusicRequest,
+        start_time: float
+    ) -> MusicResponse:
+        """Create MusicResponse from a pre-selected music path."""
+        path = Path(music_path)
+        industry_profile = self.industry_profiles.get(
+            request.industry.lower(),
+            {"mood": request.mood, "music_genre": None, "ducking": {}}
+        )
+
+        # Get duration if ffprobe available
+        duration = request.duration  # Default to requested duration
+        try:
+            import subprocess
+            import json as json_module
+            result = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", music_path],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                data = json_module.loads(result.stdout)
+                duration = float(data.get("format", {}).get("duration", duration))
+        except Exception:
+            pass
+
+        track = MusicTrack(
+            id=f"custom_{path.stem[:8]}",
+            title=path.stem,
+            artist="Custom Selection",
+            url=music_path,
+            duration=duration,
+            bpm=120,
+            mood=[request.mood],
+            genre=[industry_profile.get("music_genre", "custom")],
+            provider=MusicProvider.LOCAL,
+            cost=0.0
+        )
+
+        ducking = self._generate_ducking_config(request, industry_profile)
+        elapsed = (time.time() - start_time) * 1000
+
+        return MusicResponse(
+            primary_track=track,
+            backup_tracks=[],
+            ducking_config=ducking,
+            confidence=1.0,
+            source="pre_selected",
+            cost=0.0,
+            processing_time_ms=elapsed
+        )
 
 
 # =============================================================================
 # FACTORY FUNCTION
 # =============================================================================
 
-def create_music_selector() -> MusicSelectionAgent:
-    """Create MusicSelectionAgent instance."""
-    return MusicSelectionAgent()
+def create_music_selector(
+    require_user_confirmation: bool = True  # RAGNAROK v8.0: Default to requiring user input
+) -> MusicSelectionAgent:
+    """
+    Create MusicSelectionAgent instance.
+
+    Args:
+        require_user_confirmation: If True, pipeline BLOCKS until user selects music
+
+    Returns:
+        MusicSelectionAgent instance
+    """
+    return MusicSelectionAgent(require_user_confirmation=require_user_confirmation)
 
 
 # =============================================================================
