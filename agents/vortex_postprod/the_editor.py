@@ -1397,8 +1397,8 @@ class TheEditor:
                 from_shot_id=current_shot.shot_id,
                 to_shot_id=next_shot.shot_id,
                 transition_type=transition_type,
-                duration_frames=int(duration_seconds * DEFAULT_FPS),
-                duration_seconds=duration_seconds,
+                duration_frames=max(1, int(duration_seconds * DEFAULT_FPS)),  # Ensure minimum 1 frame
+                duration_seconds=max(0.033, duration_seconds),  # Ensure minimum ~1 frame at 30fps
                 reasoning=f"Applied rule: {selected_rule.name}. {selected_rule.description}",
                 alternatives=alternatives,
                 confidence=0.8 if selected_rule.rule_id != "default" else 0.5,

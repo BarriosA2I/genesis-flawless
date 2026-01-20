@@ -196,7 +196,7 @@ class ClipTimingEngine:
 
     async def _fallback_parse_voiceover(self, audio_path: str) -> List[VoiceoverSegment]:
         """Fallback timing estimation when Whisper unavailable."""
-        duration = await self.get_media_duration(audio_path)
+        duration = self.get_media_duration_sync(audio_path)
 
         # Estimate ~3 seconds per segment (average sentence)
         num_segments = max(1, int(duration / 3.0))
@@ -217,8 +217,8 @@ class ClipTimingEngine:
         logger.info(f"[ClipTimingEngine] Fallback: estimated {len(segments)} segments")
         return segments
 
-    async def get_media_duration(self, file_path: str) -> float:
-        """Get media duration using ffprobe."""
+    def get_media_duration_sync(self, file_path: str) -> float:
+        """Get media duration using ffprobe (synchronous)."""
         try:
             cmd = [
                 self.ffprobe, "-v", "error",
@@ -226,7 +226,7 @@ class ClipTimingEngine:
                 "-of", "json", file_path
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 data = json.loads(result.stdout)
                 return float(data.get("format", {}).get("duration", 0))
@@ -234,6 +234,10 @@ class ClipTimingEngine:
             logger.warning(f"[ClipTimingEngine] ffprobe error for {file_path}: {e}")
 
         return 0.0
+
+    async def get_media_duration(self, file_path: str) -> float:
+        """Get media duration using ffprobe (async wrapper)."""
+        return self.get_media_duration_sync(file_path)
 
     def calculate_timing(
         self,
@@ -269,10 +273,8 @@ class ClipTimingEngine:
             segment_idx = min(int(i / clips_per_segment), len(segments) - 1)
             segment = segments[segment_idx]
 
-            # Get actual clip duration
-            actual_dur = asyncio.get_event_loop().run_until_complete(
-                self.get_media_duration(clip_path)
-            )
+            # Get actual clip duration (use sync version to avoid event loop issues)
+            actual_dur = self.get_media_duration_sync(clip_path)
             if actual_dur == 0:
                 actual_dur = 5.0  # Default assumption
 
