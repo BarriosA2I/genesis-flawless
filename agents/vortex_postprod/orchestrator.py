@@ -754,8 +754,8 @@ class EditorNode(GraphNode):
                 span.set_attribute("editor.transitions", result.transitions_applied)
                 if cb:
                     await cb.record_success()
-                AGENT_CALLS.labels(agent_name="editor", status="success").inc()
-                AGENT_LATENCY.labels(agent_name="editor").observe(latency_ms)
+                AGENT_CALLS.labels(agent="editor", status="success").inc()
+                AGENT_LATENCY.labels(agent="editor").observe(latency_ms)
                 await ctx.event_bus.publish(PipelineEvent(
                     type=EventType.AGENT_COMPLETED, timestamp=time.time(),
                     state_id=state.id, payload={"agent": "editor", "latency_ms": latency_ms}
@@ -774,7 +774,7 @@ class EditorNode(GraphNode):
             except Exception as e:
                 if cb:
                     await cb.record_failure()
-                AGENT_CALLS.labels(agent_name="editor", status="failure").inc()
+                AGENT_CALLS.labels(agent="editor", status="failure").inc()
                 logger.error(f"Editor failed: {e}")
                 return state.copy_with(
                     phase=PipelinePhase.ERROR if ctx.config.fail_fast else PipelinePhase.SOUNDSCAPER,
@@ -831,8 +831,8 @@ class SoundscaperNode(GraphNode):
                 span.set_attribute("soundscaper.latency_ms", latency_ms)
                 if cb:
                     await cb.record_success()
-                AGENT_CALLS.labels(agent_name="soundscaper", status="success").inc()
-                AGENT_LATENCY.labels(agent_name="soundscaper").observe(latency_ms)
+                AGENT_CALLS.labels(agent="soundscaper", status="success").inc()
+                AGENT_LATENCY.labels(agent="soundscaper").observe(latency_ms)
                 await ctx.event_bus.publish(PipelineEvent(
                     type=EventType.AGENT_COMPLETED, timestamp=time.time(),
                     state_id=state.id, payload={"agent": "soundscaper", "latency_ms": latency_ms}
@@ -851,7 +851,7 @@ class SoundscaperNode(GraphNode):
             except Exception as e:
                 if cb:
                     await cb.record_failure()
-                AGENT_CALLS.labels(agent_name="soundscaper", status="failure").inc()
+                AGENT_CALLS.labels(agent="soundscaper", status="failure").inc()
                 logger.error(f"Soundscaper failed: {e}")
                 return state.copy_with(
                     phase=PipelinePhase.ERROR if ctx.config.fail_fast else PipelinePhase.WORDSMITH,
@@ -910,8 +910,8 @@ class WordsmithNode(GraphNode):
                 span.set_attribute("wordsmith.score", result.overall_score)
                 if cb:
                     await cb.record_success()
-                AGENT_CALLS.labels(agent_name="wordsmith", status="success").inc()
-                AGENT_LATENCY.labels(agent_name="wordsmith").observe(latency_ms)
+                AGENT_CALLS.labels(agent="wordsmith", status="success").inc()
+                AGENT_LATENCY.labels(agent="wordsmith").observe(latency_ms)
                 await ctx.event_bus.publish(PipelineEvent(
                     type=EventType.AGENT_COMPLETED, timestamp=time.time(),
                     state_id=state.id, payload={"agent": "wordsmith", "score": result.overall_score}
@@ -939,7 +939,7 @@ class WordsmithNode(GraphNode):
             except Exception as e:
                 if cb:
                     await cb.record_failure()
-                AGENT_CALLS.labels(agent_name="wordsmith", status="failure").inc()
+                AGENT_CALLS.labels(agent="wordsmith", status="failure").inc()
                 logger.error(f"Wordsmith failed: {e}")
                 return state.copy_with(
                     phase=PipelinePhase.ERROR if ctx.config.fail_fast else PipelinePhase.VERIFICATION,
