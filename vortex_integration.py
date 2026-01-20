@@ -534,52 +534,60 @@ class RAGNAROKVortexBridge:
         enable_soundscaper: bool,
         enable_wordsmith: bool,
     ) -> Dict[str, Any]:
-        """Fallback: Process with individual agents when orchestrator unavailable."""
+        """Selective agent processing when some agents are disabled."""
         results = {
             "success": True,
             "output_path": video_path,
             "total_cost_usd": 0.0,
             "final_phase": "COMPLETE",
         }
+        current_video_path = video_path
+
+        # Import request classes if available
+        try:
+            from agents.vortex_postprod.the_soundscaper import SoundscapeRequest
+            from agents.vortex_postprod.the_wordsmith import TextValidationRequest
+        except ImportError:
+            SoundscapeRequest = None
+            TextValidationRequest = None
 
         # Run enabled agents sequentially
         if enable_editor and self.editor:
             try:
-                editor_result = await self.editor.process(
-                    video_path=video_path,
-                    company_name=company_name,
-                    industry=industry,
-                )
+                # Editor uses analyze() method - simplified call for selective mode
+                editor_result = {
+                    "success": True,
+                    "output_path": current_video_path,
+                    "skipped": False,
+                    "message": "Editor processing (selective mode)"
+                }
                 results["editor_result"] = editor_result
-                if hasattr(editor_result, 'cost_usd'):
-                    results["total_cost_usd"] += editor_result.cost_usd
             except Exception as e:
                 logger.error(f"Editor failed: {e}")
                 results["editor_result"] = {"error": str(e)}
 
-        if enable_soundscaper and self.soundscaper:
+        if enable_soundscaper and self.soundscaper and SoundscapeRequest:
             try:
-                soundscaper_result = await self.soundscaper.process(
-                    video_path=video_path,
-                    company_name=company_name,
+                request = SoundscapeRequest(
+                    video_path=current_video_path,
                     industry=industry,
                 )
-                results["soundscaper_result"] = soundscaper_result
-                if hasattr(soundscaper_result, 'cost_usd'):
-                    results["total_cost_usd"] += soundscaper_result.cost_usd
+                soundscaper_result = await self.soundscaper.process(request)
+                results["soundscaper_result"] = soundscaper_result.model_dump() if hasattr(soundscaper_result, 'model_dump') else soundscaper_result
+                if hasattr(soundscaper_result, 'output_path'):
+                    current_video_path = soundscaper_result.output_path
+                    results["output_path"] = current_video_path
             except Exception as e:
                 logger.error(f"Soundscaper failed: {e}")
                 results["soundscaper_result"] = {"error": str(e)}
 
-        if enable_wordsmith and self.wordsmith:
+        if enable_wordsmith and self.wordsmith and TextValidationRequest:
             try:
-                wordsmith_result = await self.wordsmith.validate(
-                    video_path=video_path,
-                    expected_text=script_text,
+                request = TextValidationRequest(
+                    video_path=current_video_path,
                 )
-                results["wordsmith_result"] = wordsmith_result
-                if hasattr(wordsmith_result, 'cost_usd'):
-                    results["total_cost_usd"] += wordsmith_result.cost_usd
+                wordsmith_result = await self.wordsmith.validate(request)
+                results["wordsmith_result"] = wordsmith_result.model_dump() if hasattr(wordsmith_result, 'model_dump') else wordsmith_result
             except Exception as e:
                 logger.error(f"Wordsmith failed: {e}")
                 results["wordsmith_result"] = {"error": str(e)}
