@@ -451,19 +451,32 @@ class RAGNAROKVortexBridge:
 
             logger.info(f"[{request_id}] Enhancement complete | latency={total_latency_ms:.1f}ms")
 
+            # Handle checkpoints - orchestrator returns count (int), we need list
+            checkpoints_raw = result.get("checkpoints", [])
+            if isinstance(checkpoints_raw, int):
+                checkpoints_list = [f"checkpoint_{i}" for i in range(checkpoints_raw)]
+            elif isinstance(checkpoints_raw, list):
+                checkpoints_list = checkpoints_raw
+            else:
+                checkpoints_list = []
+
+            # Extract metrics from nested structure if present
+            metrics = result.get("metrics", {})
+            total_cost = metrics.get("total_cost_usd", result.get("total_cost_usd", 0.0))
+
             return EnhanceResponse(
                 success=result.get("success", True),
                 request_id=request_id,
                 output_url=result.get("output_url"),
                 output_path=result.get("output_path", local_path),
                 total_latency_ms=total_latency_ms,
-                total_cost_usd=result.get("total_cost_usd", 0.0),
+                total_cost_usd=total_cost,
                 processing_mode=mode_str,
-                editor_result=result.get("editor_result"),
-                soundscaper_result=result.get("soundscaper_result"),
-                wordsmith_result=result.get("wordsmith_result"),
+                editor_result=result.get("results", {}).get("editor") or result.get("editor_result"),
+                soundscaper_result=result.get("results", {}).get("soundscaper") or result.get("soundscaper_result"),
+                wordsmith_result=result.get("results", {}).get("wordsmith") or result.get("wordsmith_result"),
                 final_phase=result.get("final_phase", "COMPLETE"),
-                checkpoints=result.get("checkpoints", []),
+                checkpoints=checkpoints_list,
             )
 
         except Exception as e:
