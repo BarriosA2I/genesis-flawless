@@ -41,8 +41,8 @@ class RalphTestRequest(BaseModel):
         description="Whether to publish to gallery (AUTO-PUBLISH test)"
     )
     max_size_mb: int = Field(
-        default=50,
-        description="Max video size in MB (default 50MB for Render free tier)"
+        default=15,
+        description="Max video size in MB (default 15MB - WORDSMITH uses ~10x memory)"
     )
     lite_mode: bool = Field(
         default=False,
@@ -96,7 +96,8 @@ class Signals:
 # VIDEO DOWNLOADER
 # =============================================================================
 
-MAX_VIDEO_SIZE_MB = 50  # Max video size for Render free tier (512MB RAM)
+MAX_VIDEO_SIZE_MB = 15  # Max video size for Render free tier (512MB RAM)
+                        # WORDSMITH extracts keyframes which uses ~10x video size in memory
 
 
 async def download_video(url: str, timeout: int = 300, max_size_mb: int = MAX_VIDEO_SIZE_MB) -> str:
