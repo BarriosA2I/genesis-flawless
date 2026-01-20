@@ -96,6 +96,13 @@ from vortex_integration import (
     VORTEX_POSTPROD_AVAILABLE,
 )
 
+# Import RALPH Pipeline Test API
+from ralph_test_api import (
+    RalphTestRequest,
+    RalphTestResponse,
+    run_ralph_tests,
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -2400,6 +2407,66 @@ async def vortex_postprod_health():
         }
 
     return vortex_postprod_bridge.health_check()
+
+
+# =============================================================================
+# RALPH PIPELINE TESTING
+# =============================================================================
+
+@app.post("/api/v1/ralph/test", tags=["RALPH Testing"], response_model=RalphTestResponse)
+async def ralph_pipeline_test(request: RalphTestRequest):
+    """
+    Run RALPH pipeline tests with a remote video URL.
+
+    Tests available:
+    - **wordsmith**: OCR text validation (spelling, grammar, WCAG)
+    - **clip_timing**: Voiceover synchronization
+    - **soundscaper**: Audio mixing and ducking
+    - **editor**: Shot detection and color grading
+    - **publish**: Gallery publication (AUTO-PUBLISH)
+
+    Example request:
+    ```json
+    {
+        "video_url": "https://example.com/video.mp4",
+        "tests": ["wordsmith", "clip_timing", "soundscaper", "editor", "publish"],
+        "publish_to_gallery": true
+    }
+    ```
+
+    Returns test results with pass/fail status, scores, and gallery URL if published.
+    """
+    logger.info(f"[RALPH_TEST] Starting pipeline test with video: {request.video_url}")
+
+    try:
+        result = await run_ralph_tests(request)
+
+        # Log summary
+        logger.info(
+            f"[RALPH_TEST] Complete: {result.passed}/{result.total} passed, "
+            f"duration={result.duration_ms:.0f}ms, gallery={result.gallery_url}"
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"[RALPH_TEST] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/ralph/test/quick", tags=["RALPH Testing"])
+async def ralph_quick_test(video_url: str = Query(..., description="URL to video file")):
+    """
+    Quick RALPH test - runs all tests with a single query parameter.
+
+    Example: /api/v1/ralph/test/quick?video_url=https://example.com/video.mp4
+    """
+    request = RalphTestRequest(
+        video_url=video_url,
+        tests=["wordsmith", "clip_timing", "soundscaper", "editor", "publish"],
+        publish_to_gallery=True
+    )
+    return await ralph_pipeline_test(request)
 
 
 # ROOT & DOCS
