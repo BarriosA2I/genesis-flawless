@@ -37,6 +37,16 @@ except ImportError as e:
     V2_AVAILABLE = False
     creative_director_v2 = None
 
+# Import V3 Natural Conversation Creative Director
+try:
+    from intake.creative_director_v3 import CreativeDirectorV3
+    creative_director_v3 = CreativeDirectorV3()
+    V3_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Creative Director V3 not available: {e}")
+    V3_AVAILABLE = False
+    creative_director_v3 = None
+
 # Import session storage
 try:
     from storage.redis_session_store import RedisSessionStore, SessionData
@@ -54,6 +64,21 @@ except ImportError as e:
     logging.warning(f"NEXUS Q&A handler not available: {e}")
     QA_HANDLER_AVAILABLE = False
     nexus_qa_handler = None
+
+# Import Integration Hub client for lead capture
+try:
+    from nexus_integration_client import (
+        get_integration_client,
+        detect_trigger_keywords,
+        enrich_response_with_hooks,
+        Platform,
+        LeadSource,
+        ConversionStatus,
+    )
+    INTEGRATION_CLIENT_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Integration client not available: {e}")
+    INTEGRATION_CLIENT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +98,14 @@ QA_INTENT_KEYWORDS = [
     "how does", "how do", "why should", "can you", "do you",
     "help me understand", "i have a question", "question about",
     "contact", "support", "talk to", "speak with",
+]
+
+# Keywords that indicate lead/buying intent (capture to Integration Hub)
+LEAD_INTENT_KEYWORDS = [
+    "pricing", "cost", "quote", "hire", "work with",
+    "schedule", "consultation", "demo", "interested",
+    "how much", "get started", "contact", "proposal",
+    "a2i", "commercial",
 ]
 
 # Keywords that indicate explicit video production intent
@@ -240,10 +273,59 @@ async def chat(request: ChatRequest):
         intent = detect_intent(request.message)
         logger.info(f"[CHAT] Intent detected: {intent} for message: '{request.message[:50]}...'")
 
+        # =====================================================================
+        # LEAD CAPTURE - Track buying intent via Integration Hub
+        # =====================================================================
+        lead_captured = False
+        lead_id = None
+        suggested_hook = ""  # SCRIPTWRITER-X personalized hook
+        if INTEGRATION_CLIENT_AVAILABLE:
+            message_lower = request.message.lower()
+            if any(keyword in message_lower for keyword in LEAD_INTENT_KEYWORDS):
+                try:
+                    client = get_integration_client()
+                    engagement_result = await client.handle_social_engagement(
+                        platform=Platform.WEBSITE,
+                        contact_handle=session_id,
+                        message=request.message,
+                        engagement_type="website_chat"
+                    )
+                    # Check for errors in the result (client returns {"error": ...} on failure)
+                    if "error" in engagement_result:
+                        logger.warning(f"[CHAT] Lead capture hub error: {engagement_result.get('error')}")
+                    else:
+                        lead_captured = True
+                        lead_id = engagement_result.get("lead_id")
+                        suggested_hook = engagement_result.get("suggested_response", "")
+                        logger.info(f"[CHAT] Lead captured: {lead_id} | Hook: {suggested_hook[:50] if suggested_hook else 'None'}...")
+                except Exception as e:
+                    logger.warning(f"[CHAT] Lead capture failed: {e}")
+
         # Route to Q&A handler for customer questions
         if intent == "qa" and QA_HANDLER_AVAILABLE and nexus_qa_handler:
             logger.info(f"[CHAT] Routing to NEXUS Q&A handler")
-            result = await nexus_qa_handler(request.message, session_id)
+            qa_result = await nexus_qa_handler(request.message, session_id)
+
+            # Get base response
+            response_text = qa_result.get("response", "")
+
+            # Enrich response with SCRIPTWRITER-X hooks for lead conversion
+            if INTEGRATION_CLIENT_AVAILABLE and lead_captured and suggested_hook:
+                # Prepend the personalized hook to the response
+                response_text = f"{suggested_hook}\n\n{response_text}"
+                logger.info(f"[CHAT] Response enriched with SCRIPTWRITER-X hook")
+            elif INTEGRATION_CLIENT_AVAILABLE and lead_captured:
+                # Try async enrichment if no suggested_hook was returned
+                try:
+                    enriched = await enrich_response_with_hooks(
+                        base_response=response_text,
+                        context=request.message,
+                        visitor_profile={"session_id": session_id}
+                    )
+                    response_text = enriched
+                    logger.info(f"[CHAT] Response enriched via enrich_response_with_hooks")
+                except Exception as e:
+                    logger.warning(f"[CHAT] Response enrichment failed: {e}")
 
             latency_ms = (time.time() - start_time) * 1000
             logger.info(f"[CHAT] Q&A processed: session={session_id}, latency={latency_ms:.0f}ms")
@@ -251,12 +333,12 @@ async def chat(request: ChatRequest):
             # Return Q&A response in ChatResponse format
             return ChatResponse(
                 session_id=session_id,
-                response=result.get("response", ""),
-                phase=result.get("phase", "qa"),
-                progress=result.get("progress", 0.0),
-                is_complete=result.get("is_complete", False),
-                progress_percentage=result.get("progress_percentage", 0),
-                missing_fields=result.get("missing_fields", []),
+                response=response_text,
+                phase=qa_result.get("phase", "qa"),
+                progress=qa_result.get("progress", 0.0),
+                is_complete=qa_result.get("is_complete", False),
+                progress_percentage=qa_result.get("progress_percentage", 0),
+                missing_fields=qa_result.get("missing_fields", []),
                 trigger_production=False,  # Never trigger production from Q&A
                 ragnarok_ready=False,
                 mode="qa",
@@ -264,7 +346,10 @@ async def chat(request: ChatRequest):
                     "latency_ms": latency_ms,
                     "intent": intent,
                     "handler": "nexus_qa",
-                    **result.get("metadata", {})
+                    "lead_captured": lead_captured,
+                    "lead_id": lead_id,
+                    "suggested_hook": suggested_hook if suggested_hook else None,
+                    **qa_result.get("metadata", {})
                 }
             )
 
@@ -307,6 +392,8 @@ async def chat(request: ChatRequest):
                 "extracted_fields": list(state.get("brief_data", {}).keys()) if state.get("brief_data") else [],
                 "extracted_data": state.get("brief_data", {}),
                 "sentiment": result.get("sentiment", {}),
+                "lead_captured": lead_captured,
+                "lead_id": lead_id,
             }
         )
 
@@ -598,3 +685,179 @@ async def reset_session_v2(session_id: str):
         del creative_director_v2.sessions[session_id]
         return {"status": "reset", "session_id": session_id}
     return {"status": "not_found", "session_id": session_id}
+
+
+# =============================================================================
+# V3 ENDPOINTS - Natural Conversation Creative Director
+# =============================================================================
+
+@router.post("/chat/v3")
+async def chat_v3(request: ChatRequest):
+    """
+    V3 Creative Director - Natural conversation that HELPS users.
+
+    Key fix from V2: When user says "I'm not sure", V3 provides helpful
+    suggestions instead of just repeating the question.
+
+    Acts like a creative partner, not a robotic form.
+    """
+    if not V3_AVAILABLE or not creative_director_v3:
+        raise HTTPException(
+            status_code=503,
+            detail="Creative Director V3 not available"
+        )
+
+    try:
+        result = await creative_director_v3.process_message(
+            session_id=request.session_id,
+            user_message=request.message
+        )
+        return result
+
+    except Exception as e:
+        logger.error(f"V3 endpoint error: {e}", exc_info=True)
+        return {
+            "response": "I encountered an issue. Please try again.",
+            "brief": {},
+            "phase": "intake",
+            "error": str(e),
+            "version": "v3-natural"
+        }
+
+
+@router.get("/chat/v3/greeting")
+async def get_v3_greeting():
+    """Get V3 initial greeting."""
+    if not V3_AVAILABLE or not creative_director_v3:
+        raise HTTPException(
+            status_code=503,
+            detail="Creative Director V3 not available"
+        )
+    return {"greeting": creative_director_v3.get_greeting()}
+
+
+@router.get("/chat/v3/session/{session_id}")
+async def get_session_v3(session_id: str):
+    """Get V3 session state."""
+    if not V3_AVAILABLE or not creative_director_v3:
+        raise HTTPException(
+            status_code=503,
+            detail="Creative Director V3 not available"
+        )
+
+    state = creative_director_v3.sessions.get(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {
+        "session_id": session_id,
+        "brief": state.brief.to_dict(),
+        "phase": state.phase,
+        "message_count": len(state.messages)
+    }
+
+
+@router.delete("/chat/v3/session/{session_id}")
+async def reset_session_v3(session_id: str):
+    """Reset a V3 session to start fresh."""
+    if not V3_AVAILABLE or not creative_director_v3:
+        raise HTTPException(
+            status_code=503,
+            detail="Creative Director V3 not available"
+        )
+
+    if session_id in creative_director_v3.sessions:
+        del creative_director_v3.sessions[session_id]
+        return {"status": "reset", "session_id": session_id}
+    return {"status": "not_found", "session_id": session_id}
+
+
+# =============================================================================
+# NEXUS INTEGRATION HUB ENDPOINTS - Phase 5
+# =============================================================================
+
+@router.get("/nexus/integration/health")
+async def integration_health():
+    """
+    Check Integration Hub connectivity.
+    Returns hub status, circuit breaker state, and lead stats.
+    """
+    if not INTEGRATION_CLIENT_AVAILABLE:
+        return {
+            "status": "unavailable",
+            "hub_connected": False,
+            "reason": "Integration client not imported",
+        }
+
+    try:
+        client = get_integration_client()
+        hub_health = await client.health_check()
+        return {
+            "status": "healthy",
+            "hub_connected": True,
+            "hub_status": hub_health.get("status"),
+            "hub_services": hub_health.get("services", {}),
+            "hub_stats": hub_health.get("stats", {}),
+        }
+    except Exception as e:
+        logger.error(f"[INTEGRATION] Health check failed: {e}")
+        return {
+            "status": "degraded",
+            "hub_connected": False,
+            "error": str(e),
+        }
+
+
+class LeadStatusUpdate(BaseModel):
+    """Request model for lead status updates."""
+    status: str
+    deal_value: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@router.patch("/leads/{lead_id}/status")
+async def update_lead_status_endpoint(lead_id: str, update: LeadStatusUpdate):
+    """
+    Update lead status - triggers feedback loop on conversion.
+
+    Status values: new, engaged, qualified, proposal_sent, converted, lost, ghosted
+
+    When status is 'converted', provide deal_value to trigger the SCRIPTWRITER-X
+    feedback loop, marking the source content as "legendary".
+    """
+    if not INTEGRATION_CLIENT_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Integration client not available"
+        )
+
+    try:
+        client = get_integration_client()
+        result = await client.update_lead_status(
+            lead_id=lead_id,
+            status=ConversionStatus(update.status),
+            deal_value=update.deal_value,
+        )
+
+        logger.info(f"[INTEGRATION] Lead {lead_id} status updated to {update.status}")
+        if update.status == "converted" and update.deal_value:
+            logger.info(f"[INTEGRATION] Conversion feedback triggered: ${update.deal_value:,.2f}")
+
+        return {
+            "success": True,
+            "lead_id": lead_id,
+            "new_status": update.status,
+            "feedback_triggered": update.status == "converted",
+            "result": result,
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status value: {update.status}. Valid: new, engaged, qualified, proposal_sent, converted, lost, ghosted"
+        )
+    except Exception as e:
+        logger.error(f"[INTEGRATION] Lead status update failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update lead: {str(e)}"
+        )
