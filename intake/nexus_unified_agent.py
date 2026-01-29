@@ -45,6 +45,12 @@ except ImportError:
     TRINITY_AVAILABLE = False
     TrinityOrchestrator = None
 
+# DRY_RUN mode - bypass token gating for testing
+try:
+    from nexus_bridge import DRY_RUN
+except ImportError:
+    DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
+
 # Configuration
 GENESIS_API_BASE = os.getenv("GENESIS_API_BASE", "https://barrios-genesis-flawless.onrender.com")
 
@@ -359,16 +365,27 @@ Example: {{"business_name": "Acme Corp"}}"""
 
         # Handle token-gated generation
         if intent == Intent.CONFIRM_GENERATE:
-            if token_info["balance"] < 8:
+            # DRY_RUN mode: bypass token gating for testing
+            if DRY_RUN:
+                logger.info("🧪 DRY_RUN: Bypassing token check for testing")
+                token_bypass = True
+            elif token_info["balance"] < 8:
                 ai_response = f"You need 8 tokens for a commercial but have {token_info['balance']}. Check out our pricing at barriosa2i.com/pricing to get tokens!"
                 state.messages.append({"role": "assistant", "content": ai_response})
                 return self._build_response(state, ai_response, token_info, intent)
+            else:
+                token_bypass = False
 
-            # Deduct tokens and trigger production
-            success = await use_tokens(user_id, 8, "Commercial generation")
+            # Deduct tokens (skip in DRY_RUN mode) and trigger production
+            if DRY_RUN:
+                logger.info("🧪 DRY_RUN: Skipping token deduction")
+                success = True
+            else:
+                success = await use_tokens(user_id, 8, "Commercial generation")
             if success:
                 state.phase = "production"
-                token_info["balance"] -= 8
+                if not DRY_RUN:
+                    token_info["balance"] -= 8
 
                 # Trigger the RAGNAROK production pipeline
                 production_result = await self._trigger_production(state)
@@ -376,7 +393,20 @@ Example: {{"business_name": "Acme Corp"}}"""
                 if production_result.get("success"):
                     state.production_triggered = True
                     state.production_id = production_result.get("production_id")
-                    ai_response = f"""🎬 **Production Started!**
+
+                    # Different message for DRY_RUN mode
+                    if DRY_RUN:
+                        ai_response = f"""🧪 **DRY RUN - Production Started!**
+
+Your commercial for **{state.brief.business_name}** is now in the RAGNAROK pipeline (TEST MODE).
+
+**Production ID:** `{state.production_id}`
+
+⚠️ DRY_RUN MODE: No tokens deducted, mock URLs will be returned.
+
+Track progress at: barriosa2i.com/command-center"""
+                    else:
+                        ai_response = f"""🎬 **Production Started!**
 
 Your commercial for **{state.brief.business_name}** is now in the RAGNAROK pipeline.
 
@@ -386,7 +416,7 @@ Your commercial for **{state.brief.business_name}** is now in the RAGNAROK pipel
 
 Track progress at: barriosa2i.com/command-center"""
                 else:
-                    ai_response = f"8 tokens deducted but hit a snag starting production: {production_result.get('error', 'Unknown error')}. Our team has been notified!"
+                    ai_response = f"{'🧪 DRY RUN: ' if DRY_RUN else ''}8 tokens deducted but hit a snag starting production: {production_result.get('error', 'Unknown error')}. Our team has been notified!"
                     state.production_error = production_result.get("error")
             else:
                 ai_response = "Something went wrong with token deduction. Let me check on that."
