@@ -22,33 +22,33 @@ if STRIPE_API_KEY:
     stripe.api_key = STRIPE_API_KEY
 
 # Token amounts per product
+# V2 "Performance Engine" Pricing - Updated 2026-01-29
 PRODUCT_TOKENS = {
-    # Subscription tiers (monthly)
-    "starter": 8,
-    "creator": 16,
-    "growth": 32,
-    "scale": 64,
-    # One-time token packs
-    "pack_8": 8,
-    "pack_16": 16,
-    "pack_32": 32,
-    # Lab test
-    "lab_test": 8,
+    # V2 Subscription tiers (monthly)
+    "prototyper": 16,    # $599/mo
+    "growth": 40,        # $1,199/mo
+    "scale": 96,         # $2,499/mo
+    # V2 Entry offer
+    "rapid_pilot": 8,    # $299 one-time
+    # V2 Token packs (non-subscriber pricing)
+    "pack_8": 8,         # $600
+    "pack_16": 16,       # $1,200
+    "pack_40": 40,       # $3,000
 }
 
 # Price ID to product mapping (Stripe price IDs)
+# V2 "Performance Engine" Pricing - Updated 2026-01-29
 PRICE_TO_PRODUCT = {
-    # Subscription tiers (monthly)
-    "price_1SuDIPLyFGkLiU4CWVBwoBAR": "starter",   # $449/mo - 8 tokens
-    "price_1SuDJPLyFGkLiU4Ck2CzcwcX": "creator",   # $899/mo - 16 tokens
-    "price_1SuDMRLyFGkLiU4Ci4if35Dv": "growth",    # $1,699/mo - 32 tokens
-    "price_1SuDNGLyFGkLiU4CS6eYsq6F": "scale",     # $3,199/mo - 64 tokens
-    # One-time token packs
-    "price_1SuDP7LyFGkLiU4CPQEhLnal": "pack_8",    # $449 - 8 tokens
-    "price_1SuDR8LyFGkLiU4Ci907l5b2": "pack_16",   # $799 - 16 tokens
-    "price_1SuDS6LyFGkLiU4CGLuNK8wS": "pack_32",   # $1,499 - 32 tokens
-    # Lab test
-    "price_1SuDOBLyFGkLiU4Ct7F1xeZo": "lab_test",  # $500 - 8 tokens
+    # V2 Subscription tiers (monthly)
+    "price_1SuxDoLyFGkLiU4CxxLjgoZq": "prototyper",  # $599/mo - 16 tokens
+    "price_1SuxFnLyFGkLiU4CzqWvv9DR": "growth",      # $1,199/mo - 40 tokens
+    "price_1SuxGQLyFGkLiU4CiDiAEkOD": "scale",       # $2,499/mo - 96 tokens
+    # V2 Entry offer
+    "price_1SuxIMLyFGkLiU4CBoIEIfs8": "rapid_pilot", # $299 - 8 tokens
+    # V2 Token packs (non-subscriber premium pricing)
+    "price_1SuxKTLyFGkLiU4CyMuPCSPL": "pack_8",      # $600 - 8 tokens
+    "price_1SuxMCLyFGkLiU4C8Q45qVPJ": "pack_16",     # $1,200 - 16 tokens
+    "price_1SuxO2LyFGkLiU4CRR7D14wh": "pack_40",     # $3,000 - 40 tokens
 }
 
 # ============================================================================
@@ -162,7 +162,7 @@ async def handle_checkout_completed(data: Dict[str, Any]):
 
         if product_key:
             tokens_to_add += PRODUCT_TOKENS.get(product_key, 0)
-            if product_key in ["starter", "creator", "growth", "scale"]:
+            if product_key in ["prototyper", "growth", "scale"]:
                 plan_type = product_key
 
     # If we couldn't determine tokens, try metadata
@@ -217,7 +217,7 @@ async def handle_invoice_paid(data: Dict[str, Any]):
 
                 if product_key:
                     tokens_to_add += PRODUCT_TOKENS.get(product_key, 0)
-                    if product_key in ["starter", "creator", "growth", "scale"]:
+                    if product_key in ["prototyper", "growth", "scale"]:
                         plan_type = product_key
 
             if tokens_to_add > 0:
