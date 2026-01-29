@@ -76,6 +76,10 @@ services:
       
       - key: LOG_LEVEL
         value: INFO
+
+      # DRY_RUN mode - bypass expensive API calls for testing
+      - key: DRY_RUN
+        value: "true"
       
       # OpenTelemetry (optional)
       - key: OTEL_EXPORTER_OTLP_ENDPOINT
