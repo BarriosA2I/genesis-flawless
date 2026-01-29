@@ -228,11 +228,24 @@ R2_FALLBACK_URL = os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8
 # - All pipeline phases execute normally for E2E testing
 # Set in Render: DRY_RUN=true
 DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
-DRY_RUN_VIDEO_URL = "https://video-preview-theta.vercel.app/samples/demo-commercial.mp4"
-DRY_RUN_AUDIO_URL = "https://video-preview-theta.vercel.app/samples/demo-voiceover.mp3"
+# Use R2 storage for mock URLs - configurable via env vars
+DRY_RUN_VIDEO_URL = os.getenv(
+    "DRY_RUN_VIDEO_URL",
+    f"{R2_FALLBACK_URL}/demo/sample-commercial.mp4"
+)
+DRY_RUN_AUDIO_URL = os.getenv(
+    "DRY_RUN_AUDIO_URL",
+    f"{R2_FALLBACK_URL}/demo/sample-voiceover.mp3"
+)
+DRY_RUN_THUMBNAIL_URL = os.getenv(
+    "DRY_RUN_THUMBNAIL_URL",
+    f"{R2_FALLBACK_URL}/demo/sample-thumbnail.jpg"
+)
 
 if DRY_RUN:
     logger.warning("🧪 DRY RUN MODE ENABLED - No actual video/voice generation will occur")
+    logger.info(f"   Mock video URL: {DRY_RUN_VIDEO_URL}")
+    logger.info(f"   Mock audio URL: {DRY_RUN_AUDIO_URL}")
 
 # =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
