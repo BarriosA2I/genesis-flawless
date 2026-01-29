@@ -78,6 +78,16 @@ class NexusBrain:
 
     def get_pricing_context(self) -> str:
         """Format pricing knowledge for system prompt."""
+        # Defensive check - ensure pricing is a dict
+        if not isinstance(self.pricing, dict):
+            logger.warning(f"pricing data is {type(self.pricing).__name__}, expected dict. Reloading...")
+            self._load_all()
+
+        # If still not a dict after reload, return fallback message
+        if not isinstance(self.pricing, dict):
+            logger.error("pricing data still invalid after reload")
+            return "Pricing information temporarily unavailable."
+
         if not self.pricing:
             return "Pricing information not available."
 
@@ -107,7 +117,12 @@ class NexusBrain:
 
     def get_services_context(self) -> str:
         """Format services knowledge for system prompt."""
-        if not self.services:
+        # Defensive check - ensure services is a dict
+        if not isinstance(self.services, dict):
+            logger.warning(f"services data is {type(self.services).__name__}, expected dict. Reloading...")
+            self._load_all()
+
+        if not isinstance(self.services, dict) or not self.services:
             return "Services information not available."
 
         lines = ["## SERVICES"]
@@ -130,7 +145,12 @@ class NexusBrain:
 
     def get_faqs_context(self) -> str:
         """Format FAQs for system prompt."""
-        if not self.faqs:
+        # Defensive check - ensure faqs is a dict
+        if not isinstance(self.faqs, dict):
+            logger.warning(f"faqs data is {type(self.faqs).__name__}, expected dict. Reloading...")
+            self._load_all()
+
+        if not isinstance(self.faqs, dict) or not self.faqs:
             return "FAQs not available."
 
         lines = ["## QUICK ANSWERS"]
