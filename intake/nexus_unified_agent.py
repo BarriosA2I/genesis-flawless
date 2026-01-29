@@ -20,9 +20,33 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 
 import anthropic
+import httpx
 
 from intake.nexus_brain import get_brain, get_knowledge_context
 from api.tokens import check_user_tokens, use_tokens
+
+# Production tracking imports
+try:
+    from intake.video_brief_intake import (
+        create_production_status,
+        update_production_step,
+        ProductionStep,
+    )
+    PRODUCTION_TRACKING_AVAILABLE = True
+except ImportError:
+    PRODUCTION_TRACKING_AVAILABLE = False
+    create_production_status = None
+
+# Trinity market intelligence
+try:
+    from agents.trinity_suite import TrinityOrchestrator, create_trinity_orchestrator
+    TRINITY_AVAILABLE = True
+except ImportError:
+    TRINITY_AVAILABLE = False
+    TrinityOrchestrator = None
+
+# Configuration
+GENESIS_API_BASE = os.getenv("GENESIS_API_BASE", "https://barrios-genesis-flawless.onrender.com")
 
 logger = logging.getLogger(__name__)
 
@@ -137,9 +161,15 @@ class ConversationState:
     user_id: Optional[str] = None
     messages: List[Dict[str, str]] = field(default_factory=list)
     brief: BriefData = field(default_factory=BriefData)
-    phase: str = "intake"  # intake, review, production
+    phase: str = "intake"  # intake, review, production, delivery
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    # Production tracking
+    production_triggered: bool = False
+    production_id: Optional[str] = None
+    video_url: Optional[str] = None
+    production_error: Optional[str] = None
+    trinity_research: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================
@@ -338,8 +368,26 @@ Example: {{"business_name": "Acme Corp"}}"""
             success = await use_tokens(user_id, 8, "Commercial generation")
             if success:
                 state.phase = "production"
-                ai_response = "Awesome! 8 tokens deducted. Your commercial is being generated - I'll let you know when it's ready!"
                 token_info["balance"] -= 8
+
+                # Trigger the RAGNAROK production pipeline
+                production_result = await self._trigger_production(state)
+
+                if production_result.get("success"):
+                    state.production_triggered = True
+                    state.production_id = production_result.get("production_id")
+                    ai_response = f"""🎬 **Production Started!**
+
+Your commercial for **{state.brief.business_name}** is now in the RAGNAROK pipeline.
+
+**Production ID:** `{state.production_id}`
+
+8 tokens have been deducted. I'll update you as each phase completes!
+
+Track progress at: barriosa2i.com/command-center"""
+                else:
+                    ai_response = f"8 tokens deducted but hit a snag starting production: {production_result.get('error', 'Unknown error')}. Our team has been notified!"
+                    state.production_error = production_result.get("error")
             else:
                 ai_response = "Something went wrong with token deduction. Let me check on that."
 
@@ -381,6 +429,137 @@ Example: {{"business_name": "Acme Corp"}}"""
 
         return self._build_response(state, ai_response, token_info, intent)
 
+    async def _trigger_production(self, state: ConversationState) -> Dict[str, Any]:
+        """
+        Trigger the RAGNAROK production pipeline.
+
+        Flow:
+        1. Run Trinity market research (optional)
+        2. Register production status for SSE tracking
+        3. Call /api/production/trigger to start RAGNAROK pipeline
+        """
+        try:
+            logger.info(f"[Production] Triggering pipeline for session {state.session_id}")
+
+            # Step 1: Run Trinity research (optional, runs in parallel with production)
+            trinity_result = None
+            if TRINITY_AVAILABLE:
+                try:
+                    trinity = create_trinity_orchestrator()
+                    trinity_result = await trinity.analyze(
+                        business_name=state.brief.business_name or "",
+                        industry=self._infer_industry(state.brief.product_service or ""),
+                        brief=state.brief.to_dict(),
+                        platforms=["youtube", "tiktok", "instagram"]
+                    )
+                    state.trinity_research = trinity_result.model_dump() if hasattr(trinity_result, 'model_dump') else {}
+                    logger.info(f"[Production] Trinity research complete: {trinity_result.total_insights} insights")
+                except Exception as e:
+                    logger.warning(f"[Production] Trinity research failed (continuing without): {e}")
+
+            # Step 2: Register production status for SSE tracking
+            if PRODUCTION_TRACKING_AVAILABLE and create_production_status:
+                try:
+                    create_production_status(state.session_id, {
+                        "business_name": state.brief.business_name,
+                        "product_service": state.brief.product_service,
+                        "target_audience": state.brief.target_audience,
+                        "call_to_action": state.brief.call_to_action,
+                        "tone": state.brief.tone,
+                    })
+                    logger.info(f"[Production] SSE tracking registered for session: {state.session_id}")
+                except Exception as e:
+                    logger.warning(f"[Production] SSE tracking failed: {e}")
+
+            # Step 3: Build brief payload for RAGNAROK
+            brief_payload = {
+                "business_name": state.brief.business_name,
+                "primary_offering": state.brief.product_service,
+                "target_demographic": state.brief.target_audience,
+                "call_to_action": state.brief.call_to_action,
+                "tone": state.brief.tone,
+                "research_data": state.trinity_research or {},
+                "goals": ["brand_awareness", "lead_generation"],
+            }
+
+            industry = self._infer_industry(state.brief.product_service or "")
+
+            # Step 4: Call production trigger API
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{GENESIS_API_BASE}/api/production/trigger/{state.session_id}",
+                    json={
+                        "brief": brief_payload,
+                        "industry": industry,
+                        "business_name": state.brief.business_name or "Unknown",
+                        "style": self._tone_to_style(state.brief.tone or "professional"),
+                        "goals": ["brand_awareness", "lead_generation"],
+                        "target_platforms": ["youtube", "tiktok", "instagram"]
+                    },
+                    headers={"Content-Type": "application/json"}
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(f"[Production] Pipeline triggered successfully: {result.get('production_id')}")
+                    return {
+                        "success": True,
+                        "production_id": result.get("production_id"),
+                        "status": result.get("status"),
+                        "trinity_insights": trinity_result.total_insights if trinity_result else 0
+                    }
+                else:
+                    error_msg = f"API returned {response.status_code}: {response.text}"
+                    logger.error(f"[Production] Trigger failed: {error_msg}")
+                    return {"success": False, "error": error_msg}
+
+        except httpx.TimeoutException:
+            logger.error("[Production] API timeout - production may still have started")
+            return {"success": False, "error": "Production API timeout"}
+        except Exception as e:
+            logger.error(f"[Production] Trigger failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _infer_industry(self, product_service: str) -> str:
+        """Infer industry from product/service description."""
+        product_lower = product_service.lower()
+
+        industry_keywords = {
+            "technology": ["software", "app", "saas", "tech", "ai", "platform", "digital"],
+            "ecommerce": ["shop", "store", "retail", "product", "sell", "buy"],
+            "healthcare": ["health", "medical", "wellness", "fitness", "doctor", "clinic"],
+            "finance": ["finance", "bank", "invest", "money", "loan", "credit"],
+            "real_estate": ["real estate", "property", "home", "house", "apartment"],
+            "restaurant": ["restaurant", "food", "cafe", "bakery", "catering", "chef"],
+            "professional_services": ["consulting", "agency", "service", "lawyer", "accountant"],
+        }
+
+        for industry, keywords in industry_keywords.items():
+            if any(kw in product_lower for kw in keywords):
+                return industry
+
+        return "professional_services"  # Default
+
+    def _tone_to_style(self, tone: str) -> str:
+        """Map tone to visual style."""
+        tone_lower = tone.lower() if tone else ""
+
+        style_map = {
+            "professional": "modern",
+            "energetic": "dynamic",
+            "elegant": "premium",
+            "fun": "playful",
+            "emotional": "cinematic",
+            "luxury": "premium",
+            "casual": "modern",
+        }
+
+        for key, style in style_map.items():
+            if key in tone_lower:
+                return style
+
+        return "modern"
+
     def _build_response(
         self,
         state: ConversationState,
@@ -389,7 +568,7 @@ Example: {{"business_name": "Acme Corp"}}"""
         intent: str
     ) -> Dict[str, Any]:
         """Build the response dict."""
-        return {
+        response = {
             "response": ai_response,
             "brief": state.brief.to_dict(),
             "phase": state.phase,
@@ -399,6 +578,13 @@ Example: {{"business_name": "Acme Corp"}}"""
             "plan_type": token_info.get("plan_type"),
             "intent": intent
         }
+
+        # Add production info if triggered
+        if state.production_triggered:
+            response["production_id"] = state.production_id
+            response["video_url"] = state.video_url
+
+        return response
 
     def get_greeting(self) -> str:
         """Get the initial greeting."""
