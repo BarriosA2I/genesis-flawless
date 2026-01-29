@@ -1,0 +1,113 @@
+# Barrios A2I Commercial Lab - Pricing Knowledge
+# Used by NEXUS Brain to answer pricing questions
+
+tiers:
+  starter:
+    name: "Starter"
+    price: 449
+    tokens: 8
+    commercials: 1
+    formats: 1
+    format_options: "9:16 or 16:9"
+    revisions: 1
+    queue: "5-Day"
+    clone: false
+    tagline: "For testing the waters"
+
+  creator:
+    name: "Creator"
+    price: 899
+    tokens: 16
+    commercials: 2
+    formats: 4
+    format_options: "9:16, 16:9, 1:1, 4:5"
+    revisions: 2
+    queue: "3-Day"
+    clone: "voice"
+    tagline: "For growing brands"
+    popular: true
+
+  growth:
+    name: "Growth"
+    price: 1699
+    tokens: 32
+    commercials: 4
+    formats: 4
+    format_options: "9:16, 16:9, 1:1, 4:5"
+    revisions: 3
+    queue: "48-Hour"
+    clone: "voice+avatar"
+    tagline: "For scaling campaigns"
+
+  scale:
+    name: "Scale"
+    price: 3199
+    tokens: 64
+    commercials: 8
+    formats: 4
+    format_options: "9:16, 16:9, 1:1, 4:5"
+    revisions: 5
+    queue: "24-Hour Priority"
+    clone: "premium"
+    tagline: "Enterprise volume"
+
+token_packs:
+  pack_8:
+    price: 449
+    tokens: 8
+    description: "1 additional commercial"
+  pack_16:
+    price: 799
+    tokens: 16
+    description: "2 additional commercials"
+  pack_32:
+    price: 1499
+    tokens: 32
+    description: "4 additional commercials"
+
+lab_test:
+  name: "$500 Lab Test"
+  price: 500
+  tokens: 8
+  formats: 1
+  revisions: "0-1 light"
+  clone: false
+  queue: "Standard (slower)"
+  description: "One-time test without monthly commitment"
+
+add_ons:
+  voice_clone:
+    price: 299
+    description: "One-time voice setup"
+  avatar_clone:
+    price: 1499
+    description: "One-time AI avatar training"
+  additional_avatar:
+    price: 999
+    description: "Each additional AI avatar"
+  voice_avatar_bundle:
+    price: 1599
+    description: "Voice + Avatar bundle (save $199)"
+  rush_delivery:
+    price: 249
+    description: "Skip to front of queue"
+  priority_48h:
+    price: 399
+    description: "Guaranteed 48-hour delivery"
+  extra_revisions:
+    price: 149
+    includes: 2
+    description: "2 additional revision passes"
+  variant_pack:
+    tokens: 8
+    fee: 99
+    description: "Same commercial, new hooks/variations"
+
+token_math:
+  per_scene: 1
+  per_commercial: 8
+  scene_length_seconds: 8
+  commercial_length_seconds: 64
+  explanation: "1 token = 1 scene (8 sec). 8 tokens = 1 commercial (64 sec)."
+  rollover: false
+  rollover_note: "Tokens reset monthly. No rollover."

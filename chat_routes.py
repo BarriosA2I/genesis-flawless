@@ -47,6 +47,16 @@ except ImportError as e:
     V3_AVAILABLE = False
     creative_director_v3 = None
 
+# Import NEXUS Unified Agent (V4 - token-gated with knowledge)
+try:
+    from intake.nexus_unified_agent import NexusUnifiedAgent
+    nexus_unified_agent = NexusUnifiedAgent()
+    UNIFIED_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"NEXUS Unified Agent not available: {e}")
+    UNIFIED_AVAILABLE = False
+    nexus_unified_agent = None
+
 # Import session storage
 try:
     from storage.redis_session_store import RedisSessionStore, SessionData
@@ -770,6 +780,67 @@ async def reset_session_v3(session_id: str):
         del creative_director_v3.sessions[session_id]
         return {"status": "reset", "session_id": session_id}
     return {"status": "not_found", "session_id": session_id}
+
+
+# =============================================================================
+# UNIFIED ENDPOINTS - Token-Gated AI with Knowledge Injection
+# =============================================================================
+
+class UnifiedChatRequest(BaseModel):
+    """Request model for unified chat endpoint."""
+    session_id: str
+    message: str
+    user_id: Optional[str] = None
+
+
+@router.post("/chat/unified")
+async def chat_unified(request: UnifiedChatRequest):
+    """
+    NEXUS Unified Agent - Token-gated AI assistant with knowledge injection.
+
+    Features:
+    - Answers pricing/service questions from NEXUS Brain knowledge
+    - Checks user token balance before generation
+    - Offers purchase links if tokens = 0
+    - Deducts tokens on generation confirmation
+    - Preserves V3 behaviors: short responses, one question, texting vibe
+    """
+    if not UNIFIED_AVAILABLE or not nexus_unified_agent:
+        raise HTTPException(
+            status_code=503,
+            detail="NEXUS Unified Agent not available"
+        )
+
+    try:
+        result = await nexus_unified_agent.process_message(
+            session_id=request.session_id,
+            user_message=request.message,
+            user_id=request.user_id
+        )
+        return result
+
+    except Exception as e:
+        logger.error(f"Unified endpoint error: {e}", exc_info=True)
+        return {
+            "response": "Hit a snag. Try that again?",
+            "brief": {},
+            "phase": "intake",
+            "session_id": request.session_id,
+            "tokens": 0,
+            "intent": "error",
+            "error": str(e)
+        }
+
+
+@router.get("/chat/unified/greeting")
+async def get_unified_greeting():
+    """Get unified agent initial greeting."""
+    if not UNIFIED_AVAILABLE or not nexus_unified_agent:
+        raise HTTPException(
+            status_code=503,
+            detail="NEXUS Unified Agent not available"
+        )
+    return {"greeting": nexus_unified_agent.get_greeting()}
 
 
 # =============================================================================

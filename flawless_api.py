@@ -103,6 +103,14 @@ from ralph_test_api import (
     run_ralph_tests,
 )
 
+# Import NEXUS Integration Hub Client
+from nexus_integration_client import (
+    NexusIntegrationClient,
+    configure_integration,
+    get_integration_client,
+    close_integration_client,
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -209,6 +217,7 @@ curator: Optional[TheCurator] = None
 nexus_bridge: Optional[NexusBridge] = None
 vortex_postprod_bridge: Optional[RAGNAROKVortexBridge] = None
 active_streams: Dict[str, asyncio.Task] = {}
+integration_client: Optional[NexusIntegrationClient] = None
 
 
 @asynccontextmanager
@@ -353,22 +362,40 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("ℹ️ VORTEX Post-Production not available - will passthrough videos unchanged")
 
+    # Initialize NEXUS Integration Hub Client
+    global integration_client
+    hub_url = os.getenv("INTEGRATION_HUB_URL")
+    if hub_url:
+        try:
+            configure_integration(hub_url=hub_url)
+            integration_client = get_integration_client()
+            logger.info(f"✅ Integration Hub client configured: {hub_url}")
+        except Exception as e:
+            logger.warning(f"⚠️ Integration Hub client init failed: {e} - lead tracking disabled")
+            integration_client = None
+    else:
+        logger.info("ℹ️ INTEGRATION_HUB_URL not set - lead tracking disabled")
+
     logger.info("=" * 60)
     logger.info("⚡ FLAWLESS GENESIS API v2.0 READY")
     logger.info("⚡ 27 AGENTS + COMMERCIAL_LAB PIPELINE ACTIVATED")
     logger.info("=" * 60)
-    
+
     yield
     
     # =========================================================================
     # SHUTDOWN
     # =========================================================================
     logger.info("👋 Shutting down FLAWLESS GENESIS API...")
-    
+
     # Cancel active streams
     for task in active_streams.values():
         task.cancel()
-    
+
+    # Close Integration Hub client
+    await close_integration_client()
+    logger.info("✅ Integration Hub client closed")
+
     # Close Redis
     if redis_client:
         await redis_client.close()
@@ -445,6 +472,22 @@ try:
     logger.info("Stripe webhook routes loaded")
 except ImportError as e:
     logger.warning(f"Stripe webhook routes not available: {e}")
+
+# Include Token API routes (Supabase token management)
+try:
+    from api.tokens import router as tokens_router
+    app.include_router(tokens_router)
+    logger.info("Token API routes loaded")
+except ImportError as e:
+    logger.warning(f"Token API routes not available: {e}")
+
+# Include Stripe Token Webhook routes (adds tokens on purchase)
+try:
+    from api.stripe_webhook import router as stripe_token_router
+    app.include_router(stripe_token_router)
+    logger.info("Stripe token webhook routes loaded")
+except ImportError as e:
+    logger.warning(f"Stripe token webhook routes not available: {e}")
 
 
 # =============================================================================

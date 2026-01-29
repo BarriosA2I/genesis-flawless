@@ -1,0 +1,63 @@
+# Barrios A2I Commercial Lab - FAQs Knowledge
+# Used by NEXUS Brain to answer common questions
+
+faqs:
+  - question: "Why 64 seconds instead of 60?"
+    answer: "8 scenes x 8 seconds = 64. Optimized for AI generation which works best in 8-second chunks."
+    keywords: ["64", "60", "seconds", "length", "duration"]
+
+  - question: "How do tokens work?"
+    answer: "1 token = 1 scene (8 sec). 8 tokens = 1 full commercial (64 sec). Tokens come with your subscription."
+    keywords: ["token", "tokens", "work", "how"]
+
+  - question: "Do tokens roll over?"
+    answer: "No, tokens reset each billing cycle. Use 'em or lose 'em!"
+    keywords: ["rollover", "roll over", "expire", "reset", "unused"]
+
+  - question: "What is VORTEX Assembly?"
+    answer: "Our AI post-production pipeline. It upscales to 4K, color-grades, syncs audio to beats, and adds smooth transitions between your 8 scenes."
+    keywords: ["vortex", "assembly", "pipeline", "post-production"]
+
+  - question: "Can I cancel anytime?"
+    answer: "Yes, cancel anytime. No long-term contracts. Your access continues until the end of your billing period."
+    keywords: ["cancel", "subscription", "contract", "commitment"]
+
+  - question: "What formats do you support?"
+    answer: "9:16 vertical (TikTok/Reels), 16:9 horizontal (YouTube), 1:1 square, and 4:5 feed. Starter gets 1 format, Creator+ gets all 4."
+    keywords: ["format", "formats", "aspect ratio", "vertical", "horizontal"]
+
+  - question: "How long does delivery take?"
+    answer: "Depends on your tier: Scale = 24hrs, Growth = 48hrs, Creator = 3 days, Starter = 5 days. Add Rush ($249) to skip the queue."
+    keywords: ["delivery", "turnaround", "how long", "when", "time"]
+
+  - question: "What's included in voice clone?"
+    answer: "One-time $299 setup. You provide a 30-60 second voice sample, we train the AI to speak in your voice for all future commercials."
+    keywords: ["voice clone", "voice", "clone", "speak"]
+
+  - question: "What's included in avatar clone?"
+    answer: "One-time $1,499 setup. You provide photos and video reference, we create an AI version of you that can appear in commercials."
+    keywords: ["avatar", "clone", "digital twin", "appear"]
+
+  - question: "What do I need to provide?"
+    answer: "Business name, logo, product description, target audience, and preferred tone. Voice/avatar assets only needed for Tier 2+."
+    keywords: ["need", "provide", "requirements", "checklist", "bring"]
+
+  - question: "Can I get revisions?"
+    answer: "Yes! Starter = 1 revision, Creator = 2, Growth = 3, Scale = 5. Need more? Add an Extra Revision Pack ($149 for 2 rounds)."
+    keywords: ["revision", "revisions", "changes", "edit", "modify"]
+
+  - question: "What platforms can I use the commercial on?"
+    answer: "Any platform! Meta (FB/IG), TikTok, YouTube, Snapchat, X, LinkedIn - wherever video ads run."
+    keywords: ["platform", "platforms", "facebook", "instagram", "tiktok", "youtube"]
+
+  - question: "Is there a one-time option?"
+    answer: "Yes! The $500 Lab Test gives you one 64-second commercial without monthly commitment. Great for testing before subscribing."
+    keywords: ["one-time", "single", "test", "trial", "no subscription"]
+
+  - question: "What AI models do you use?"
+    answer: "We use a mix of cutting-edge models: Claude for conversation, Veo/Runway for video generation, ElevenLabs for voice. Always the best available."
+    keywords: ["ai", "model", "models", "technology", "tech"]
+
+  - question: "Do you offer refunds?"
+    answer: "We offer revisions instead of refunds. If you're not happy with the output, we'll work with you to get it right."
+    keywords: ["refund", "money back", "guarantee"]

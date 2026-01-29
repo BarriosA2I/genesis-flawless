@@ -1,0 +1,92 @@
+# Barrios A2I Commercial Lab - Services Knowledge
+# Used by NEXUS Brain to answer service questions
+
+commercial_lab:
+  name: "A2I Commercial Lab"
+  tagline: "AI-powered video commercial production"
+  description: "Create professional 64-second video commercials using AI. Answer guided questions, receive a production-ready brief, and get your commercial delivered."
+
+  process:
+    steps:
+      - "Complete 10-phase intake (< 5 min)"
+      - "AI generates script and prompts"
+      - "RAGNAROK pipeline produces 8 scenes"
+      - "VORTEX assembles final commercial"
+      - "QA validation and delivery"
+    average_time: "< 5 minutes for intake"
+
+  deliverables:
+    - name: "Brand & Offer Summary"
+      description: "Clear articulation of your business identity and what you sell"
+    - name: "Target Audience Profile"
+      description: "Who you're reaching and what problems they need solved"
+    - name: "Hook & Call-to-Action"
+      description: "Attention-grabbing opener and clear next step"
+    - name: "Tone & Style Direction"
+      description: "Voice, pacing, and visual treatment guidance"
+    - name: "AI Video Optimization"
+      description: "Brief structured for Veo, Runway, and other AI platforms"
+    - name: "Complete Brief Document"
+      description: "Everything consolidated into one production-ready document"
+
+  platforms:
+    supported:
+      - "Meta (Facebook/Instagram)"
+      - "TikTok"
+      - "YouTube"
+      - "Snapchat"
+      - "X (Twitter)"
+    formats:
+      - "9:16 Vertical (Stories/Reels)"
+      - "16:9 Horizontal (YouTube)"
+      - "1:1 Square (Feed)"
+      - "4:5 Feed (Instagram)"
+
+vortex_assembly:
+  name: "VORTEX Assembly Pipeline"
+  description: "Our AI post-production system that assembles scenes into finished commercials"
+  features:
+    - "AI upscaling to 4K"
+    - "Color grading"
+    - "Beat-sync audio"
+    - "Transitions between scenes"
+    - "Format optimization"
+
+clone_services:
+  voice_clone:
+    description: "Train AI to speak in your voice"
+    requirements: "30-60 second voice sample"
+    use_cases: "Consistent brand voice across commercials"
+  avatar_clone:
+    description: "Create AI version of you for video"
+    requirements: "Front and side photos, video reference footage, consent documentation"
+    use_cases: "Appear in commercials without filming"
+
+intake_checklist:
+  brand_dna:
+    - "Business name & URL"
+    - "Logo (high-res)"
+    - "Style guide (if available)"
+    - "Brand colors"
+  mission:
+    - "Campaign goal"
+    - "Target audience"
+    - "Geographic focus"
+    - "Key message"
+  creative:
+    - "Product description"
+    - "Must-say lines"
+    - "Competitor references"
+    - "Preferred tone"
+  identity_assets:
+    tier: "Tier 2+"
+    items:
+      - "Voice sample (30-60s)"
+      - "Avatar photos (front/side)"
+      - "Video reference footage"
+      - "Consent documentation"
+  technical:
+    - "Platform priority"
+    - "Format preference"
+    - "B-roll (optional)"
+    - "Music preference"

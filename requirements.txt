@@ -67,3 +67,9 @@ stripe>=8.0.0
 sqlalchemy[asyncio]>=2.0.0
 asyncpg>=0.29.0
 aio-pika>=9.3.0
+
+# Supabase Token System
+supabase>=2.0.0
+
+# NEXUS Brain Knowledge System
+pyyaml>=6.0.0
