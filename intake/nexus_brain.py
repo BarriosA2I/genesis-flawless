@@ -144,10 +144,24 @@ class NexusBrain:
         if lab:
             lines.append(f"Commercial Lab: {lab.get('description', '')}")
 
-        # Deliverables
-        deliverables = lab.get("deliverables", [])
+        # Deliverables - handle dict, list of dicts, or list of strings
+        deliverables = lab.get("deliverables", {})
         if deliverables:
-            lines.append("Deliverables: " + ", ".join([d.get("name", "") for d in deliverables]))
+            if isinstance(deliverables, dict):
+                # YAML has dict structure like {hero_commercial: {...}, cutdowns: {...}}
+                names = [k.replace("_", " ").title() for k in deliverables.keys()]
+            elif isinstance(deliverables, list):
+                # List format - could be dicts with name key or strings
+                names = []
+                for d in deliverables:
+                    if isinstance(d, dict):
+                        names.append(d.get("name", str(d)))
+                    else:
+                        names.append(str(d))
+            else:
+                names = [str(deliverables)]
+            if names:
+                lines.append("Deliverables: " + ", ".join(names))
 
         # Platforms
         platforms = lab.get("platforms", {}).get("supported", [])
