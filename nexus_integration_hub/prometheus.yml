@@ -1,0 +1,46 @@
+# NEXUS Integration Hub - Prometheus Configuration
+# =================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  # Integration Hub
+  - job_name: 'nexus-integration-hub'
+    static_configs:
+      - targets: ['nexus-integration-hub:8000']
+    metrics_path: /metrics
+    scrape_interval: 10s
+
+  # SCRIPTWRITER-X
+  - job_name: 'scriptwriter-x'
+    static_configs:
+      - targets: ['scriptwriter:8001']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # CHROMADON
+  - job_name: 'chromadon'
+    static_configs:
+      - targets: ['chromadon:8002']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Redis
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

@@ -1,0 +1,240 @@
+version: '3.8'
+
+# =============================================================================
+# NEXUS Integration Hub - Production Docker Compose
+# Orchestrates: CHROMADON ↔ SCRIPTWRITER-X ↔ NEXUS BRAIN
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # CORE INFRASTRUCTURE
+  # ===========================================================================
+  
+  redis:
+    image: redis:7-alpine
+    container_name: nexus_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexus_network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus_postgres
+    environment:
+      POSTGRES_DB: nexus_brain
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_secure_2024}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_brain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexus_network
+
+  # ===========================================================================
+  # NEXUS INTEGRATION HUB (Central Orchestrator)
+  # ===========================================================================
+  
+  nexus-integration-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    container_name: nexus_integration_hub
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SCRIPTWRITER_URL=http://scriptwriter:8001
+      - CHROMADON_URL=http://chromadon:8002
+      - DATABASE_URL=postgresql://nexus:${POSTGRES_PASSWORD:-nexus_secure_2024}@postgres:5432/nexus_brain
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=nexus-integration-hub
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nexus_network
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=8000"
+      - "prometheus.path=/metrics"
+
+  # ===========================================================================
+  # SCRIPTWRITER-X (Content Generation Brain)
+  # ===========================================================================
+  
+  scriptwriter:
+    build:
+      context: ../chromadon_scriptwriter
+      dockerfile: Dockerfile
+    container_name: nexus_scriptwriter
+    ports:
+      - "8001:8001"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://nexus:${POSTGRES_PASSWORD:-nexus_secure_2024}@postgres:5432/nexus_brain
+      - OTEL_SERVICE_NAME=scriptwriter-x
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nexus_network
+
+  # ===========================================================================
+  # CHROMADON (Social Media Overlord)
+  # ===========================================================================
+  
+  chromadon:
+    build:
+      context: ../chromadon_social_overlord
+      dockerfile: Dockerfile
+    container_name: nexus_chromadon
+    ports:
+      - "8002:8002"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - SCRIPTWRITER_URL=http://scriptwriter:8001
+      - INTEGRATION_HUB_URL=http://nexus-integration-hub:8000
+      - DATABASE_URL=postgresql://nexus:${POSTGRES_PASSWORD:-nexus_secure_2024}@postgres:5432/nexus_brain
+      - OTEL_SERVICE_NAME=chromadon
+      # Platform credentials (from secrets)
+      - TWITTER_API_KEY=${TWITTER_API_KEY}
+      - TWITTER_API_SECRET=${TWITTER_API_SECRET}
+      - LINKEDIN_CLIENT_ID=${LINKEDIN_CLIENT_ID}
+      - LINKEDIN_CLIENT_SECRET=${LINKEDIN_CLIENT_SECRET}
+    depends_on:
+      redis:
+        condition: service_healthy
+      scriptwriter:
+        condition: service_healthy
+      nexus-integration-hub:
+        condition: service_healthy
+    volumes:
+      - chromadon_data:/app/data
+      - chromadon_screenshots:/app/screenshots
+    networks:
+      - nexus_network
+
+  # ===========================================================================
+  # OBSERVABILITY STACK
+  # ===========================================================================
+  
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: nexus_prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus-rules.yml:/etc/prometheus/rules.yml
+      - prometheus_data:/prometheus
+    networks:
+      - nexus_network
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: nexus_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - nexus_network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: nexus_jaeger
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - nexus_network
+
+  # ===========================================================================
+  # MESSAGE QUEUE (For async processing)
+  # ===========================================================================
+  
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: nexus_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=nexus
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-nexus_mq_2024}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - nexus_network
+
+# =============================================================================
+# NETWORKS & VOLUMES
+# =============================================================================
+
+networks:
+  nexus_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  redis_data:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+  rabbitmq_data:
+  chromadon_data:
+  chromadon_screenshots:
