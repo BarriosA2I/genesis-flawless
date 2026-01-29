@@ -1,63 +1,100 @@
 # Barrios A2I Commercial Lab - FAQs Knowledge
 # Used by NEXUS Brain to answer common questions
+# Updated: 2026-01-29 for V2 "Performance Engine"
 
 faqs:
-  - question: "Why 64 seconds instead of 60?"
-    answer: "8 scenes x 8 seconds = 64. Optimized for AI generation which works best in 8-second chunks."
-    keywords: ["64", "60", "seconds", "length", "duration"]
+  # PRICING QUESTIONS
+  - question: "How much does it cost?"
+    answer: "We have 3 subscription tiers: Prototyper at $599/mo (2 commercials), Growth at $1,199/mo (5 commercials), and Scale at $2,499/mo (12 commercials). You can also try our Rapid Pilot for $299 - a single commercial with 100% credit toward your first month if you upgrade within 7 days."
+    keywords: ["cost", "price", "pricing", "how much", "plans"]
 
+  - question: "What's included in each tier?"
+    answer: "All tiers include captions and our Variant Stack (cutdowns for all platforms). Prototyper gets 2 formats and 1 revision. Growth adds all 4 formats, 2 revisions, and A/B hook variants. Scale includes 24-hour priority, 4 revisions, plus voice and avatar clone ($1,198 value)."
+    keywords: ["included", "include", "tier", "tiers", "difference"]
+
+  - question: "What's the best value?"
+    answer: "Growth at $1,199/mo is our most popular - you get 5 commercials for $240 each. Compare that to a part-time motion designer at $4,000/mo. That's $29/ad vs $500+/ad."
+    keywords: ["best", "value", "recommend", "popular", "worth"]
+
+  # TOKEN QUESTIONS
   - question: "How do tokens work?"
-    answer: "1 token = 1 scene (8 sec). 8 tokens = 1 full commercial (64 sec). Tokens come with your subscription."
+    answer: "1 token = 1 scene (8 seconds). 8 tokens = 1 complete 64-second commercial. Tokens come with your subscription and reset monthly."
     keywords: ["token", "tokens", "work", "how"]
 
   - question: "Do tokens roll over?"
-    answer: "No, tokens reset each billing cycle. Use 'em or lose 'em!"
-    keywords: ["rollover", "roll over", "expire", "reset", "unused"]
+    answer: "Yes! You get 1-month rollover (max 2x your monthly allotment). So if you're on Growth with 40 tokens and don't use them all, you can carry up to 40 into next month. Unused tokens expire after 60 days."
+    keywords: ["rollover", "roll over", "expire", "reset", "unused", "carry over"]
 
-  - question: "What is VORTEX Assembly?"
-    answer: "Our AI post-production pipeline. It upscales to 4K, color-grades, syncs audio to beats, and adds smooth transitions between your 8 scenes."
-    keywords: ["vortex", "assembly", "pipeline", "post-production"]
+  - question: "Can I buy tokens without a subscription?"
+    answer: "Yes! Token packs are available at $75/token for non-subscribers: 8 tokens ($600), 16 tokens ($1,200), or 40 tokens ($3,000). Subscribers get discounted top-up rates based on their tier - as low as $26/token on Scale."
+    keywords: ["buy", "purchase", "token pack", "no subscription", "extra"]
+
+  # ENTRY OFFER
+  - question: "What's the Rapid Pilot?"
+    answer: "The Rapid Pilot is our $299 entry offer - one complete commercial with a CTA variant, 1 revision, and 2 formats. Best part: if you upgrade to a subscription within 7 days, we credit 100% toward your first month."
+    keywords: ["rapid pilot", "pilot", "try", "test", "entry", "trial"]
+
+  - question: "Is there a one-time option?"
+    answer: "Yes! The Rapid Pilot at $299 gives you one 64-second commercial without monthly commitment. And if you like it, the full $299 goes toward your first subscription month when you upgrade within 7 days."
+    keywords: ["one-time", "single", "test", "trial", "no subscription"]
+
+  # DELIVERY & REVISIONS
+  - question: "How long does delivery take?"
+    answer: "Depends on your tier: Scale = 24 hours priority, Growth = 2 days, Prototyper = 4 days. Rapid Pilot = 5 days. Need it faster? Add Rush 48h ($299) or Rush 24h ($499)."
+    keywords: ["delivery", "turnaround", "how long", "when", "time", "fast"]
+
+  - question: "Can I get revisions?"
+    answer: "Yes! Prototyper = 1 revision, Growth = 2, Scale = 4. Copy/CTA changes and voiceover re-records are free within your revision rounds. Need more? Add Extra Revisions ($149 for 2 rounds)."
+    keywords: ["revision", "revisions", "changes", "edit", "modify"]
+
+  - question: "What counts as a revision?"
+    answer: "Copy/CTA text changes and voiceover re-records are free within your rounds. Scene regeneration costs 1 token per scene. A full concept pivot is 8 tokens (new commercial)."
+    keywords: ["revision", "count", "free", "change", "what's included"]
+
+  # FORMATS & DELIVERABLES
+  - question: "Why 64 seconds instead of 60?"
+    answer: "8 scenes x 8 seconds = 64. Optimized for AI generation which works best in 8-second chunks. Plus you get the full Variant Stack with cutdowns for all platforms."
+    keywords: ["64", "60", "seconds", "length", "duration"]
+
+  - question: "What formats do you support?"
+    answer: "9:16 vertical (TikTok/Reels), 16:9 horizontal (YouTube), 1:1 square, and 4:5 feed. Prototyper gets 2 formats (9:16 + 16:9), Growth and Scale get all 4."
+    keywords: ["format", "formats", "aspect ratio", "vertical", "horizontal"]
+
+  - question: "What's the Variant Stack?"
+    answer: "Every commercial includes FREE cutdowns: your 64-second hero video PLUS 3x 15-second cutdowns and 3x 6-8 second micro ads. Also includes burned-in captions and SRT file."
+    keywords: ["variant", "stack", "cutdown", "cutdowns", "micro", "included"]
+
+  # CLONE SERVICES
+  - question: "What's included in voice clone?"
+    answer: "One-time $199 setup. You provide a 30-60 second voice sample, we train the AI to speak in your voice for all future commercials. Included free at Scale tier."
+    keywords: ["voice clone", "voice", "clone", "speak"]
+
+  - question: "What's included in avatar clone?"
+    answer: "One-time $999 setup. You provide photos and video reference, we create an AI version of you that can appear in commercials. Included free at Scale tier ($1,198 combined value)."
+    keywords: ["avatar", "clone", "digital twin", "appear"]
+
+  # ADD-ONS
+  - question: "What add-ons are available?"
+    answer: "Voice Clone ($199), Avatar Clone ($999), Variant Pack ($149 for 3 CTA swaps), Rush 48h ($299), Rush 24h ($499), and Extra Revisions ($149 for 2 rounds). Voice and Avatar are free at Scale."
+    keywords: ["add-on", "add-ons", "addon", "extra", "upgrade"]
+
+  # GENERAL
+  - question: "What platforms can I use the commercial on?"
+    answer: "Any platform! Meta (FB/IG), TikTok, YouTube, Snapchat, X, LinkedIn - wherever video ads run. Your Variant Stack gives you cutdowns optimized for each."
+    keywords: ["platform", "platforms", "facebook", "instagram", "tiktok", "youtube"]
+
+  - question: "What do I need to provide?"
+    answer: "Business name, logo, product description, target audience, and preferred tone. Voice/avatar assets only needed for Scale tier or if purchasing those add-ons."
+    keywords: ["need", "provide", "requirements", "checklist", "bring"]
 
   - question: "Can I cancel anytime?"
     answer: "Yes, cancel anytime. No long-term contracts. Your access continues until the end of your billing period."
     keywords: ["cancel", "subscription", "contract", "commitment"]
-
-  - question: "What formats do you support?"
-    answer: "9:16 vertical (TikTok/Reels), 16:9 horizontal (YouTube), 1:1 square, and 4:5 feed. Starter gets 1 format, Creator+ gets all 4."
-    keywords: ["format", "formats", "aspect ratio", "vertical", "horizontal"]
-
-  - question: "How long does delivery take?"
-    answer: "Depends on your tier: Scale = 24hrs, Growth = 48hrs, Creator = 3 days, Starter = 5 days. Add Rush ($249) to skip the queue."
-    keywords: ["delivery", "turnaround", "how long", "when", "time"]
-
-  - question: "What's included in voice clone?"
-    answer: "One-time $299 setup. You provide a 30-60 second voice sample, we train the AI to speak in your voice for all future commercials."
-    keywords: ["voice clone", "voice", "clone", "speak"]
-
-  - question: "What's included in avatar clone?"
-    answer: "One-time $1,499 setup. You provide photos and video reference, we create an AI version of you that can appear in commercials."
-    keywords: ["avatar", "clone", "digital twin", "appear"]
-
-  - question: "What do I need to provide?"
-    answer: "Business name, logo, product description, target audience, and preferred tone. Voice/avatar assets only needed for Tier 2+."
-    keywords: ["need", "provide", "requirements", "checklist", "bring"]
-
-  - question: "Can I get revisions?"
-    answer: "Yes! Starter = 1 revision, Creator = 2, Growth = 3, Scale = 5. Need more? Add an Extra Revision Pack ($149 for 2 rounds)."
-    keywords: ["revision", "revisions", "changes", "edit", "modify"]
-
-  - question: "What platforms can I use the commercial on?"
-    answer: "Any platform! Meta (FB/IG), TikTok, YouTube, Snapchat, X, LinkedIn - wherever video ads run."
-    keywords: ["platform", "platforms", "facebook", "instagram", "tiktok", "youtube"]
-
-  - question: "Is there a one-time option?"
-    answer: "Yes! The $500 Lab Test gives you one 64-second commercial without monthly commitment. Great for testing before subscribing."
-    keywords: ["one-time", "single", "test", "trial", "no subscription"]
 
   - question: "What AI models do you use?"
     answer: "We use a mix of cutting-edge models: Claude for conversation, Veo/Runway for video generation, ElevenLabs for voice. Always the best available."
     keywords: ["ai", "model", "models", "technology", "tech"]
 
   - question: "Do you offer refunds?"
-    answer: "We offer revisions instead of refunds. If you're not happy with the output, we'll work with you to get it right."
+    answer: "We offer revisions instead of refunds. If you're not happy with the output, we'll work with you to get it right within your revision rounds."
     keywords: ["refund", "money back", "guarantee"]

@@ -1,113 +1,144 @@
-# Barrios A2I Commercial Lab - Pricing Knowledge
+# Barrios A2I Commercial Lab - V2 "Performance Engine" Pricing
 # Used by NEXUS Brain to answer pricing questions
+# Updated: 2026-01-29
+
+model: "Performance Engine"
+tagline: "High-Performance Creative at Machine Speed"
 
 tiers:
-  starter:
-    name: "Starter"
-    price: 449
-    tokens: 8
-    commercials: 1
-    formats: 1
-    format_options: "9:16 or 16:9"
-    revisions: 1
-    queue: "5-Day"
-    clone: false
-    tagline: "For testing the waters"
-
-  creator:
-    name: "Creator"
-    price: 899
+  prototyper:
+    name: "Prototyper"
+    price: 599
     tokens: 16
     commercials: 2
-    formats: 4
-    format_options: "9:16, 16:9, 1:1, 4:5"
-    revisions: 2
-    queue: "3-Day"
-    clone: "voice"
-    tagline: "For growing brands"
-    popular: true
+    formats: 2
+    format_options: "9:16, 16:9"
+    revisions: 1
+    turnaround: "4 days"
+    includes: ["captions"]
+    clone: false
+    tagline: "Stop the scroll with pro-grade AI visuals"
+    cost_per_commercial: 300
+    cost_per_token: 37.44
 
   growth:
     name: "Growth"
-    price: 1699
-    tokens: 32
-    commercials: 4
+    price: 1199
+    tokens: 40
+    commercials: 5
     formats: 4
     format_options: "9:16, 16:9, 1:1, 4:5"
-    revisions: 3
-    queue: "48-Hour"
-    clone: "voice+avatar"
-    tagline: "For scaling campaigns"
+    revisions: 2
+    turnaround: "2 days"
+    includes: ["captions", "A/B hook variants"]
+    clone: false
+    tagline: "The sweet spot for scaling brands needing constant A/B testing"
+    popular: true
+    cost_per_commercial: 240
+    cost_per_token: 30
 
   scale:
     name: "Scale"
-    price: 3199
-    tokens: 64
-    commercials: 8
+    price: 2499
+    tokens: 96
+    commercials: 12
     formats: 4
     format_options: "9:16, 16:9, 1:1, 4:5"
-    revisions: 5
-    queue: "24-Hour Priority"
-    clone: "premium"
-    tagline: "Enterprise volume"
+    revisions: 4
+    turnaround: "24 hours priority"
+    includes: ["captions", "A/B hook variants", "voice clone ($199 value)", "avatar clone ($999 value)"]
+    clone: "voice+avatar"
+    tagline: "Your dedicated automated production house for global campaigns"
+    cost_per_commercial: 208
+    cost_per_token: 26
+
+entry_offer:
+  rapid_pilot:
+    name: "Rapid Pilot"
+    price: 299
+    type: "one-time"
+    tokens: 8
+    commercials: 1
+    formats: 2
+    format_options: "9:16, 16:9"
+    revisions: 1
+    turnaround: "5 days"
+    includes: ["1 CTA variant swap"]
+    credit_policy: "100% credited toward first month if upgrade within 7 days"
+    description: "Try before you subscribe"
 
 token_packs:
+  description: "Non-subscriber premium pricing at $75/token"
+  cost_per_token: 75
   pack_8:
-    price: 449
+    price: 600
     tokens: 8
-    description: "1 additional commercial"
+    commercials: 1
   pack_16:
-    price: 799
+    price: 1200
     tokens: 16
-    description: "2 additional commercials"
-  pack_32:
-    price: 1499
-    tokens: 32
-    description: "4 additional commercials"
+    commercials: 2
+  pack_40:
+    price: 3000
+    tokens: 40
+    commercials: 5
 
-lab_test:
-  name: "$500 Lab Test"
-  price: 500
-  tokens: 8
-  formats: 1
-  revisions: "0-1 light"
-  clone: false
-  queue: "Standard (slower)"
-  description: "One-time test without monthly commitment"
+subscriber_topup_rates:
+  prototyper: 37.44
+  growth: 30
+  scale: 26
 
 add_ons:
   voice_clone:
-    price: 299
-    description: "One-time voice setup"
+    price: 199
+    included_with: ["scale"]
+    description: "One-time custom voice training"
   avatar_clone:
-    price: 1499
-    description: "One-time AI avatar training"
-  additional_avatar:
     price: 999
-    description: "Each additional AI avatar"
-  voice_avatar_bundle:
-    price: 1599
-    description: "Voice + Avatar bundle (save $199)"
-  rush_delivery:
-    price: 249
-    description: "Skip to front of queue"
-  priority_48h:
-    price: 399
-    description: "Guaranteed 48-hour delivery"
+    included_with: ["scale"]
+    description: "One-time AI avatar training"
+  variant_pack:
+    price: 149
+    description: "3 CTA swaps for your commercial"
+    included_with: ["growth", "scale"]
+  rush_48h:
+    price: 299
+    description: "Guaranteed 48-hour turnaround"
+  rush_24h:
+    price: 499
+    description: "Guaranteed 24-hour turnaround"
   extra_revisions:
     price: 149
     includes: 2
-    description: "2 additional revision passes"
-  variant_pack:
-    tokens: 8
-    fee: 99
-    description: "Same commercial, new hooks/variations"
+    description: "2 additional revision rounds"
 
 token_math:
   per_scene: 1
   per_commercial: 8
   scene_length_seconds: 8
   commercial_length_seconds: 64
-  explanation: "1 token = 1 scene (8 sec). 8 tokens = 1 commercial (64 sec)."
-  rollover: false
-  rollover_note: "Tokens reset monthly. No rollover."
+  explanation: "1 token = 1 scene (8 sec). 8 tokens = 1 complete commercial (64 sec)."
+  rollover: true
+  rollover_note: "1-month rollover allowed (max 2x monthly allotment)"
+  expiration: "60 days"
+
+revision_policy:
+  free_within_rounds:
+    - "Copy/CTA text changes"
+    - "Voiceover re-record"
+  costs_tokens:
+    scene_regeneration: "1 token per scene"
+    full_concept_pivot: "8 tokens (new commercial)"
+
+variant_stack:
+  description: "Every commercial includes FREE cutdowns"
+  includes:
+    - "1x 64-second hero commercial"
+    - "3x 15-second cutdowns"
+    - "3x 6-8 second micro ads"
+    - "Burned-in captions"
+    - "SRT caption file"
+    - "All requested formats"
+
+comparison:
+  anchor: "Compare Growth at $1,199/mo to a part-time motion designer ($4,000/mo). That's $29/ad vs $500+/ad."
