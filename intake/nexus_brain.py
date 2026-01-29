@@ -55,7 +55,14 @@ class NexusBrain:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
                 logger.info(f"Loaded knowledge: {filename}")
-                return data or {}
+                # Ensure we return a dict, not a string or other type
+                if isinstance(data, dict):
+                    return data
+                elif data is None:
+                    return {}
+                else:
+                    logger.error(f"YAML {filename} returned {type(data).__name__} instead of dict. Content preview: {str(data)[:100]}")
+                    return {}
         except Exception as e:
             logger.error(f"Error loading {filename}: {e}")
             return {}
@@ -66,6 +73,12 @@ class NexusBrain:
         self.services = self._load_yaml("services.yaml")
         self.faqs = self._load_yaml("faqs.yaml")
         self._loaded = True
+
+        # Log load status for debugging
+        logger.info(f"NEXUS Brain loaded - pricing: {type(self.pricing).__name__}, services: {type(self.services).__name__}, faqs: {type(self.faqs).__name__}")
+
+        if isinstance(self.pricing, dict) and self.pricing.get("tiers"):
+            logger.info(f"Pricing tiers loaded: {list(self.pricing.get('tiers', {}).keys())}")
 
     def reload(self):
         """Reload all knowledge files (hot reload)."""
