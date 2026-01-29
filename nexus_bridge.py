@@ -220,6 +220,21 @@ except ImportError:
 R2_FALLBACK_URL = os.getenv("R2_PUBLIC_URL", "https://pub-7cc63ed6b93a4f75933fa8ac7b8a358f.r2.dev")
 
 # =============================================================================
+# DRY RUN MODE - Test pipeline without spending credits
+# =============================================================================
+# When DRY_RUN=true:
+# - Video generation returns mock demo video URLs
+# - Voiceover generation returns mock audio
+# - All pipeline phases execute normally for E2E testing
+# Set in Render: DRY_RUN=true
+DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
+DRY_RUN_VIDEO_URL = "https://video-preview-theta.vercel.app/samples/demo-commercial.mp4"
+DRY_RUN_AUDIO_URL = "https://video-preview-theta.vercel.app/samples/demo-voiceover.mp3"
+
+if DRY_RUN:
+    logger.warning("🧪 DRY RUN MODE ENABLED - No actual video/voice generation will occur")
+
+# =============================================================================
 # PROMETHEUS METRICS (Lazy initialization)
 # =============================================================================
 
@@ -1784,6 +1799,20 @@ Return ONLY valid JSON array, no markdown."""
     async def _generate_voiceover(self, script: Dict[str, Any], brief: Dict[str, Any]) -> Dict[str, Any]:
         """Generate voiceover using ElevenLabs API (Agent 5: Voiceover)"""
 
+        # DRY RUN MODE: Return mock voiceover data without ElevenLabs API call
+        if DRY_RUN:
+            logger.info("🧪 DRY RUN: Skipping voiceover generation, returning mock data")
+            await asyncio.sleep(1)  # Simulate processing time
+            return {
+                "audio_url": DRY_RUN_AUDIO_URL,
+                "duration_seconds": 45,
+                "character_count": 350,
+                "cost_usd": 0.0,
+                "voice_used": "dry_run_mock",
+                "generation_time_seconds": 1.0,
+                "source": "dry_run"
+            }
+
         voiceover_text = script.get("voiceover_script", "")
         if not voiceover_text:
             # Construct from script parts if no dedicated voiceover
@@ -2012,6 +2041,32 @@ Return ONLY valid JSON array, no markdown."""
         Returns:
             Dict with results list, total_cost, clip_paths
         """
+        # DRY RUN MODE: Return mock video data without API calls
+        if DRY_RUN:
+            logger.info(f"🧪 DRY RUN: Skipping video generation, returning mock data for {len(prompts)} prompts")
+            mock_results = []
+            for i, prompt in enumerate(prompts):
+                mock_results.append({
+                    "scene_number": i + 1,
+                    "status": "completed",
+                    "cost_usd": 0.0,
+                    "model_used": "dry_run_mock",
+                    "source": "dry_run",
+                    "generation_time": 0.5,
+                    "video_url": DRY_RUN_VIDEO_URL,
+                    "video_path": None
+                })
+
+            await asyncio.sleep(2)  # Simulate processing time for realistic UX
+
+            return {
+                "results": mock_results,
+                "clip_paths": [],
+                "clip_urls": [DRY_RUN_VIDEO_URL] * len(prompts),
+                "total_cost": 0.0,
+                "source": "dry_run"
+            }
+
         # NEXUS DEBUG: Trace video generation entry
         print(f"[NEXUS-DEBUG] _generate_video_clips called with {len(prompts)} prompts", flush=True)
         print(f"[NEXUS-DEBUG] video_agent exists: {bool(self.video_agent)}", flush=True)
@@ -2125,6 +2180,23 @@ Return ONLY valid JSON array, no markdown."""
         from pathlib import Path
 
         start_time = time.time()
+
+        # DRY RUN MODE: Return mock assembly output without actual FFmpeg processing
+        if DRY_RUN:
+            logger.info("🧪 DRY RUN: Skipping video assembly, returning mock output")
+            await asyncio.sleep(1.5)  # Simulate render time
+            return {
+                "video_urls": {
+                    "youtube_1080p": DRY_RUN_VIDEO_URL,
+                    "tiktok": DRY_RUN_VIDEO_URL,
+                    "instagram_feed": DRY_RUN_VIDEO_URL,
+                    "instagram_reel": DRY_RUN_VIDEO_URL
+                },
+                "thumbnail_url": "https://video-preview-theta.vercel.app/samples/demo-thumbnail.jpg",
+                "cost": 0.0,
+                "render_time": 1.5,
+                "source": "dry_run"
+            }
 
         # Default mock response if assembly agent not available
         if not self.assembly_agent:
