@@ -148,19 +148,37 @@ class ConversationState:
 
 SYSTEM_PROMPT = """You are the AI Creative Director for Barrios A2I's Commercial Lab.
 
+## YOUR PRIMARY MISSION
+Guide users through completing their commercial brief while answering questions.
+You need 5 pieces of info: BUSINESS, PRODUCT, AUDIENCE, CTA, TONE (each = 20% completion)
+
 ## CRITICAL: KEEP IT SHORT
 - MAX 2-3 sentences per response
 - Ask ONE question at a time
 - Sound like texting a friend, not writing an email
 - Warm but BRIEF
 
-BAD: "Absolutely! I'd love to help you figure this out together. Let's start with the basics - what kind of business are you working on? For example, are you running a local business, launching a product, part of a nonprofit, or working on a personal brand?"
+## RULE #1: ANSWER THEN PIVOT
+When users ask questions, answer briefly (1-2 sentences) then pivot to the next missing field.
 
-GOOD: "No worries, I got you! What kind of business do you have?"
+Example - User asks about pricing:
+"Growth is $1,199/mo for 5 commercials - solid value. Now, what's your company called?"
 
-GOOD: "Love it! Who's your ideal customer?"
+Example - User asks off-topic question:
+"Paris! Great city. But hey - let's build your commercial. What's your business name?"
 
-GOOD: "Nice! What should viewers do after watching - visit your site, call, or something else?"
+## RULE #2: ALWAYS ASK FOR THE NEXT MISSING FIELD
+After EVERY response, ask for the next missing field in this order:
+1. BUSINESS → "What's your company or brand name?"
+2. PRODUCT → "What does [BUSINESS] sell or offer?"
+3. AUDIENCE → "Who's your ideal customer?"
+4. CTA → "What should viewers do after watching?"
+5. TONE → "What vibe - energetic, professional, funny, emotional?"
+
+## RULE #3: CELEBRATE PROGRESS
+When they give you brief info, acknowledge it:
+"GainMax - love it! What does GainMax sell?"
+"Perfect target audience! What action should viewers take?"
 
 ## KNOWLEDGE
 {knowledge_context}
@@ -175,15 +193,16 @@ Plan: {plan_type}
 ## CONVERSATION
 {conversation_history}
 
-## RULES
+## ADDITIONAL RULES
 1. If they say "I'm not sure" - suggest ONE option, ask if that fits
 2. Never repeat questions - pivot or help instead
-3. Keep the vibe friendly but efficient
-4. If they ask about pricing/services, answer from your knowledge
-5. If tokens = 0 and they want to generate, mention they need tokens first
+3. If tokens = 0 and they want to generate, mention they need tokens first
+
+## WHEN BRIEF IS 100% COMPLETE
+Summarize all 5 fields and ask "Sound good? Ready to generate?"
 
 ## YOUR TASK
-Respond in 2-3 sentences MAX. One question only if needed."""
+Respond in 2-3 sentences MAX. ALWAYS end with a question about the next missing brief field (unless brief is 100%)."""
 
 
 # ============================================================================
@@ -352,8 +371,8 @@ Example: {{"business_name": "Acme Corp"}}"""
         # Add AI response to history
         state.messages.append({"role": "assistant", "content": ai_response})
 
-        # Extract brief info if in intake
-        if intent in [Intent.START_BRIEF, Intent.CONTINUE_BRIEF]:
+        # ALWAYS extract brief info - users might provide it while asking questions
+        if state.brief.completion_percentage() < 100:
             self.extract_brief_info(state, user_message, ai_response)
 
         # Check if brief is complete
@@ -383,7 +402,7 @@ Example: {{"business_name": "Acme Corp"}}"""
 
     def get_greeting(self) -> str:
         """Get the initial greeting."""
-        return "Hey! I'm your AI Creative Director. Want to make a commercial, or got questions about how it works?"
+        return "Welcome to the A2I Commercial Lab! I'm your AI Creative Director - let's build something awesome together. First up - what's your company or brand name?"
 
 
 # ============================================================================
@@ -437,31 +456,42 @@ def create_unified_endpoint(app, agent: NexusUnifiedAgent):
 # ============================================================================
 
 async def test_agent():
-    """Test the unified agent."""
+    """Test the unified agent with proactive brief guidance."""
     agent = NexusUnifiedAgent()
     session_id = "test-session"
 
     print("=" * 50)
-    print("NEXUS UNIFIED AGENT TEST")
+    print("NEXUS UNIFIED AGENT TEST - Brief Guidance")
     print("=" * 50)
     print(f"\nGreeting: {agent.get_greeting()}\n")
 
+    # Test cases for brief guidance behavior
     test_messages = [
-        "hi",
-        "how much does it cost?",
-        "I want to make a commercial",
-        "Barrios A2I",
-        "We sell AI-powered commercials",
-        "Small business owners who need video content",
-        "Visit our website",
-        "Professional but friendly"
+        # Test 1: Greeting - should ask for business name
+        "Hi",
+        # Test 2: Pricing question - should answer AND pivot to brief
+        "What's the pricing?",
+        # Test 3: Off-topic - should redirect to brief
+        "What's the capital of France?",
+        # Test 4: Provide business name - should acknowledge and ask for product
+        "I run a bakery called Sweet Dreams",
+        # Test 5: Provide product - should ask for audience
+        "We sell custom cakes and pastries",
+        # Test 6: Provide audience - should ask for CTA
+        "Brides and event planners in the area",
+        # Test 7: Provide CTA - should ask for tone
+        "Book a tasting appointment",
+        # Test 8: Provide tone - should show summary
+        "Elegant and romantic"
     ]
 
     for msg in test_messages:
         print(f"User: {msg}")
         result = await agent.process_message(session_id, msg)
         print(f"AI: {result['response']}")
-        print(f"   [Intent: {result['intent']}, Brief: {result['brief']['completion_percentage']}%]")
+        print(f"   [Intent: {result['intent']}, Brief: {result['brief']['completion_percentage']}%, Phase: {result['phase']}]")
+        if result['brief']['completion_percentage'] > 0:
+            print(f"   Collected: {[k for k, v in result['brief'].items() if v and k not in ['completion_percentage', 'missing_fields', 'additional_notes', 'logo_url']]}")
         print()
 
 
