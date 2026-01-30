@@ -30,7 +30,31 @@ import anthropic
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
+# Import VideoAssemblyAgent for proper video assembly with transitions and audio
+from agents.video_assembly_agent import (
+    VideoAssemblyAgent,
+    AssemblyRequest,
+    AudioInput,
+    VideoClip,
+    TransitionSpec,
+    TransitionType,
+    VideoFormat,
+    RenderPreset,
+    create_assembly_agent
+)
+
 logger = logging.getLogger(__name__)
+
+# Initialize the VideoAssemblyAgent (replaces broken assemble_video function)
+_video_assembly_agent: VideoAssemblyAgent = None
+
+def get_video_assembly_agent() -> VideoAssemblyAgent:
+    """Get or create the VideoAssemblyAgent singleton."""
+    global _video_assembly_agent
+    if _video_assembly_agent is None:
+        _video_assembly_agent = create_assembly_agent()
+        logger.info("[PostProd] VideoAssemblyAgent initialized")
+    return _video_assembly_agent
 
 router = APIRouter(prefix="/api/postprod", tags=["Post-Production"])
 
@@ -303,7 +327,25 @@ async def assemble_video(
     output_path: Path,
     music_volume: float = 0.2
 ) -> bool:
-    """Assemble final video with FFmpeg"""
+    """
+    DEPRECATED: This function has critical bugs:
+    - Uses -an flag which strips all audio
+    - Uses simple concat with no transitions
+
+    Use VideoAssemblyAgent.assemble() instead, which provides:
+    - Proper xfade transitions between clips
+    - Voiceover with audio ducking (sidechain compression)
+    - Multi-format output support
+
+    This function is kept only for backward compatibility.
+    """
+    import warnings
+    warnings.warn(
+        "assemble_video() is deprecated. Use VideoAssemblyAgent.assemble() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    logger.warning("[PostProd] DEPRECATED: assemble_video() called - use VideoAssemblyAgent instead")
     import subprocess
 
     work_dir = output_path.parent
@@ -491,18 +533,98 @@ async def run_postprod_pipeline(job_id: str, request: PostProdRequest):
         else:
             music_path = None
 
-        # Step 6: Assemble final video
+        # Step 6: Assemble final video with VideoAssemblyAgent
+        # This provides proper transitions, voiceover sync, and audio ducking
         update_job(job_id, current_step="assembling", progress=85)
 
-        output_path = work_dir / f"{job_id}_final.mp4"
-        assembly_success = await assemble_video(
-            video_paths,
-            voiceover_path,
-            music_path,
-            output_path
-        )
+        try:
+            # Get clip durations using ffprobe
+            async def get_duration(path: Path) -> float:
+                import subprocess
+                cmd = [
+                    "ffprobe", "-v", "quiet", "-print_format", "json",
+                    "-show_format", str(path)
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await proc.communicate()
+                if proc.returncode == 0:
+                    import json
+                    data = json.loads(stdout.decode())
+                    return float(data.get("format", {}).get("duration", 8.0))
+                return 8.0  # Default to 8 seconds if probe fails
 
-        if assembly_success and output_path.exists():
+            # Build VideoClip list with durations
+            clips = []
+            for i, vp in enumerate(video_paths):
+                duration = await get_duration(vp)
+                clips.append(VideoClip(
+                    path=str(vp),
+                    duration=duration,
+                    scene_number=i
+                ))
+
+            # Build transitions (crossfade between each pair of clips)
+            transitions = []
+            for i in range(len(clips) - 1):
+                transitions.append(TransitionSpec(
+                    from_scene=i,
+                    to_scene=i + 1,
+                    type=TransitionType.CROSSFADE,
+                    duration=0.5
+                ))
+
+            # Build audio config
+            audio = AudioInput(
+                voiceover_path=str(voiceover_path) if voiceover_path else "",
+                music_path=str(music_path) if music_path else None,
+                music_volume=0.3,
+                ducking_config={
+                    "threshold": 0.1,
+                    "ratio": 4,
+                    "attack": 200,
+                    "release": 500
+                }
+            )
+
+            # Create assembly request
+            assembly_request = AssemblyRequest(
+                session_id=job_id,
+                clips=clips,
+                audio=audio,
+                transitions=transitions,
+                output_formats=[VideoFormat.YOUTUBE_1080P],  # Primary format
+                render_preset=RenderPreset.FAST,
+                include_thumbnail=True
+            )
+
+            # Run the proper VideoAssemblyAgent
+            agent = get_video_assembly_agent()
+            response = await agent.assemble(assembly_request)
+
+            # Get the output path from the response
+            output_path = None
+            if response.success and response.outputs:
+                # Get the YouTube 1080p output (or first available)
+                if "youtube_1080p" in response.outputs:
+                    output_path = Path(response.outputs["youtube_1080p"].local_path)
+                else:
+                    # Fallback to first output
+                    first_output = next(iter(response.outputs.values()))
+                    output_path = Path(first_output.local_path)
+
+            assembly_success = output_path and output_path.exists()
+
+            logger.info(f"[PostProd] VideoAssemblyAgent completed: success={assembly_success}, "
+                       f"outputs={list(response.outputs.keys())}")
+
+        except Exception as e:
+            logger.error(f"[PostProd] VideoAssemblyAgent error: {e}", exc_info=True)
+            assembly_success = False
+            output_path = None
+
+        if assembly_success and output_path and output_path.exists():
             # TODO: Upload to R2 and get public URL
             update_job(
                 job_id,
