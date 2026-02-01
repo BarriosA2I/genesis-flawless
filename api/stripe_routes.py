@@ -1026,3 +1026,73 @@ async def get_service_status():
         "routing_mode": "full_nexus" if (NEXUS_AVAILABLE and async_session_factory is not None) else "basic",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@router.post("/stripe/admin/fix-user-tokens-schema")
+async def fix_user_tokens_schema():
+    """
+    Fix user_tokens table schema: Change user_id from UUID to TEXT.
+
+    This allows Stripe customer IDs (cus_xxx format) to be stored directly
+    instead of requiring UUID format.
+
+    Safe to run multiple times - will succeed even if already TEXT.
+    """
+    import os
+    from supabase import create_client
+
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+
+    fixes_applied = []
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+        # Check current column type
+        check_result = supabase.rpc('get_column_type', {
+            'table_name': 'user_tokens',
+            'column_name': 'user_id'
+        }).execute()
+
+        current_type = check_result.data if check_result.data else "unknown"
+
+        # Run ALTER TABLE via Supabase SQL (using rpc or raw)
+        # Note: This requires the Supabase service role key and appropriate permissions
+        alter_result = supabase.rpc('alter_user_tokens_user_id_to_text', {}).execute()
+
+        fixes_applied.append(f"user_tokens.user_id: {current_type} -> TEXT")
+
+        # Also fix token_transactions if needed
+        alter_transactions = supabase.rpc('alter_token_transactions_user_id_to_text', {}).execute()
+        fixes_applied.append("token_transactions.user_id: UUID -> TEXT")
+
+        return {
+            "status": "success",
+            "fixes_applied": fixes_applied,
+            "message": "Schema updated to accept Stripe customer IDs",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Schema fix failed: {e}")
+        # Return instructions for manual fix
+        return {
+            "status": "manual_fix_required",
+            "error": str(e),
+            "manual_sql": """
+-- Run this in Supabase Dashboard > SQL Editor:
+
+ALTER TABLE user_tokens ALTER COLUMN user_id TYPE TEXT;
+ALTER TABLE token_transactions ALTER COLUMN user_id TYPE TEXT;
+
+-- Verify the change:
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_name = 'user_tokens' AND column_name = 'user_id';
+            """,
+            "timestamp": datetime.utcnow().isoformat()
+        }

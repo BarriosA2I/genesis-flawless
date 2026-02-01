@@ -6,10 +6,10 @@
 -- User token balances
 CREATE TABLE IF NOT EXISTS user_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID,  -- Can reference auth.users(id) if using Supabase Auth
+    user_id TEXT,  -- Stripe customer ID (cus_xxx) or other identifier
     email TEXT,
     tokens_balance INTEGER DEFAULT 0,
-    plan_type TEXT,  -- 'starter', 'creator', 'growth', 'scale', or NULL
+    plan_type TEXT,  -- 'prototyper', 'growth', 'scale', or NULL
     stripe_customer_id TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS user_tokens (
 -- Token transaction history (audit log)
 CREATE TABLE IF NOT EXISTS token_transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
+    user_id TEXT NOT NULL,  -- Stripe customer ID (cus_xxx) or other identifier
     amount INTEGER NOT NULL,  -- positive = added, negative = used
     transaction_type TEXT NOT NULL,  -- 'purchase', 'subscription', 'generation', 'refund'
     description TEXT,
